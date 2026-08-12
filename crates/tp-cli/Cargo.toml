@@ -1,0 +1,10 @@
+[package]
+name = "tp-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TexturePacker-RS command-line interface"
+
+[dependencies]
+tp-core = { path = "../tp-core" }
+serde_json.workspace = true

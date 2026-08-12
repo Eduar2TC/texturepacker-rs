@@ -1,0 +1,4 @@
+/target
+
+# Freebuff desktop app internal state (SQLite db), not part of the project
+/.freebuff

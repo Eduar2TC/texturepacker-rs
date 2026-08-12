@@ -1,0 +1,43 @@
+//! # TexturePacker-RS core engine
+//!
+//! A parallel texture-atlas packing engine implementing the full pipeline of
+//! the technical specification:
+//!
+//! 1. **Ingesta & Preprocesamiento** — parallel image loading, alpha trimming,
+//!    pixel hashing / alias detection, normal-map pairing (`ingest`)
+//! 2. **Motor Poligonal** — Marching Squares contour, Ramer–Douglas–Peucker
+//!    simplification, ear-clipping triangulation (`polygon`)
+//! 3. **Empaquetado Espacial** — MaxRects (BSSF/BAF/BLSF) & Guillotine,
+//!    90° rotation, multi-atlas split, polygon occupancy grid (`pack`)
+//! 4. **Procesamiento de Píxeles** — extrude, rotation, color quantization
+//!    with Floyd–Steinberg / Atkinson dithering, normal-map co-packing,
+//!    pivots (`pixels`)
+//! 5. **Exportación & Cifrado** — PNG / WebP / ASTC / ETC2 / PVRTC1 4bpp,
+//!    AES-256-GCM encryption, Mustache metadata templates (`export`,
+//!    `templates`)
+//!
+//! Entry point: [`pipeline::run`].
+
+pub mod config;
+pub mod etc2;
+pub mod export;
+pub mod hash;
+pub mod ingest;
+pub mod pack;
+pub mod pipeline;
+pub mod pixels;
+pub mod polygon;
+pub mod pvrtc;
+pub mod templates;
+pub mod types;
+
+pub use config::{ColorDepth, DitheringAlgorithm, GpuFormat, PackingStrategy, ProjectConfig, TemplateFormat};
+pub use pipeline::{run, PipelineOutput};
+pub use types::{PackResult, SpriteAsset};
+
+/// Convenience: parse a `.tpproj` TOML project file.
+pub fn load_project(path: &std::path::Path) -> Result<ProjectConfig, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
+    ProjectConfig::from_toml(&text).map_err(|e| format!("Proyecto inválido: {e}"))
+}

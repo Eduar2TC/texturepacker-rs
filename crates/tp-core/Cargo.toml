@@ -1,0 +1,28 @@
+[package]
+name = "tp-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TexturePacker-RS engine core: ingest, polygon engine, packing, pixel ops, export"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+image.workspace = true
+xxhash-rust.workspace = true
+aes-gcm.workspace = true
+rand.workspace = true
+handlebars.workspace = true
+sha2 = "0.10"
+astcenc-rs = { workspace = true, optional = true }
+
+[features]
+default = []
+# GPU texture encoders (ASTC via ARM's astcenc, ETC2 built-in). Requires a C/C++ toolchain.
+gpu-formats = ["dep:astcenc-rs"]
+
+[dev-dependencies]
+texture2ddecoder = "0.1.2"

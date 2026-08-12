@@ -1,0 +1,25 @@
+# Proyecto de ejemplo TexturePacker-RS
+# Copia sprites a ./sprites y ejecuta:  tp-cli pack samples/sample.tpproj
+
+input_directory = "sprites"
+output_directory = "build"
+max_texture_size = 2048
+padding = 2
+extrude = 1
+allow_rotation = true
+enable_trim = true
+trim_threshold = 1
+enable_polygon = false
+polygon_tolerance = 1.5
+enable_aliasing = true
+color_depth = "RGBA8888"
+dithering_algorithm = "FloydSteinberg"
+gpu_format = "PNG"
+template_format = "JSON"
+packing_strategy = "BSSF"
+scale_variants = [1.0, 0.5]
+enable_normal_maps = true
+recursive = true
+base_file_name = "atlas"
+default_pivot_x = 0.5
+default_pivot_y = 0.5
