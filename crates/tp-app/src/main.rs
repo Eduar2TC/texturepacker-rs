@@ -5,6 +5,7 @@
 mod app;
 
 fn main() -> eframe::Result {
+    let project = std::env::args().nth(1).map(std::path::PathBuf::from);
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1360.0, 860.0])
@@ -15,6 +16,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "TexturePacker-RS",
         options,
-        Box::new(|cc| Ok(Box::new(app::App::new(cc)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, project)))),
     )
 }
