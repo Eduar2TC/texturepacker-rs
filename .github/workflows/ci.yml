@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  checks:
+    name: fmt + clippy + tests (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust stable (rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Caché de cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Formato (cargo fmt --check)
+        run: cargo fmt --all -- --check
+
+      - name: Lints (cargo clippy -D warnings)
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+      - name: Tests del workspace
+        run: cargo test --workspace --locked
+
+  gpu-formats:
+    name: build con ASTC (gpu-formats)
+    runs-on: ubuntu-latest
+    # El encoder ASTC compila C++ de ARM astcenc; se permite fallo hasta
+    # validar el runner. Quita `continue-on-error` para hacerlo bloqueante.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Caché de cargo (gpu-formats)
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: gpu-formats
+
+      - name: cargo check --features gpu-formats
+        run: cargo check --locked -p tp-core --features gpu-formats
