@@ -18,8 +18,8 @@ use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::ImageEncoder;
 use std::collections::HashMap;
 
-/// Opciones de codificación de textura (docs: *Png Opt Level*, *Dithering*,
-/// *Image quality*, *Pixel format*).
+/// Opciones de codificación de textura (nivel de optimización PNG, dithering,
+/// calidad, formato de píxel).
 #[derive(Debug, Clone)]
 pub struct EncodeOptions {
     pub format: GpuFormat,
@@ -89,7 +89,7 @@ pub fn encode_to_bytes(
     }
 }
 
-/// Convierte RGBA8 al formato de píxel de salida (docs: *Pixel format*).
+/// Convierte RGBA8 al formato de píxel de salida (pixel format).
 /// `Rgb888` compone la transparencia sobre negro; los formatos de hardware
 /// no pasan por aquí.
 fn apply_pixel_format(rgba: &[u8], format: PixelFormat) -> (Vec<u8>, image::ExtendedColorType) {
@@ -113,7 +113,7 @@ fn apply_pixel_format(rgba: &[u8], format: PixelFormat) -> (Vec<u8>, image::Exte
             }
             (out, Ct::La8)
         }
-        // RGBA5551 (docs: *Pixel format*): reduce cada canal a su rejilla
+        // RGBA5551: reduce cada canal a su rejilla
         // R5/G5/B5/A1 con replicación de bits (el PNG sigue siendo RGBA8, pero
         // los colores solo toman los 32 niveles / 2 niveles de alfa del
         // formato de 16 bits). Cuantiza R y B a 5 bits, G a 5 bits, A a 1 bit.
@@ -131,7 +131,7 @@ fn apply_pixel_format(rgba: &[u8], format: PixelFormat) -> (Vec<u8>, image::Exte
             }
             (out, Ct::Rgba8)
         }
-        // RGBA5555 (docs: *Pixel format*, 20 bits): igual que RGBA5551 pero el
+        // RGBA5555 (20 bits): igual que RGBA5551 pero el
         // alfa también se cuantiza a 5 bits (32 niveles) en vez de 0/255.
         PixelFormat::Rgba5555 => {
             let mut out = Vec::with_capacity(rgba.len());
@@ -147,7 +147,7 @@ fn apply_pixel_format(rgba: &[u8], format: PixelFormat) -> (Vec<u8>, image::Exte
             }
             (out, Ct::Rgba8)
         }
-        // BGRA8888 (docs: *Pixel format*): intercambia R y B en el archivo.
+        // BGRA8888: intercambia R y B en el archivo.
         PixelFormat::Bgra8888 => {
             let mut out = Vec::with_capacity(rgba.len());
             for px in rgba.chunks_exact(4) {
@@ -326,8 +326,8 @@ fn encode_png(
     Ok(buf)
 }
 
-/// PNG-8: paleta de ≤256 colores con cuantización y dithering (docs:
-/// *Dithering* → PngQuant Low/Medium/High).
+/// PNG-8: paleta de ≤256 colores con cuantización y dithering
+/// (PngQuant Low/Medium/High).
 fn encode_png8(
     data: &[u8],
     width: usize,
@@ -622,7 +622,7 @@ fn refine_palette(palette: &[[u8; 4]], rgba: &[u8]) -> Vec<[u8; 4]> {
         .collect()
 }
 
-/// JPG lossy (docs: *Image quality* → `--jpg-quality`, 0-100). Sin canal
+/// JPG lossy (`--jpg-quality`, 0-100). Sin canal
 /// alfa: compone sobre negro.
 fn encode_jpg(
     data: &[u8],
@@ -663,8 +663,8 @@ fn encode_jpg(
     Ok(buf)
 }
 
-/// WebP: sin pérdidas por defecto (calidad ≥ 101) o lossy 0-100 (docs:
-/// *Image quality* → `--webp-quality`).
+/// WebP: sin pérdidas por defecto (calidad ≥ 101) o lossy 0-100
+/// (`--webp-quality`).
 fn encode_webp(
     data: &[u8],
     width: usize,
@@ -691,7 +691,7 @@ fn encode_webp(
     Ok(memory.to_vec())
 }
 
-/// Voltea verticalmente un buffer RGBA (docs: `--flip-y`; solo formatos de
+/// Voltea verticalmente un buffer RGBA (`--flip-y`; solo formatos de
 /// hardware — las coordenadas de los frames no cambian).
 pub fn flip_vertical_rgba(rgba: &mut [u8], width: usize, height: usize) {
     let stride = width * 4;

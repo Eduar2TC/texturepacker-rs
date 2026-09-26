@@ -56,14 +56,14 @@ pub struct IngestOptions<'a> {
     pub extra_inputs: &'a [PathBuf],
     /// Files to skip, whatever their origin.
     pub excluded_inputs: &'a [PathBuf],
-    /// Remove image file extensions from sprite ids (docs: *Trim sprite
-    /// names*). When `false` the id keeps e.g. `.png`.
+    /// Remove image file extensions from sprite ids (trim sprite
+    /// names). When `false` the id keeps e.g. `.png`.
     pub trim_sprite_names: bool,
     /// Prepend the smart folder's name to the ids of the files inside it
-    /// (docs: *Prepend folder name*).
+    /// (prepend folder name).
     pub prepend_folder_name: bool,
     /// Extend sprite sizes (with transparency) to be divisible by this value
-    /// (docs: *Common divisor*). `1` leaves sizes untouched.
+    /// (common divisor). `1` leaves sizes untouched.
     pub common_divisor_x: i32,
     /// Same as [`Self::common_divisor_x`] for the vertical axis.
     pub common_divisor_y: i32,
@@ -305,7 +305,7 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
             } else {
                 (Rect::new(0, 0, w, h), rgba)
             };
-            // Docs: *Common divisor* — extend sizes (with transparency) to be
+            // Common divisor — extend sizes (with transparency) to be
             // divisible by the configured values.
             let divisor = (
                 options.common_divisor_x.max(1),
@@ -391,7 +391,7 @@ fn file_stem(path: &Path) -> Option<String> {
 
 /// Sprite id *without* extension: the path relative to `input_directory` (or
 /// to the smart folder that contains it), with `/` separators — sub-folder
-/// names are always part of the sprite name, as in the official tool.
+/// names are always part of the sprite name.
 ///
 /// Falls back to the bare file name when the path lives outside every root
 /// (e.g. a single dropped image).
@@ -451,7 +451,7 @@ fn round_up(value: i32, divisor: i32) -> i32 {
 }
 
 /// Extend the trimmed buffer with transparent pixels so both axes are
-/// divisible by the common divisor (docs: *Common divisor*).
+/// divisible by the common divisor.
 fn extend_to_divisor(bounds: Rect, pixels: &[u8], (dx, dy): (i32, i32)) -> (Rect, Vec<u8>) {
     let nw = round_up(bounds.width, dx);
     let nh = round_up(bounds.height, dy);
@@ -529,8 +529,8 @@ fn is_solid_line(
     first.is_some()
 }
 
-/// Auto-detect 9-patch borders on a sprite, TexturePacker-style (docs:
-/// *Borders*): find the outermost rows/columns of solid color that frame the
+/// Auto-detect 9-patch borders on a sprite (borders): find the outermost
+/// rows/columns of solid color that frame the
 /// content. Each side is measured scanning inward while consecutive lines
 /// (up to `max_search` per side) qualify as solid bars; transparent margins or
 /// non-solid content stop the scan. Sides without a detected bar report 0
@@ -727,7 +727,7 @@ mod tests {
         let filtered = ingest(&filtered_options);
         let ids: Vec<&str> = filtered.sprites.iter().map(|s| s.id.as_str()).collect();
         // `extra/c.png` lives inside the input root, so its id carries the
-        // sub-folder name (`extra/c`), as the official tool does.
+        // sub-folder name (`extra/c`).
         assert_eq!(ids, vec!["extra/c"]);
 
         let _ = std::fs::remove_dir_all(&root);
@@ -868,7 +868,7 @@ mod tests {
         let ids: Vec<String> = ingest(&options).sprites.into_iter().map(|s| s.id).collect();
         assert_eq!(ids, vec!["hero/idle_00", "idle_01"]);
 
-        // Con extensiones: el nombre conserva `.png` (docs: *Trim sprite names*).
+        // Con extensiones: el nombre conserva `.png` (trim sprite names).
         let mut with_ext = options.clone();
         with_ext.trim_sprite_names = false;
         let ids: Vec<String> = ingest(&with_ext)

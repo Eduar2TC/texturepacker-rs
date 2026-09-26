@@ -1,9 +1,8 @@
 # TexturePacker-RS 🧩
 
-Una aplicación de escritorio **en Rust** para generar atlas de texturas con todas
-las funcionalidades de TexturePacker, implementada según el documento de
-especificación técnica *"Engine TexturePacker-RS"* (entrada: CLI / GUI / archivo
-de proyecto; pipeline: ingesta → polígonos → empaquetado → VRAM → exportación).
+Una aplicación de escritorio **en Rust** para generar atlas de texturas,
+desarrollada de forma independiente (entrada: CLI / GUI / archivo de proyecto;
+pipeline: ingesta → polígonos → empaquetado → VRAM → exportación).
 
 ```
 Capa de Entrada (CLI / GUI / .tpproj)
@@ -55,8 +54,7 @@ cargo test --workspace
 
 ## Uso rápido (GUI)
 
-La ventana sigue la disposición de TexturePacker
-([interfaz de usuario](https://www.codeandweb.com/texturepacker/documentation/user-interface-overview)):
+La ventana organiza el flujo de trabajo en cuatro zonas:
 
 | Zona | Contenido |
 |------|-----------|
@@ -85,19 +83,19 @@ tp-cli pack --input sprites/ --output build/ \
     --max-size 4096 --padding 2 --extrude 1 --format etc2 \
     --strategy bssf --variants 1.0,0.5 --key secreto --template-format json
 
-# Ajustes de textura (doc oficial): borde, divisor, rejilla, transparencia y ruta
+# Ajustes de textura: borde, divisor, rejilla, transparencia y ruta
 tp-cli pack --input sprites/ --output build/ \
     --border-padding 8 --common-divisor 4 --align 4 \
     --alpha-handling premultiply --scale-mode fast \
     --texture-path /assets --keep-extension --prepend-folder-name \
     --dither floyd-alpha
 
-# Empaquetado (doc oficial): algoritmo, heurística, tamaño mínimo y restricciones
+# Empaquetado: algoritmo, heurística, tamaño mínimo y restricciones
 tp-cli pack --input sprites/ --output build/ \
     --algorithm basic --basic-sort-by name --basic-order descending \
     --pack-mode best --size-constraints pot --force-squared
 
-# Multipack (doc oficial): placeholders {n}/{n0} (desde 0), {n1} (desde 1) y {v}
+# Multipack: placeholders {n}/{n0} (desde 0), {n1} (desde 1) y {v}
 tp-cli pack --input sprites/ --output build/ --max-size 1024 \
     --base-name 'hoja{n1}{v}' --variants 1.0,0.5
 #   → hoja1.png, hoja1.json, hoja2.png, hoja2.json, hoja1-hd.png, ...
@@ -118,7 +116,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png
 | Marching Squares + ambigüedad                  | ✅     | Resuelta con análisis de conectividad 8-dir |
 | Ramer–Douglas–Peucker                          | ✅     | Tolerancia en píxeles |
 | Triangulación Earcut                           | ✅     | Contornos exteriores; agujeros detectados (contorno `is_hole`) |
-| Algorithm → Polygon                            | ✅     | El *Trim mode Polygon* cambia el algoritmo a *Polygon* automáticamente (mallas + empaquetado por contorno), como la doc oficial |
+| Algorithm → Polygon                            | ✅     | El *Trim mode Polygon* cambia el algoritmo a *Polygon* automáticamente (mallas + empaquetado por contorno) |
 | MaxRects BSSF / BAF / BLSF                     | ✅     | Seleccionable |
 | Guillotine                                     | ✅     | Seleccionable |
 | Grid / Basic                                   | ✅     | Rejilla (celda = mayor sprite inflado) y filas de izquierda a derecha con `basic_sort_by`/`basic_order` |
@@ -140,7 +138,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png
 | Ruta de la textura en los metadatos            | ✅     | Prefijo aplicado a `meta.image` y a `pages[].file` (`--texture-path`) |
 | Nombres de sprite                              | ✅     | Ids relativos con subcarpeta; extensión opcional (`trim_sprite_names`) y carpeta inteligente opcional |
 | Pivots                                         | ✅     | Por defecto + `pivots.json` + edición en GUI |
-| Bordes 9-patch / 3-patch (docs: *Borders*)     | ✅     | `[izq, arriba, der, abajo]` en píxeles vía `borders.json`, editor en la GUI (presets 9-patch/3-patch), **detección automática** de filas/columnas de color sólido (botón «🔎 Detectar»), guías verdes arrastrables con el ratón en la vista previa y metadato `border` por frame |
+| Bordes 9-patch / 3-patch                    | ✅     | `[izq, arriba, der, abajo]` en píxeles vía `borders.json`, editor en la GUI (presets 9-patch/3-patch), **detección automática** de filas/columnas de color sólido (botón «🔎 Detectar»), guías verdes arrastrables con el ratón en la vista previa y metadato `border` por frame |
 | Co-packing de normal maps                      | ✅     | `*_normal.png` en el mismo frame/página/rotación |
 | Cuantización (RGBA4444/RGB565)                 | ✅     | Aplicada a toda la página |
 | Pixel format RGBA5551 / RGBA5555 / BGRA8888    | ✅     | `pixel_format = "RGBA5551"` cuantiza a la rejilla 5-5-5-1 (expansión por replicación de bits, alfa 0/255); `"RGBA5555"` (20 bits) mantiene el alfa también en 5 bits; `"BGRA8888"` intercambia R/B en el archivo |
@@ -161,8 +159,8 @@ TOML con los campos de `ProjectConfig` (ver `crates/tp-core/src/config.rs`):
 input_directory = "sprites"
 output_directory = "build"
 max_texture_size = 2048
-padding = 2                 # docs: Shape padding (espacio ENTRE sprites)
-border_padding = 8          # docs: Border padding (sprites ↔ borde de la hoja)
+padding = 2                 # espacio ENTRE sprites
+border_padding = 8          # sprites ↔ borde de la hoja
 common_divisor_x = 4        # estira hasta ser divisible entre 4 (x)
 common_divisor_y = 4        # ... y entre 4 (y); 0 = sin divisor
 align_to_grid = 4           # alinea esquinas/padding/borde a múltiplos de 4; 0 = off
@@ -195,7 +193,7 @@ basic_order = "Ascending"    # Ascending | Descending (algoritmo Basic)
 detect_border_tolerance = 0  # tolerancia por canal al detectar bordes 9-patch
 detect_border_max_search = 64 # filas/columnas inspeccionadas por lado (0 = sin límite)
 scale_variants = [1.0, 0.5]
-variant_names = []           # docs: Scaling variants; p. ej. [[1.0, "-ipadhd"], [0.5, "-hd"]]
+variant_names = []           # p. ej. [[1.0, "-ipadhd"], [0.5, "-hd"]]
 enable_normal_maps = true
 base_file_name = "hoja{n1}" # placeholders {n}/{n0} (desde 0), {n1} (desde 1) y {v}
 multipack = true            # false = error si los sprites no caben en una sola hoja
@@ -204,7 +202,7 @@ enable_auto_detect_animations = true  # walk_001..N → animación "walk" en los
 
 ## Metadatos
 
-El JSON generado sigue la convención de TexturePacker (filosofía `meta`/`frames`):
+El JSON generado organiza la información en dos bloques, `meta` y `frames`:
 
 ```json
 {
@@ -287,14 +285,14 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 - Los formatos de entrada BMP/GIF/ICO/TIFF/DDS heredan las limitaciones de los
   decodificadores de la crate `image`; los GIF animados se leen como su primer
   fotograma.
-- Como **formato de salida** (doc oficial: *Texture format*) este clon escribe
-  PNG, PNG8, JPG, WebP y los contenedores de hardware ASTC/ETC2(KTX)/PVRTC(.pvr);
-  no escribe BMP/TGA/TIFF/DDS/PVR-gz/KTX2/Basis como TexturePacker comercial.
-- La doc oficial lista más heurísticas y formatos de píxel (ETC1, DXT, ASTC
-  de otros tamaños de bloque, Basis Universal, ...); este clon implementa el
-  subconjunto de la especificación técnica del proyecto (RGBA8888/4444/565,
-  RGBA5551/5555, BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA,
-  PVRTC1 4bpp).
+- **Formatos de salida**: escribe PNG, PNG8, JPG, WebP y los contenedores de
+  hardware ASTC/ETC2(KTX)/PVRTC(.pvr); no escribe BMP/TGA/TIFF/DDS/PVR-gz/
+  KTX2/Basis.
+- **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
+  especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
+  BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp); otros
+  formatos (ETC1, DXT, ASTC de otros tamaños de bloque, Basis Universal, ...)
+  no están incluidos.
 
 ## Pruebas
 

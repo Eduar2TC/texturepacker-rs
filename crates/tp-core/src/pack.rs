@@ -1,9 +1,9 @@
 //! Subsystem 3: Empaquetado Espacial (Packing Core).
 //!
-//! - Algorithms (docs: *Algorithm*): MaxRects, Guillotine, Grid and Basic
+//! - Algorithms: MaxRects, Guillotine, Grid and Basic
 //! - MaxRects heuristics: BSSF / BAF / BLSF / BottomLeft / ContactPoint / Best
-//! - Size search (docs: *Pack*): Fast / Good / Best
-//! - Size constraints (docs: *Size Constraints*): AnySize / POT / MultipleOf4 /
+//! - Size search: Fast / Good / Best
+//! - Size constraints: AnySize / POT / MultipleOf4 /
 //!   WordAligned, fixed size (`fixed_width`/`fixed_height`) and force-squared
 //! - 90° rotation support
 //! - Multi-atlas auto-split (new page when nothing fits)
@@ -59,27 +59,27 @@ pub struct PackerOptions {
     pub strategy: PackingStrategy,
     pub allow_rotation: bool,
     pub max_size: i32,
-    /// Gap between neighbouring sprites (docs: *Shape padding*).
+    /// Gap between neighbouring sprites (shape padding).
     pub padding: i32,
     /// Reserved margin between the sprites and the sheet border
-    /// (docs: *Border padding*).
+    /// (border padding).
     pub border_padding: i32,
     pub polygon_mode: bool,
-    /// Packing algorithm family (docs: *Algorithm*).
+    /// Packing algorithm family.
     pub algorithm: PackingAlgorithm,
-    /// Effort spent searching the minimum atlas size (docs: *Pack*).
+    /// Effort spent searching the minimum atlas size.
     pub pack_mode: PackMode,
-    /// Required atlas dimensions (docs: *Size Constraints*).
+    /// Required atlas dimensions.
     pub size_constraints: SizeConstraint,
-    /// Force a square atlas (docs: *Force squared*).
+    /// Force a square atlas.
     pub force_squared: bool,
-    /// Fixed atlas width; `0` = decided by the packer (docs: *Fixed Size*).
+    /// Fixed atlas width; `0` = decided by the packer.
     pub fixed_width: i32,
-    /// Fixed atlas height; `0` = decided by the packer (docs: *Fixed Size*).
+    /// Fixed atlas height; `0` = decided by the packer.
     pub fixed_height: i32,
-    /// Sort criterion of the Basic algorithm (docs: *Sort by*).
+    /// Sort criterion of the Basic algorithm.
     pub basic_sort_by: BasicSortBy,
-    /// Sort direction of the Basic algorithm (docs: *Order*).
+    /// Sort direction of the Basic algorithm.
     pub basic_order: SortOrder,
     /// Width alignment in pixels for `WordAligned` (1 = no alignment).
     pub word_align_mod: i32,
@@ -238,12 +238,12 @@ fn place_all(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
     match opts.algorithm {
         PackingAlgorithm::Grid => pack_grid(items, opts, cw, ch),
         PackingAlgorithm::Basic => pack_basic(items, opts, cw, ch),
-        // Docs: *Algorithm → Polygon* — the tightest packing for non-rectangular
+        // Trim mode Polygon — the tightest packing for non-rectangular
         // sprites: MaxRects placement with polygon occupancy support.
         PackingAlgorithm::Polygon => pack_maxrects(items, opts, cw, ch),
         PackingAlgorithm::MaxRects | PackingAlgorithm::Guillotine => {
             if opts.strategy == PackingStrategy::Best {
-                // Docs: *Best* tries every heuristic and keeps the tightest.
+                // `Best` tries every heuristic and keeps the tightest.
                 let mut best: Option<(i64, i64, Vec<PageState>)> = None;
                 for strategy in PackingStrategy::all_heuristics() {
                     let mut sub = opts.clone();
@@ -406,7 +406,7 @@ impl TimeBudget {
     }
 }
 
-/// Binary-search the smallest single-page canvas (docs: *Pack*). Returns
+/// Binary-search the smallest single-page canvas. Returns
 /// `None` when the search could not improve the current result.
 fn search_min(
     items: &[PackItem],
@@ -573,7 +573,7 @@ fn pack_maxrects(
     Ok(pages)
 }
 
-/// Grid placement: the largest sprite defines the cell size (docs: *Grid*).
+/// Grid placement: the largest sprite defines the cell size.
 fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Result<Vec<PageState>> {
     let pad = opts.padding.max(0);
     let bp = opts.border_padding.max(0);
@@ -642,7 +642,7 @@ fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
     Ok(pages)
 }
 
-/// Row-based left-to-right placement (docs: *Basic*).
+/// Row-based left-to-right placement (Basic algorithm).
 fn pack_basic(
     items: &[PackItem],
     opts: &PackerOptions,
@@ -658,7 +658,7 @@ fn pack_basic(
         )));
     }
 
-    // Docs: *Best* tests all sorting variants and keeps the tightest one.
+    // `Best` tests all sorting variants and keeps the tightest one.
     if opts.basic_sort_by == BasicSortBy::Best {
         let mut best: Option<(i64, i64, Vec<PageState>)> = None;
         for sort_by in BasicSortBy::all() {
@@ -833,7 +833,7 @@ fn score_placement(fr: &Rect, w: i32, h: i32, opts: &PackerOptions, page: &PageS
 }
 
 /// Contact length of a candidate rect with placed frames and the page border
-/// (docs: *Contact Point*).
+/// (contact point heuristic).
 fn contact_score(x: i32, y: i32, w: i32, h: i32, page: &PageState) -> i64 {
     let (x0, y0, x1, y1) = (x, y, x + w, y + h);
     let mut score: i64 = 0;

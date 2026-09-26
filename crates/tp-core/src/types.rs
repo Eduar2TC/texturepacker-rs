@@ -97,7 +97,7 @@ pub struct SpriteAsset {
     /// Normalized pivot (0..1 relative to the *original* sprite size).
     pub pivot: Point2D,
     /// 9-patch borders in pixels `[left, top, right, bottom]` measured on the
-    /// *untrimmed* source image (docs: *Borders*). `None` when the sprite is
+    /// *untrimmed* source image (9-patch borders). `None` when the sprite is
     /// not a 9-patch / 3-patch.
     pub border: Option<[i32; 4]>,
     /// Local-space mesh (trimmed coordinates) when polygon mode is enabled.

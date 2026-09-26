@@ -44,10 +44,10 @@ pub enum DitheringAlgorithm {
     FloydSteinberg,
     #[serde(rename = "Atkinson")]
     Atkinson,
-    /// Floyd–Steinberg including the alpha channel (docs: *Dithering*).
+    /// Floyd–Steinberg including the alpha channel.
     #[serde(rename = "FloydSteinbergAlpha")]
     FloydSteinbergAlpha,
-    /// Atkinson including the alpha channel (docs: *Dithering*).
+    /// Atkinson including the alpha channel.
     #[serde(rename = "AtkinsonAlpha")]
     AtkinsonAlpha,
 }
@@ -62,7 +62,7 @@ impl DitheringAlgorithm {
     }
 }
 
-/// How transparent borders are handled before packing (docs: *Trim mode*).
+/// How transparent borders are handled before packing (trim mode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TrimMode {
     /// Keep the sprites as they are — no transparent pixels are removed.
@@ -121,10 +121,10 @@ pub enum GpuFormat {
     #[default]
     #[serde(rename = "PNG")]
     Png,
-    /// PNG indexado de 8 bits (hasta 256 colores) — docs: *PNG8*.
+    /// PNG indexado de 8 bits (hasta 256 colores).
     #[serde(rename = "PNG8")]
     Png8,
-    /// JPEG lossy sin canal alfa — docs: *JPG*.
+    /// JPEG lossy sin canal alfa.
     #[serde(rename = "JPG")]
     Jpg,
     #[serde(rename = "WEBP", alias = "WebP")]
@@ -156,7 +156,7 @@ impl GpuFormat {
         !matches!(self, GpuFormat::Astc4x4) || cfg!(feature = "gpu-formats")
     }
 
-    /// Hardware-compressed formats (docs: *flip-y* solo aplica a estos).
+    /// Hardware-compressed formats (flip-y solo aplica a estos).
     pub fn is_hardware(&self) -> bool {
         matches!(
             self,
@@ -176,8 +176,8 @@ impl GpuFormat {
     }
 }
 
-/// Dithering de la cuantización a paleta al publicar PNG-8 (docs:
-/// *Dithering* → PngQuant Low/Medium/High).
+/// Dithering de la cuantización a paleta al publicar PNG-8
+/// (PngQuant Low/Medium/High).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PngDither {
     /// Cuantización directa sin difusión de error (archivo más pequeño).
@@ -202,8 +202,8 @@ impl PngDither {
     }
 }
 
-/// Formato de píxel de salida para formatos de software (docs: *Pixel
-/// format*). Los formatos de hardware comprimen RGBA y lo ignoran.
+/// Formato de píxel de salida para formatos de software (pixel format).
+/// Los formatos de hardware comprimen RGBA y lo ignoran.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PixelFormat {
     #[default]
@@ -221,17 +221,17 @@ pub enum PixelFormat {
     /// Luminancia + alfa (grises + alfa).
     #[serde(rename = "ALPHA_INTENSITY8")]
     AlphaIntensity8,
-    /// 16 bits: R5 G5 B5 + 1 bit de transparencia (docs: *RGBA5551*).
+    /// 16 bits: R5 G5 B5 + 1 bit de transparencia (RGBA5551).
     /// Los archivos siguen siendo PNG estándar con los colores reducidos a la
     /// rejilla 5-5-5-1 (expansión por replicación de bits).
     #[serde(rename = "RGBA5551")]
     Rgba5551,
-    /// 20 bits: R5 G5 B5 + 5 bits de transparencia (docs: *RGBA5555*). Como
+    /// 20 bits: R5 G5 B5 + 5 bits de transparencia (RGBA5555). Como
     /// RGBA5551 pero el alfa se cuantiza a la rejilla de 5 bits en lugar de
     /// colapsar a 0/255.
     #[serde(rename = "RGBA5555")]
     Rgba5555,
-    /// 32 bits con canales reordenados a B,G,R,A (docs: *BGRA8888*); el PNG
+    /// 32 bits con canales reordenados a B,G,R,A (BGRA8888); el PNG
     /// resultante lleva los canales R y B invertidos, para motores que cargan
     /// texturas en orden BGRA (p. ej. cocos2d).
     #[serde(rename = "BGRA8888")]
@@ -253,8 +253,7 @@ impl PixelFormat {
     }
 }
 
-/// How transparent pixels are handled before packing (docs: *Transparency
-/// Handling*).
+/// How transparent pixels are handled before packing (alpha handling).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AlphaHandling {
     /// Transparent pixels are copied from sprite to sheet unchanged.
@@ -305,7 +304,7 @@ impl AlphaHandling {
     }
 }
 
-/// Resampling algorithm used for scale variants (docs: *Scale mode*).
+/// Resampling algorithm used for scale variants (scale mode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ScaleMode {
     /// Bilinear blending — smooth output, best when scaling down.
@@ -335,7 +334,7 @@ impl ScaleMode {
     }
 }
 
-/// MaxRects / Guillotine placement heuristic (docs: *Heuristics*).
+/// MaxRects / Guillotine placement heuristic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PackingStrategy {
     /// MaxRects — Best Short Side Fit (spec default).
@@ -394,7 +393,7 @@ impl PackingStrategy {
         }
     }
 
-    /// The concrete heuristics behind `Best` (docs: *Heuristics*).
+    /// The concrete heuristics behind `Best`.
     pub fn all_heuristics() -> [PackingStrategy; 5] {
         [
             PackingStrategy::Bssf,
@@ -406,7 +405,7 @@ impl PackingStrategy {
     }
 }
 
-/// Packing algorithm (docs: *Algorithm*). The polygon algorithm is selected
+/// Packing algorithm. The polygon algorithm is selected
 /// with `enable_polygon`, which takes precedence over this setting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PackingAlgorithm {
@@ -424,7 +423,7 @@ pub enum PackingAlgorithm {
     #[serde(rename = "Basic")]
     Basic,
     /// Polygon packing via MaxRects on bounding boxes + polygon occupancy
-    /// (docs: *Algorithm → Polygon*). Selected automatically when
+    /// Selected automatically when
     /// `trim_mode = "Polygon"`.
     #[serde(rename = "Polygon")]
     Polygon,
@@ -453,7 +452,7 @@ impl PackingAlgorithm {
     }
 }
 
-/// Atlas size constraints (docs: *Size Constraints*).
+/// Atlas size constraints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SizeConstraint {
     /// Any size; the packer picks the smallest fitting dimensions.
@@ -492,7 +491,7 @@ impl SizeConstraint {
     }
 }
 
-/// How much time is spent searching the minimum texture size (docs: *Pack*).
+/// How much time is spent searching the minimum texture size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum PackMode {
     /// Fastest: a single packing pass, results are cropped to fit.
@@ -526,7 +525,7 @@ impl PackMode {
     }
 }
 
-/// Sort criterion for the `Basic` algorithm (docs: *Sort by*).
+/// Sort criterion for the `Basic` algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum BasicSortBy {
     /// Tests all sorting variants and keeps the tightest result.
@@ -581,7 +580,7 @@ impl BasicSortBy {
     }
 }
 
-/// Sort direction for the `Basic` algorithm (docs: *Order*).
+/// Sort direction for the `Basic` algorithm.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SortOrder {
     #[default]
@@ -648,7 +647,7 @@ pub struct ProjectConfig {
     pub enable_trim: bool,
     /// Alpha threshold (0-255) below which a pixel is considered transparent.
     pub trim_threshold: i32,
-    /// Which trim mode to apply when `enable_trim` is set (docs: *Trim mode*).
+    /// Which trim mode to apply when `enable_trim` is set.
     #[serde(default)]
     pub trim_mode: TrimMode,
     /// Transparent margin kept around the trimmed bounding box, in pixels.
@@ -663,27 +662,27 @@ pub struct ProjectConfig {
     pub color_depth: ColorDepth,
     pub dithering_algorithm: DitheringAlgorithm,
     pub gpu_format: GpuFormat,
-    /// Esfuerzo de optimización PNG sin pérdida, 0-7 (docs: *Png Opt
-    /// Level*). El valor 1 (por defecto) escribe PNG indexado de 8 bits
+    /// Esfuerzo de optimización PNG sin pérdida, 0-7. El valor 1 (por
+    /// defecto) escribe PNG indexado de 8 bits
     /// cuando la imagen tiene 256 colores o menos.
     #[serde(default = "default_png_opt_level")]
     pub png_opt_level: u8,
-    /// Dithering de la paleta al publicar PNG-8 (docs: *Dithering* →
-    /// PngQuant Low/Medium/High).
+    /// Dithering de la paleta al publicar PNG-8
+    /// (PngQuant Low/Medium/High).
     #[serde(default)]
     pub png8_dither: PngDither,
-    /// Calidad JPEG 0-100 (docs: *Image quality* → `--jpg-quality`; 80).
+    /// Calidad JPEG 0-100 (`--jpg-quality`; 80 por defecto).
     #[serde(default = "default_jpg_quality")]
     pub jpg_quality: u8,
-    /// Calidad WebP: 0-100 = lossy, ≥101 = sin pérdidas (docs: *Image
-    /// quality* → `--webp-quality`; por defecto sin pérdidas).
+    /// Calidad WebP: 0-100 = lossy, ≥101 = sin pérdidas
+    /// (`--webp-quality`; por defecto sin pérdidas).
     #[serde(default = "default_webp_quality")]
     pub webp_quality: u16,
-    /// Formato de píxel de salida (docs: *Pixel format*); solo formatos de
+    /// Formato de píxel de salida (pixel format); solo formatos de
     /// software (PNG/PNG8/JPG/WebP).
     #[serde(default)]
     pub pixel_format: PixelFormat,
-    /// Voltear la textura verticalmente (docs: `--flip-y`); solo formatos
+    /// Voltear la textura verticalmente (`--flip-y`); solo formatos
     /// de hardware (ASTC/ETC2/PVRTC).
     #[serde(default)]
     pub flip_vertical: bool,
@@ -696,37 +695,37 @@ pub struct ProjectConfig {
     pub template_format: TemplateFormat,
     /// Packing algorithm / heuristic.
     pub packing_strategy: PackingStrategy,
-    /// Packing algorithm family (docs: *Algorithm*). `enable_polygon` takes
+    /// Packing algorithm family. `enable_polygon` takes
     /// precedence; a legacy `packing_strategy = "Guillotine"` also selects it.
     #[serde(default)]
     pub algorithm: PackingAlgorithm,
-    /// Effort spent searching the minimum atlas size (docs: *Pack*).
+    /// Effort spent searching the minimum atlas size.
     #[serde(default)]
     pub pack_mode: PackMode,
-    /// Required atlas dimensions (docs: *Size Constraints*).
+    /// Required atlas dimensions.
     #[serde(default)]
     pub size_constraints: SizeConstraint,
-    /// Force the atlas to be square (docs: *Force squared*).
+    /// Force the atlas to be square.
     #[serde(default)]
     pub force_squared: bool,
-    /// Fixed atlas width; `0` lets the packer decide (docs: *Fixed Size*).
+    /// Fixed atlas width; `0` lets the packer decide.
     #[serde(default)]
     pub fixed_width: i32,
-    /// Fixed atlas height; `0` lets the packer decide (docs: *Fixed Size*).
+    /// Fixed atlas height; `0` lets the packer decide.
     #[serde(default)]
     pub fixed_height: i32,
-    /// Sort criterion for the `Basic` algorithm (docs: *Sort by*).
+    /// Sort criterion for the `Basic` algorithm.
     #[serde(default)]
     pub basic_sort_by: BasicSortBy,
-    /// Sort direction for the `Basic` algorithm (docs: *Order*).
+    /// Sort direction for the `Basic` algorithm.
     #[serde(default)]
     pub basic_order: SortOrder,
     /// Scale variants to emit, e.g. `[1.0, 0.5]` produces `atlas.png` and
-    /// `atlas-hd.png` (doc oficial: convención `-hd`, `@2x`...).
+    /// `atlas-hd.png` (sufijos de variante tipo `-hd`, `@2x`...).
     pub scale_variants: Vec<f32>,
-    /// Named variants (docs: *Scaling variants*): `(scale, name)` pairs whose
-    /// name replaces the automatic `{v}` suffix (official example:
-    /// `1.0 → -ipadhd`, `0.5 → -hd`). Empty = automatic suffixes.
+    /// Named variants (scaling variants): `(scale, name)` pairs whose
+    /// name replaces the automatic `{v}` suffix (p. ej. `1.0 → -ipadhd`,
+    /// `0.5 → -hd`). Empty = automatic suffixes.
     #[serde(default)]
     pub variant_names: Vec<(f32, String)>,
     /// Auto co-pack `*_normal.png` companions in the same frames.
@@ -744,11 +743,10 @@ pub struct ProjectConfig {
     pub detect_border_max_search: i32,
     /// Naming scheme for atlas pages: `atlas`, `atlas_1`, `atlas_2`, ...
     /// Placeholders `{n}` (índice desde 0), `{n1}` (desde 1) y `{v}`
-    /// (sufijo de variante) se expanden al nombrar cada hoja y su data file
-    /// (docs: *Multipack placeholders*).
+    /// (sufijo de variante) se expanden al nombrar cada hoja y su data file.
     pub base_file_name: String,
     /// Allow emitting more than one sprite sheet when the sprites do not fit
-    /// in a single texture (docs: *Multipack*). When `false`, such a pack
+    /// in a single texture (multipack). When `false`, such a pack
     /// fails with an error instead.
     #[serde(default = "default_true")]
     pub multipack: bool,
@@ -763,41 +761,40 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub excluded_inputs: Vec<PathBuf>,
     /// Space kept between the sprites and the border of the sprite sheet
-    /// (docs: *Border padding*). Independent from `padding`.
+    /// (border padding). Independent from `padding`.
     #[serde(default)]
     pub border_padding: i32,
     /// Extend sprite sizes (with transparency) to be divisible by this value
-    /// (docs: *Common divisor*). `1` keeps sizes untouched.
+    /// (common divisor). `1` keeps sizes untouched.
     #[serde(default = "default_divisor")]
     pub common_divisor_x: i32,
     /// Same as [`Self::common_divisor_x`] for the vertical axis.
     #[serde(default = "default_divisor")]
     pub common_divisor_y: i32,
     /// Place the top-left corners of sprites on atlas coordinates divisible
-    /// by this value (docs: *Align to grid*). `0` disables the option.
+    /// by this value (align to grid). `0` disables the option.
     #[serde(default)]
     pub align_to_grid: i32,
-    /// How transparent pixels are handled before packing (docs:
-    /// *Transparency Handling*).
+    /// How transparent pixels are handled before packing (alpha handling).
     #[serde(default)]
     pub alpha_handling: AlphaHandling,
-    /// Resampling used when generating scale variants (docs: *Scale mode*).
+    /// Resampling used when generating scale variants (scale mode).
     #[serde(default)]
     pub scale_mode: ScaleMode,
-    /// Path prepended to the texture file name inside the metadata (docs:
-    /// *Texture path*), e.g. `/assets`.
+    /// Path prepended to the texture file name inside the metadata
+    /// (texture path), e.g. `/assets`.
     #[serde(default)]
     pub texture_path: Option<String>,
-    /// Remove image file extensions from the sprite names (docs: *Trim sprite
-    /// names*). When `false` the names keep e.g. `.png`.
+    /// Remove image file extensions from the sprite names (trim sprite
+    /// names). When `false` the names keep e.g. `.png`.
     #[serde(default = "default_true")]
     pub trim_sprite_names: bool,
     /// Prepend the smart folder's name to the sprite names of its files
-    /// (docs: *Prepend folder name*).
+    /// (prepend folder name).
     #[serde(default)]
     pub prepend_folder_name: bool,
     /// Group sprites sharing a base name plus numeric suffix into animations
-    /// exposed in the metadata (docs: *Auto-detect animations*). Sprites like
+    /// exposed in the metadata (auto-detect animations). Sprites like
     /// `walk_001.png`, `walk_002.png`, `walk_003.png` define `walk`.
     #[serde(default = "default_true")]
     pub enable_auto_detect_animations: bool,
@@ -923,8 +920,8 @@ impl ProjectConfig {
         )
     }
 
-    /// Algorithm actually used by the packer. Following the official docs,
-    /// selecting the *Polygon* trim mode switches the algorithm to *Polygon*
+    /// Algorithm actually used by the packer. Selecting the *Polygon* trim
+    /// mode switches the algorithm to *Polygon*
     /// automatically; the legacy `enable_polygon` / `--polygon` switches map
     /// to the same behavior, and a legacy `packing_strategy = "Guillotine"`
     /// still selects the Guillotine algorithm.
@@ -1020,7 +1017,7 @@ impl ProjectConfig {
                 ));
             }
         }
-        // Doc oficial *Transparency threshold*: "Allowed values: 1 to 255".
+        // Umbral de transparencia admitido: 1 a 255.
         if !(1..=255).contains(&self.trim_threshold) {
             return Err(TpError::Config(
                 "trim_threshold debe estar entre 1 y 255".to_string(),
@@ -1041,7 +1038,7 @@ impl ProjectConfig {
                 "scale_variants no puede estar vacío".to_string(),
             ));
         }
-        // Doc oficial: la escala puede ser >1 (@2x Retina) hasta 8.
+        // La escala puede ser >1 (p. ej. @2x Retina) hasta 8.
         for s in &self.scale_variants {
             if *s <= 0.0 || *s > 8.0 {
                 return Err(TpError::Config(format!(
@@ -1315,7 +1312,7 @@ mod tests {
         legacy.packing_strategy = PackingStrategy::Bssf;
         legacy.algorithm = PackingAlgorithm::Basic;
         legacy.enable_polygon = true;
-        // Docs: polygon packing (the Polygon algorithm) takes over.
+        // Polygon packing (the Polygon algorithm) takes over.
         assert_eq!(legacy.effective_algorithm(), PackingAlgorithm::Polygon);
         // Trim mode Polygon also switches the algorithm automatically.
         let poly_trim = ProjectConfig {

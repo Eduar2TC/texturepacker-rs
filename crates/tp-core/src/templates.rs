@@ -11,9 +11,8 @@ use crate::types::{PackResult, PageInfo};
 use serde_json::{json, Value};
 
 /// Extension for the metadata file of a template format.
-/// File extension of the data file for each built-in format, following the
-/// conventions of the official TexturePacker exporters: LibGDX is an *XML*
-/// atlas (`.atlas` would be libgdx's own pack file), cocos2d uses *plist*,
+/// File extension of the data file for each built-in format: LibGDX uses an
+/// *XML* atlas (`.atlas` is libgdx's own pack file), cocos2d uses *plist*,
 /// C++/ObjC exporters write a *header*.
 pub fn metadata_extension(format: TemplateFormat) -> &'static str {
     match format {
@@ -30,7 +29,7 @@ pub fn metadata_extension(format: TemplateFormat) -> &'static str {
 ///
 /// `scale` scales frame coordinates, source sizes and UVs (for @2x/@1x
 /// variants). All numeric values are rounded to integers where appropriate.
-/// One auto-detected animation (docs: *Auto-detect animations*).
+/// One auto-detected animation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DetectedAnimation {
     /// Animation name: the sprite base name without its numeric suffix.
@@ -40,7 +39,7 @@ pub struct DetectedAnimation {
 }
 
 /// Group sprites whose names share a base plus numeric suffix into
-/// animations, TexturePacker-style: `walk_001.png`, `walk_002.png`,
+/// animations: `walk_001.png`, `walk_002.png`,
 /// `walk_003.png` → animation `walk` with 3 frames. Sprites are grouped by
 /// their longest common prefix ending in a separator (`_`, `-`, `.` or space)
 /// followed by digits only. A group needs ≥ 2 members to count as an
@@ -192,7 +191,7 @@ pub fn build_context(
         }));
     }
 
-    // Docs: *Texture path* — prepend the configured path to the texture file
+    // Texture path — prepend the configured path to the texture file
     // name referenced by the metadata (e.g. `/assets` + `atlas.png`).
     let texture_path = result
         .config
@@ -206,7 +205,7 @@ pub fn build_context(
         None => file,
     };
 
-    // Docs: *Auto-detect animations* — group `walk_001..00N` into `walk`.
+    // Auto-detect animations — group `walk_001..00N` into `walk`.
     let animations: Vec<Value> = if result.config.enable_auto_detect_animations {
         let ids: Vec<String> = result.sprites.iter().map(|s| s.id.clone()).collect();
         detect_animations(&ids)

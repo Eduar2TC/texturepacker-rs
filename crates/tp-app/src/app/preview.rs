@@ -311,7 +311,7 @@ impl Edge {
 /// Tolerance (in screen pixels) for grabbing a green band with the mouse.
 const EDGE_GRAB_TOLERANCE: f32 = 4.0;
 
-/// Draw the green 9-patch border guides of one sprite (docs: *Borders*).
+/// Draw the green 9-patch border guides of one sprite.
 /// Lines are drawn inside the visible frame: `l`/`r` pixels from the left/right
 /// edges, `t`/`b` from the top/bottom. When `interactive` (selected sprite),
 /// each band can be grabbed and dragged with the mouse; returns the dragged

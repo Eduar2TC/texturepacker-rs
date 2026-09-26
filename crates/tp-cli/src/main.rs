@@ -56,8 +56,8 @@ fn usage() -> ! {
          \x20 --size-constraints T  any | pot | multiple-of-4 | word-aligned\n\
          \x20 --force-squared       Atlas cuadrado\n\
          \x20 --width N             Ancho fijo del atlas (0 = automático)\n\
-         \x20 --variant E:NOMBRE    Variante con nombre oficial, p.ej. 1.0:-ipadhd,0.5:-hd\n\
-         \x20 --variants LIST       Escalas, p.ej. 2,0.5 (sufijos oficiales @2x, -hd)\n\
+         \x20 --variant E:NOMBRE    Variante con nombre, p.ej. 1.0:-ipadhd,0.5:-hd\n\
+         \x20 --variants LIST       Escalas, p.ej. 2,0.5 (sufijos @2x, -hd)\n\
          \x20 --template-format T   json | xml | plist | cpp | tsv | text\n\
          \x20 --key CLAVE           Cifrar texturas con AES-256-GCM\n\
          \x20 --no-normals          No empaquetar mapas de normales\n\
@@ -145,7 +145,7 @@ fn cmd_pack(args: &[String]) {
             .parse()
             .unwrap_or_else(|_| fail("--max-size inválido".into()));
     }
-    // Doc oficial: `--shape-padding` es el nombre canónico; `--padding` queda
+    // `--shape-padding` es el nombre canónico; `--padding` queda
     // como alias corto.
     if let Some(v) = val("shape-padding").or_else(|| val("padding")) {
         cfg.padding = v
@@ -605,7 +605,7 @@ mod tests {
 
     #[test]
     fn official_flags_parse() {
-        // Aliases con los nombres canónicos de la doc oficial.
+        // Aliases con los nombres canónicos de las opciones.
         let (_, values, flags) = parse_args(&args(&[
             "--input",
             "in",

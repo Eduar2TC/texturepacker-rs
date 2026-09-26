@@ -92,7 +92,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
 
             ui.separator();
 
-            // -------- 9-patch / 3-patch (docs: *Borders*) --------
+            // -------- 9-patch / 3-patch --------
             ui.heading("Bordes 9-patch");
             ui.label(
                 egui::RichText::new(
@@ -141,7 +141,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                 .button("🔎 Detectar barras sólidas")
                 .on_hover_text(
                     "Detecta los bordes 9-patch analizando las filas/columnas de color \
-                     sólido del sprite original (estilo TexturePacker)",
+                     sólido del sprite original",
                 )
                 .clicked()
             {

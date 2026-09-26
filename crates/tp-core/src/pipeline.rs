@@ -44,8 +44,8 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     let mut warnings: Vec<String> = Vec::new();
 
     // ------------------------------------------------------------------
-    // Ajustes de rejilla (docs: *Align to grid* / *Common divisor* / *Border
-    // padding*). Alinear obliga a que el padding sea múltiplo del valor; los
+    // Ajustes de rejilla (align to grid / common divisor / border padding).
+    // Alinear obliga a que el padding sea múltiplo del valor; los
     // tamaños de los sprites se estiran hasta el múltiplo común en la ingesta.
     // ------------------------------------------------------------------
     let align = config.align_to_grid.max(0);
@@ -71,7 +71,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     }
     let (div_x, div_y) = config.effective_divisors();
 
-    // Avisos de exportación (docs: *flip-y*, *Pixel format*).
+    // Avisos de exportación (flip-y, pixel format).
     if config.flip_vertical && !config.gpu_format.is_hardware() {
         warnings.push(
             "Voltear verticalmente (flip Y) solo aplica a formatos de hardware \
@@ -136,7 +136,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     // PASO 4 (optional): polygon engine (contour -> RDP -> earcut)
     // ------------------------------------------------------------------
     let t = Instant::now();
-    // Docs: *Algorithm → Polygon* — trim mode Polygon (or the legacy
+    // Algorithm → Polygon — trim mode Polygon (or the legacy
     // `enable_polygon` switch) enables mesh extraction and polygon packing.
     let use_polygon = config.effective_algorithm() == crate::config::PackingAlgorithm::Polygon;
     let mut meshes: Vec<Option<polygon::Polygons>> = vec![None; sprites.len()];
@@ -198,7 +198,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     let pack_out = pack::pack(&items, &opts)?;
     stage_times.push(("packing".into(), t.elapsed().as_millis() as u64));
 
-    // Docs: *Multipack* — con la opción desactivada todas las imágenes deben
+    // Multipack — con la opción desactivada todas las imágenes deben
     // caber en una sola hoja.
     if !config.multipack && pack_out.pages.len() > 1 {
         let (pw, ph) = (pack_out.pages[0].width, pack_out.pages[0].height);
@@ -210,7 +210,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
             pack_out.pages.len()
         )));
     }
-    // Docs: *Multipack placeholders* — avisar cuando varias hojas se nombran
+    // Multipack placeholders — avisar cuando varias hojas se nombran
     // con el sufijo implícito `_N` en vez de un placeholder `{n}`/`{n1}`.
     if pack_out.pages.len() > 1 && !has_page_placeholder(&config.base_file_name) {
         warnings.push(format!(
@@ -362,7 +362,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     stage_times.push(("blit".into(), t.elapsed().as_millis() as u64));
 
     // ------------------------------------------------------------------
-    // PASO 8b: transparency handling (docs: *Transparency Handling*)
+    // PASO 8b: transparency handling (alpha handling)
     // ------------------------------------------------------------------
     if config.alpha_handling != AlphaHandling::KeepTransparentPixels {
         let t = Instant::now();
@@ -483,7 +483,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     let flip_active = config.flip_vertical && config.gpu_format.is_hardware();
 
     // Sufijo {v} de cada escala: nombre explícito de `variant_names`
-    // (docs: *Scaling variants*, p. ej. `1.0 → -ipadhd`) o convención
+    // (scaling variants, p. ej. `1.0 → -ipadhd`) o convención
     // automática @2x / -hd / -sd.
     let variant_for = |scale: f32| -> String {
         config
@@ -591,7 +591,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
 
         // Metadata via template engine. Con un placeholder de página en el
         // nombre base cada hoja escribe su propio data file con solo sus
-        // frames (docs: *Multipack*); sin él se emite un único fichero con
+        // frames (multipack); sin él se emite un único fichero con
         // todas las páginas.
         let per_page = has_page_placeholder(&config.base_file_name);
         if per_page {
@@ -735,7 +735,7 @@ fn has_page_placeholder(base: &str) -> bool {
 
 /// Expand a file-name stem for one sheet + scale variant.
 ///
-/// Placeholders (docs: *Multipack placeholders*): `{n}`/`{n0}` → índice de
+/// Placeholders (multipack placeholders): `{n}`/`{n0}` → índice de
 /// hoja desde 0, `{n1}` → desde 1, `{v}` → sufijo de variante (incluye el
 /// guion bajo: `""` en la base, `_0.5x` en el resto). Cuando el nombre no
 /// contiene el placeholder correspondiente se conserva la nomenclatura
@@ -774,7 +774,7 @@ fn with_ext(stem: &str, ext: &str) -> String {
     }
 }
 
-/// Variant suffix `{v}` following TexturePacker's conventions: `@2x` for
+/// Variant suffix `{v}` conventions: `@2x` for
 /// integer scales (Retina/iOS), `-hd`/`-sd` for 0.5/1.0 cocos2d pairs, and the
 /// plain scale value with dot for anything else (`_0.75x`-style is replaced by
 /// `@0.75x`). Base scale 1.0 without other variants gets an empty suffix.

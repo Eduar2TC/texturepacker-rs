@@ -1,6 +1,6 @@
 //! Main application state and panel orchestration.
 //!
-//! Layout mirrors TexturePacker's UI overview:
+//! Layout:
 //!
 //! - **Tool bar** (`toolbar`): open/save, add/remove sprites, sprite settings, publish
 //! - **Sprites panel** (`sprites_panel`, left): folder/sprite tree with drag & drop

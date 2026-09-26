@@ -222,7 +222,7 @@ pub fn quantize_page(
                 let err = old - q;
                 f[i] = q;
                 // The alpha channel is always quantized; only the `*Alpha`
-                // algorithms diffuse error into it (docs: *Dithering*).
+                // algorithms diffuse error into it.
                 if c < 3 || dither_alpha {
                     distribute_error(&mut f, dither_ctx(x, y, c), err);
                 }

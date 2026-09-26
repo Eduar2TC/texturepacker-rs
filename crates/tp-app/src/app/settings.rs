@@ -102,7 +102,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             )
             .on_hover_text(
                 "Agrupa sprites como walk_001..walk_003 en una animación walk \
-                 y la expone en los metadatos (docs: Auto-detect animations)",
+                 y la expone en los metadatos (auto-detectar animaciones)",
             );
             ui.label("Ruta de la textura en los metadatos (p. ej. /assets)");
             let mut texture_path = app.config.texture_path.clone().unwrap_or_default();
@@ -120,7 +120,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     Some(texture_path)
                 };
             }
-            ui.label("Scaling variants (docs: Scaling variants; p. ej. 2, 0.5 → @2x, -hd)");
+            ui.label("Scaling variants (p. ej. 2, 0.5 → @2x, -hd)");
             ui.add(egui::TextEdit::singleline(&mut app.variants_text).desired_width(190.0));
             ui.label("Plantilla Mustache personalizada (opcional)");
             ui.horizontal(|ui| {
@@ -187,7 +187,7 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 "Solo formatos de hardware (ASTC/ETC2/PVRTC); las coordenadas \
                      de los frames no cambian",
             );
-            // Docs: Trim mode Polygon cambia el algoritmo a Polygon
+            // Trim mode Polygon cambia el algoritmo a Polygon
             // automáticamente; se muestra y no se puede elegir a mano.
             let polygon_auto =
                 app.config.effective_trim_mode() == TrimMode::Polygon || app.config.enable_polygon;
@@ -282,7 +282,7 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 );
             })
             .response
-            .on_hover_text("Fija las dimensiones del atlas (docs: Fixed Size)");
+            .on_hover_text("Fija las dimensiones del atlas (tamaño fijo)");
             if app.config.algorithm == PackingAlgorithm::Basic {
                 enum_combo(
                     ui,

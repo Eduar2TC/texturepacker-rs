@@ -786,7 +786,7 @@ fn lote7_variant_placeholder_and_scaled_pages() {
     assert!(out.pages.len() >= 2);
 
     // Base variant: paq1.png / paq1.json ...
-    // Scaled variant: paq1-hd.png / paq1-hd.json ... (sufijo {v} oficial)
+    // Scaled variant: paq1-hd.png / paq1-hd.json ... (sufijo {v} de variante)
     for i in 1..=out.pages.len() {
         assert!(output.join(format!("paq{i}.png")).exists());
         assert!(output.join(format!("paq{i}.json")).exists());
