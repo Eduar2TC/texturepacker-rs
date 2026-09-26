@@ -5,6 +5,7 @@ members = ["crates/tp-core", "crates/tp-app", "crates/tp-cli"]
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.93"
 license = "MIT"
 repository = "https://example.invalid/texturepacker-rs"
 description = "TexturePacker-RS: a parallel texture atlas packer engine and desktop app written in Rust"
