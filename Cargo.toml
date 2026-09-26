@@ -35,3 +35,7 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
+# Lint de estilo introducido en clippy 1.98: sugiere `as_chunks::<N>()` en los
+# ~29 `chunks_exact(4)` del motor. Se permite para que `-D warnings` sea
+# estable entre versiones de toolchain (local 1.93 vs CI stable).
+chunks_exact_to_as_chunks = { level = "allow", priority = 1 }
