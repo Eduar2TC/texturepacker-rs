@@ -5,11 +5,16 @@
 //! (libgdx TextureAtlas), Plist (cocos2d), C++ header, TSV and plain text.
 //! Users can supply their own `.hbs` template via `export_template`.
 
-use crate::config::{ProjectConfig, TemplateFormat};
+use crate::config::{ProjectConfig, TemplateFormat, TrimMode};
+use crate::error::Result;
 use crate::types::{PackResult, PageInfo};
 use serde_json::{json, Value};
 
 /// Extension for the metadata file of a template format.
+/// File extension of the data file for each built-in format, following the
+/// conventions of the official TexturePacker exporters: LibGDX is an *XML*
+/// atlas (`.atlas` would be libgdx's own pack file), cocos2d uses *plist*,
+/// C++/ObjC exporters write a *header*.
 pub fn metadata_extension(format: TemplateFormat) -> &'static str {
     match format {
         TemplateFormat::Json => "json",
@@ -25,18 +30,111 @@ pub fn metadata_extension(format: TemplateFormat) -> &'static str {
 ///
 /// `scale` scales frame coordinates, source sizes and UVs (for @2x/@1x
 /// variants). All numeric values are rounded to integers where appropriate.
+/// One auto-detected animation (docs: *Auto-detect animations*).
+#[derive(Debug, Clone, PartialEq)]
+pub struct DetectedAnimation {
+    /// Animation name: the sprite base name without its numeric suffix.
+    pub name: String,
+    /// Ordered sprite ids (`walk_001`, `walk_002`, ...).
+    pub frames: Vec<String>,
+}
+
+/// Group sprites whose names share a base plus numeric suffix into
+/// animations, TexturePacker-style: `walk_001.png`, `walk_002.png`,
+/// `walk_003.png` → animation `walk` with 3 frames. Sprites are grouped by
+/// their longest common prefix ending in a separator (`_`, `-`, `.` or space)
+/// followed by digits only. A group needs ≥ 2 members to count as an
+/// animation, and ids keep the source order.
+pub fn detect_animations(sprite_ids: &[String]) -> Vec<DetectedAnimation> {
+    use std::collections::BTreeMap;
+
+    fn split_suffix(id: &str) -> Option<(&str, &str, u64)> {
+        let digits_end = id.len() - id.chars().rev().take_while(|c| c.is_ascii_digit()).count();
+        if digits_end == 0 || digits_end == id.len() {
+            return None;
+        }
+        let (base, num) = id.split_at(digits_end);
+        let sep = base.chars().last()?;
+        if !matches!(sep, '_' | '-' | '.' | ' ') {
+            return None;
+        }
+        let num_value: u64 = num.parse().ok()?;
+        // `base` conserva el separador final: walk_001 → base "walk_"
+        Some((base, num, num_value))
+    }
+
+    let mut groups: BTreeMap<&str, Vec<(&str, u64)>> = BTreeMap::new();
+    for id in sprite_ids {
+        if let Some((base, _num, value)) = split_suffix(id) {
+            groups.entry(base).or_default().push((id, value));
+        }
+    }
+
+    let mut animations = Vec::new();
+    for (base, mut members) in groups {
+        if members.len() < 2 {
+            continue;
+        }
+        members.sort_by_key(|(_, v)| *v);
+        // La animación se llama como el base sin el separador final.
+        let name = base.trim_end_matches(['_', '-', '.', ' ']).to_string();
+        animations.push(DetectedAnimation {
+            name,
+            frames: members.into_iter().map(|(id, _)| id.to_string()).collect(),
+        });
+    }
+    animations
+}
+
 pub fn build_context(
     result: &PackResult,
     page_infos: &[PageInfo],
     image_files: &[String],
     scale: f32,
+    trim_mode: TrimMode,
 ) -> Value {
     let mut frames = Vec::new();
     for sprite in &result.sprites {
         let frame = scaled_rect(&sprite.allocated_frame, scale);
         let visible = scaled_rect(&sprite.visible_frame, scale);
 
-        let trimmed = sprite.trimmed_bounds.width > 0 && sprite.trimmed_bounds.height > 0;
+        // Source-space geometry: `trimmed_bounds` lives in the *original*
+        // image, while `visible_frame` is the position inside the atlas.
+        let tw = sprite.trimmed_bounds.width;
+        let th = sprite.trimmed_bounds.height;
+        let trimmed = trim_mode.trims() && (tw < sprite.raw_width || th < sprite.raw_height);
+        let scale_i = |v: i32| (v as f32 * scale).round() as i32;
+        let off_x = scale_i(sprite.trimmed_bounds.x);
+        let off_y = scale_i(sprite.trimmed_bounds.y);
+        let tw_s = scale_i(tw);
+        let th_s = scale_i(th);
+        let raw_w = scale_i(sprite.raw_width);
+        let raw_h = scale_i(sprite.raw_height);
+
+        let (sss_x, sss_y, sss_w, sss_h, src_w, src_h) = match trim_mode {
+            // Crop, flush position: the sprite looks as if it never had
+            // transparency (offset and original size are dropped).
+            TrimMode::Crop if trimmed => (0, 0, tw_s, th_s, tw_s, th_s),
+            // No trimming at all: everything stays at 0/0 with the raw size.
+            _ if !trimmed => (0, 0, raw_w, raw_h, raw_w, raw_h),
+            // Trim / CropKeepPos / Polygon: keep the offset so the engine can
+            // restore the original placement.
+            _ => (off_x, off_y, tw_s, th_s, raw_w, raw_h),
+        };
+
+        // `Crop` moves the anchor into the trimmed space; every other mode
+        // reports the pivot relative to the original sprite.
+        let pivot = match trim_mode {
+            TrimMode::Crop if trimmed => {
+                let px = sprite.pivot.x * sprite.raw_width as f32 - sprite.trimmed_bounds.x as f32;
+                let py = sprite.pivot.y * sprite.raw_height as f32 - sprite.trimmed_bounds.y as f32;
+                json!({
+                    "x": round2((px / tw as f32).clamp(0.0, 1.0)),
+                    "y": round2((py / th as f32).clamp(0.0, 1.0)),
+                })
+            }
+            _ => json!({"x": sprite.pivot.x, "y": sprite.pivot.y}),
+        };
 
         // Polygon data (local mesh vertices + recomputed UVs for this scale).
         let (polygon, mesh) = match &sprite.mesh {
@@ -81,9 +179,10 @@ pub fn build_context(
             "frame": {"x": frame.x, "y": frame.y, "w": frame.width, "h": frame.height},
             "rotated": sprite.is_rotated,
             "trimmed": trimmed,
-            "spriteSourceSize": {"x": visible.x, "y": visible.y, "w": visible.width, "h": visible.height},
-            "sourceSize": {"w": (sprite.raw_width as f32 * scale).round() as i64, "h": (sprite.raw_height as f32 * scale).round() as i64},
-            "pivot": {"x": sprite.pivot.x, "y": sprite.pivot.y},
+            "spriteSourceSize": {"x": sss_x, "y": sss_y, "w": sss_w, "h": sss_h},
+            "sourceSize": {"w": src_w, "h": src_h},
+            "pivot": pivot,
+            "border": sprite.border.map(|b| json!({"left": b[0], "top": b[1], "right": b[2], "bottom": b[3]})),
             "page": sprite.atlas_page_index,
             "aliased": sprite.is_alias,
             "aliasTarget": sprite.alias_target_id,
@@ -93,7 +192,37 @@ pub fn build_context(
         }));
     }
 
-    let first_image = image_files.first().cloned().unwrap_or_default();
+    // Docs: *Texture path* — prepend the configured path to the texture file
+    // name referenced by the metadata (e.g. `/assets` + `atlas.png`).
+    let texture_path = result
+        .config
+        .texture_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .map(|p| p.trim_end_matches('/'));
+    let with_texture_path = |file: String| match texture_path {
+        Some(prefix) => format!("{prefix}/{file}"),
+        None => file,
+    };
+
+    // Docs: *Auto-detect animations* — group `walk_001..00N` into `walk`.
+    let animations: Vec<Value> = if result.config.enable_auto_detect_animations {
+        let ids: Vec<String> = result.sprites.iter().map(|s| s.id.clone()).collect();
+        detect_animations(&ids)
+            .into_iter()
+            .map(|a| {
+                json!({
+                    "name": a.name,
+                    "frames": a.frames,
+                })
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    let first_image = with_texture_path(image_files.first().cloned().unwrap_or_default());
     let meta_pages: Vec<Value> = page_infos
         .iter()
         .enumerate()
@@ -102,13 +231,14 @@ pub fn build_context(
                 "index": p.index,
                 "width": p.width,
                 "height": p.height,
-                "file": image_files.get(i).cloned().unwrap_or_default(),
+                "file": with_texture_path(image_files.get(i).cloned().unwrap_or_default()),
                 "fillRatio": round4(p.fill_ratio),
             })
         })
         .collect();
 
     json!({
+        "animations": animations,
         "meta": {
             "app": "TexturePacker-RS",
             "version": env!("CARGO_PKG_VERSION"),
@@ -158,17 +288,27 @@ pub fn render(
     image_files: &[String],
     scale: f32,
     config: &ProjectConfig,
-) -> Result<String, String> {
-    let ctx = build_context(result, page_infos, image_files, scale);
+) -> Result<String> {
+    let ctx = build_context(
+        result,
+        page_infos,
+        image_files,
+        scale,
+        config.effective_trim_mode(),
+    );
 
     match config.template_format {
         TemplateFormat::Json => {
-            serde_json::to_string_pretty(&ctx).map_err(|e| format!("JSON: {e}"))
+            serde_json::to_string_pretty(&ctx).map_err(crate::error::TpError::Json)
         }
         other => {
             let template = match &config.export_template {
-                Some(path) => std::fs::read_to_string(path)
-                    .map_err(|e| format!("No se pudo leer la plantilla {}: {e}", path.display()))?,
+                Some(path) => std::fs::read_to_string(path).map_err(|e| {
+                    crate::error::TpError::Other(format!(
+                        "No se pudo leer la plantilla {}: {e}",
+                        path.display()
+                    ))
+                })?,
                 None => builtin_template(other).to_string(),
             };
             render_mustache(&template, &ctx)
@@ -177,12 +317,11 @@ pub fn render(
 }
 
 /// Render a Mustache template against a JSON context.
-pub fn render_mustache(template: &str, ctx: &Value) -> Result<String, String> {
+pub fn render_mustache(template: &str, ctx: &Value) -> Result<String> {
     let mut reg = handlebars::Handlebars::new();
     reg.set_strict_mode(false);
     reg.register_escape_fn(handlebars::no_escape);
-    reg.render_template(template, ctx)
-        .map_err(|e| format!("Error de plantilla: {e}"))
+    reg.render_template(template, ctx).map_err(Into::into)
 }
 
 fn builtin_template(format: TemplateFormat) -> &'static str {
@@ -216,7 +355,14 @@ fn builtin_template(format: TemplateFormat) -> &'static str {
 	<dict>
 		<key>format</key>
 		<integer>3</integer>
-		<key>realTextureFileName</key>
+		{{#if animations}}<key>animations</key>
+		<dict>
+{{#each animations}}			<key>{{this.name}}</key>
+			<array>
+{{#each this.frames}}				<string>{{this}}</string>
+{{/each}}			</array>
+{{/each}}		</dict>
+		{{/if}}<key>realTextureFileName</key>
 		<string>{{meta.image}}</string>
 		<key>size</key>
 		<string>{{meta.size.w}},{{meta.size.h}}</string>
@@ -263,9 +409,54 @@ mod tests {
     use crate::config::ProjectConfig;
     use crate::types::{PageInfo, Rect, SpriteAsset};
 
+    fn ids(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn detect_animations_groups_numeric_suffixes() {
+        let got = detect_animations(&ids(&[
+            "walk_001", "walk_002", "walk_003", "hero", "run-1", "run-2",
+        ]));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "run");
+        assert_eq!(
+            got[0].frames,
+            vec!["run-1".to_string(), "run-2".to_string()]
+        );
+        assert_eq!(got[1].name, "walk");
+        assert_eq!(
+            got[1].frames,
+            vec![
+                "walk_001".to_string(),
+                "walk_002".to_string(),
+                "walk_003".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn detect_animations_requires_two_members_and_separator() {
+        // Sin separador antes del número no hay grupo; un miembro solo tampoco.
+        let got = detect_animations(&ids(&["walk1", "walk_2", "jump_1"]));
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn detect_animations_sorts_by_number_not_by_name() {
+        // `10` debe ir tras `9`, no antes por orden lexicográfico.
+        let got = detect_animations(&ids(&["f_9", "f_10", "f_11"]));
+        assert_eq!(
+            got[0].frames,
+            vec!["f_9".to_string(), "f_10".to_string(), "f_11".to_string()]
+        );
+    }
+
     fn sample_result() -> PackResult {
-        let mut cfg = ProjectConfig::default();
-        cfg.color_depth = crate::config::ColorDepth::Rgba8888;
+        let cfg = ProjectConfig {
+            color_depth: crate::config::ColorDepth::Rgba8888,
+            ..ProjectConfig::default()
+        };
         PackResult {
             config: cfg,
             sprites: vec![SpriteAsset {
@@ -280,6 +471,7 @@ mod tests {
                 is_alias: false,
                 alias_target_id: None,
                 pivot: crate::types::Point2D::new(0.5, 0.5),
+                border: Some([4, 4, 4, 4]),
                 mesh: None,
                 allocated_frame: Rect::new(10, 20, 94, 74),
                 visible_frame: Rect::new(12, 22, 90, 70),
@@ -323,6 +515,31 @@ mod tests {
     }
 
     #[test]
+    fn texture_path_prefixes_image_references() {
+        let mut r = sample_result();
+        r.config.texture_path = Some("/assets/".into());
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["meta"]["image"], "/assets/atlas.png");
+        assert_eq!(v["meta"]["pages"][0]["file"], "/assets/atlas.png");
+
+        // Sin texture_path el nombre no cambia.
+        r.config.texture_path = None;
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["meta"]["image"], "atlas.png");
+
+        // El prefijo también llega a las plantillas Mustache (XML).
+        r.config.texture_path = Some("/assets".into());
+        r.config.template_format = TemplateFormat::Xml;
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        assert!(
+            out.contains("imagePath=\"/assets/atlas.png\""),
+            "out: {out}"
+        );
+    }
+
+    #[test]
     fn xml_renders() {
         let mut r = sample_result();
         r.config.template_format = TemplateFormat::Xml;
@@ -350,6 +567,53 @@ mod tests {
         assert_eq!(v["frames"][0]["frame"]["x"], 5);
         assert_eq!(v["frames"][0]["frame"]["w"], 47);
         assert_eq!(v["meta"]["scale"], "0.5");
+    }
+
+    #[test]
+    fn sprite_source_size_reports_source_offset_not_atlas() {
+        let r = sample_result();
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let sss = &v["frames"][0]["spriteSourceSize"];
+        assert_eq!(
+            sss["x"], 4,
+            "offset X debe ser el del original, no el atlas"
+        );
+        assert_eq!(
+            sss["y"], 5,
+            "offset Y debe ser el del original, no el atlas"
+        );
+        assert_eq!(sss["w"], 90);
+        assert_eq!(v["frames"][0]["trimmed"], true);
+        assert_eq!(v["frames"][0]["sourceSize"]["w"], 100);
+    }
+
+    #[test]
+    fn trim_mode_none_keeps_original_geometry() {
+        let mut r = sample_result();
+        r.config.enable_trim = false;
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let f = &v["frames"][0];
+        assert_eq!(f["trimmed"], false);
+        assert_eq!(f["spriteSourceSize"]["x"], 0);
+        assert_eq!(f["spriteSourceSize"]["w"], 100);
+        assert_eq!(f["sourceSize"]["h"], 80);
+    }
+
+    #[test]
+    fn crop_flushes_position_and_moves_pivot() {
+        let mut r = sample_result();
+        r.config.trim_mode = crate::config::TrimMode::Crop;
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+        let f = &v["frames"][0];
+        assert_eq!(f["spriteSourceSize"]["x"], 0);
+        assert_eq!(f["spriteSourceSize"]["w"], 90);
+        assert_eq!(f["sourceSize"]["w"], 90);
+        // (0.5*100 - 4) / 90 = 0.5111... -> 0.51
+        let px = f["pivot"]["x"].as_f64().unwrap();
+        assert!((px - 0.51).abs() < 1e-6, "pivot.x = {px}");
     }
 
     #[test]
