@@ -1213,4 +1213,26 @@ fn lote10_pixel_formats_rgba5551_and_bgra8888() {
     for c in &px[..3] {
         assert!(valid.contains(c), "canal {c} fuera de la rejilla 5 bits");
     }
+
+    // RGBA5555: como 5551 pero el alfa también queda en la rejilla de 5 bits
+    // (100 → expand5(q(100)) = 99, no 0/255).
+    let mut p5555 = base.clone();
+    p5555.pixel_format = tp_core::config::PixelFormat::Rgba5555;
+    pipeline::run(&p5555).unwrap();
+    let sheet = image::open(output.join("atlas.png")).unwrap().to_rgba8();
+    let px = sheet.get_pixel(x as u32, y as u32).0;
+    assert_eq!(
+        px,
+        [
+            expand5(q(120)),
+            expand5(q(60)),
+            expand5(q(240)),
+            expand5(q(255))
+        ]
+    );
+    assert!(
+        valid.contains(&px[3]),
+        "alfa { } fuera de la rejilla 5 bits",
+        px[3]
+    );
 }

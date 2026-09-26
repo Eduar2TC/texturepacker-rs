@@ -513,6 +513,7 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     ui.selectable_value(v, PixelFormat::Intensity8, "INTENSITY8");
                     ui.selectable_value(v, PixelFormat::AlphaIntensity8, "Alpha+Intensity");
                     ui.selectable_value(v, PixelFormat::Rgba5551, "RGBA5551 (16 bits)");
+                    ui.selectable_value(v, PixelFormat::Rgba5555, "RGBA5555 (20 bits)");
                     ui.selectable_value(v, PixelFormat::Bgra8888, "BGRA8888");
                 },
                 &mut app.config.pixel_format,

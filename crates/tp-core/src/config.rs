@@ -226,6 +226,11 @@ pub enum PixelFormat {
     /// rejilla 5-5-5-1 (expansión por replicación de bits).
     #[serde(rename = "RGBA5551")]
     Rgba5551,
+    /// 20 bits: R5 G5 B5 + 5 bits de transparencia (docs: *RGBA5555*). Como
+    /// RGBA5551 pero el alfa se cuantiza a la rejilla de 5 bits en lugar de
+    /// colapsar a 0/255.
+    #[serde(rename = "RGBA5555")]
+    Rgba5555,
     /// 32 bits con canales reordenados a B,G,R,A (docs: *BGRA8888*); el PNG
     /// resultante lleva los canales R y B invertidos, para motores que cargan
     /// texturas en orden BGRA (p. ej. cocos2d).
@@ -242,6 +247,7 @@ impl PixelFormat {
             PixelFormat::Intensity8 => "INTENSITY8",
             PixelFormat::AlphaIntensity8 => "ALPHA_INTENSITY8",
             PixelFormat::Rgba5551 => "RGBA5551",
+            PixelFormat::Rgba5555 => "RGBA5555",
             PixelFormat::Bgra8888 => "BGRA8888",
         }
     }

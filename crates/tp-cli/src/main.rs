@@ -46,7 +46,7 @@ fn usage() -> ! {
          \x20 --png-opt-level N     Optimización PNG sin pérdida, 0-7 (1 = indexa si ≤256 colores)\n\
          \x20 --png8-dither T       Dithering PNG-8: low | medium | high\n\
          \x20 --jpg-quality N       Calidad JPG (0-100)\n\
-         \x20 --webp-quality N      Calidad WebP (0-100 lossy, >100 sin pérdidas)\n         \x20 --pixel-format T      rgba8888 | rgb888 | alpha8 | intensity8 | alpha-intensity8 | rgba5551 | bgra8888\n\\n\
+         \x20 --pixel-format T      rgba8888 | rgb888 | alpha8 | intensity8 | alpha-intensity8 | rgba5551 | rgba5555 | bgra8888\n\
          \x20 --strategy T          bssf (ShortSideFit) | baf (AreaFit) | blsf (LongSideFit) | best | bottom-left | contact-point | guillotine (alias: --maxrects-heuristics)\n\
          \x20 --strategy T          bssf | baf | blsf | best | bottom-left | contact-point | guillotine\n\
          \x20 --algorithm T         maxrects | polygon | guillotine | grid | basic\n\
@@ -270,6 +270,7 @@ fn cmd_pack(args: &[String]) {
             "intensity8" => PixelFormat::Intensity8,
             "alpha-intensity8" | "alpha_intensity8" => PixelFormat::AlphaIntensity8,
             "rgba5551" | "5551" => PixelFormat::Rgba5551,
+            "rgba5555" | "5555" => PixelFormat::Rgba5555,
             "bgra8888" => PixelFormat::Bgra8888,
             _ => fail(format!("--pixel-format inválido: {v}")),
         };

@@ -131,6 +131,22 @@ fn apply_pixel_format(rgba: &[u8], format: PixelFormat) -> (Vec<u8>, image::Exte
             }
             (out, Ct::Rgba8)
         }
+        // RGBA5555 (docs: *Pixel format*, 20 bits): igual que RGBA5551 pero el
+        // alfa también se cuantiza a 5 bits (32 niveles) en vez de 0/255.
+        PixelFormat::Rgba5555 => {
+            let mut out = Vec::with_capacity(rgba.len());
+            for px in rgba.chunks_exact(4) {
+                let q = |c: u8| ((c as u16 * 31 + 127) / 255) as u8;
+                let expand5 = |v: u8| (v << 3) | (v >> 2);
+                out.extend_from_slice(&[
+                    expand5(q(px[0])),
+                    expand5(q(px[1])),
+                    expand5(q(px[2])),
+                    expand5(q(px[3])),
+                ]);
+            }
+            (out, Ct::Rgba8)
+        }
         // BGRA8888 (docs: *Pixel format*): intercambia R y B en el archivo.
         PixelFormat::Bgra8888 => {
             let mut out = Vec::with_capacity(rgba.len());
@@ -954,8 +970,27 @@ mod tests {
     }
 
     #[test]
+    fn rgba5555_keeps_5_bit_alpha() {
+        // A diferencia de RGBA5551, el alfa NO colapsa a 0/255: 200 →
+        // q(200)=25 → expand5(25)=198; 100 → q(100)=12 → expand5(12)=99.
+        let rgba = [255u8, 0, 0, 200, 0, 255, 0, 100];
+        let (data, color) = apply_pixel_format(&rgba, PixelFormat::Rgba5555);
+        assert_eq!(color, image::ExtendedColorType::Rgba8);
+        let expand5 = |v: u8| (v << 3) | (v >> 2);
+        let q = |c: u8| ((c as u16 * 31 + 127) / 255) as u8;
+        assert_eq!(data[..4], [255, 0, 0, expand5(q(200))]);
+        assert_eq!(data[4..], [0, 255, 0, expand5(q(100))]);
+        assert_eq!(expand5(q(200)), 198);
+        assert_eq!(expand5(q(100)), 99);
+    }
+
+    #[test]
     fn new_formats_roundtrip_through_png_encoder() {
-        for format in [PixelFormat::Rgba5551, PixelFormat::Bgra8888] {
+        for format in [
+            PixelFormat::Rgba5551,
+            PixelFormat::Rgba5555,
+            PixelFormat::Bgra8888,
+        ] {
             let rgba: Vec<u8> = (0..16u32)
                 .flat_map(|i| [(i * 16) as u8, (i * 8) as u8, 255 - i as u8, (i * 17) as u8])
                 .collect();

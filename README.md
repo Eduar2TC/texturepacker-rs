@@ -143,7 +143,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png
 | Bordes 9-patch / 3-patch (docs: *Borders*)     | ✅     | `[izq, arriba, der, abajo]` en píxeles vía `borders.json`, editor en la GUI (presets 9-patch/3-patch), **detección automática** de filas/columnas de color sólido (botón «🔎 Detectar»), guías verdes arrastrables con el ratón en la vista previa y metadato `border` por frame |
 | Co-packing de normal maps                      | ✅     | `*_normal.png` en el mismo frame/página/rotación |
 | Cuantización (RGBA4444/RGB565)                 | ✅     | Aplicada a toda la página |
-| Pixel format RGBA5551 / BGRA8888               | ✅     | `pixel_format = "RGBA5551"` cuantiza a la rejilla 5-5-5-1 (expansión por replicación de bits); `"BGRA8888"` intercambia R/B en el archivo |
+| Pixel format RGBA5551 / RGBA5555 / BGRA8888    | ✅     | `pixel_format = "RGBA5551"` cuantiza a la rejilla 5-5-5-1 (expansión por replicación de bits, alfa 0/255); `"RGBA5555"` (20 bits) mantiene el alfa también en 5 bits; `"BGRA8888"` intercambia R/B en el archivo |
 | Dithering (Floyd–Steinberg / Atkinson)         | ✅     | Error diffusion por canal; variantes `*-Alpha` difunden también al alfa |
 | PNG / WebP                                     | ✅     | PNG y WebP lossless |
 | ASTC 4x4                                       | ✅*    | *Con `--features gpu-formats` (ARM astcenc oficial) |
@@ -290,15 +290,15 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 - Como **formato de salida** (doc oficial: *Texture format*) este clon escribe
   PNG, PNG8, JPG, WebP y los contenedores de hardware ASTC/ETC2(KTX)/PVRTC(.pvr);
   no escribe BMP/TGA/TIFF/DDS/PVR-gz/KTX2/Basis como TexturePacker comercial.
-- La doc oficial lista más heurísticas y formatos de píxel (RGBA5555, ETC1,
-  DXT, ASTC de otros tamaños de bloque, Basis Universal, ...); este clon
-  implementa el subconjunto de la especificación técnica del proyecto
-  (RGBA8888/4444/565, RGBA5551, BGRA8888, RGB888, ALPHA/INTENSITY,
-  ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp).
+- La doc oficial lista más heurísticas y formatos de píxel (ETC1, DXT, ASTC
+  de otros tamaños de bloque, Basis Universal, ...); este clon implementa el
+  subconjunto de la especificación técnica del proyecto (RGBA8888/4444/565,
+  RGBA5551/5555, BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA,
+  PVRTC1 4bpp).
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 161 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 162 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
