@@ -540,8 +540,13 @@ impl App {
             Err(e) => self.log(LogKind::Error, format!("No se pudo serializar: {e}")),
         }
         // Bordes 9-patch a un archivo propio (solo sprites con bordes).
+        self.write_borders_file(&borders);
+    }
+
+    /// Write `borders.json` next to the input sprites and log the result.
+    fn write_borders_file(&mut self, borders: &HashMap<String, [i32; 4]>) {
         let bpath = self.config.input_directory.join("borders.json");
-        match serde_json::to_string_pretty(&borders) {
+        match serde_json::to_string_pretty(borders) {
             Ok(text) => match std::fs::write(&bpath, text) {
                 Ok(_) => {
                     if !borders.is_empty() {
@@ -564,6 +569,38 @@ impl App {
                 LogKind::Error,
                 format!("No se pudo serializar borders.json: {e}"),
             ),
+        }
+    }
+
+    /// Persist `borders.json` without user action (drag release / Detect).
+    /// Silent when there is no input directory or nothing to save.
+    fn auto_save_borders(&mut self) {
+        if self.config.input_directory.as_os_str().is_empty() {
+            return;
+        }
+        let Some(out) = &self.result else {
+            return;
+        };
+        let borders: HashMap<String, [i32; 4]> = out
+            .result
+            .sprites
+            .iter()
+            .filter_map(|s| s.border.map(|b| (s.id.clone(), b)))
+            .collect();
+        if borders.is_empty() {
+            return; // nada que guardar: no crear archivos vacíos ni avisar
+        }
+        let path = self.config.input_directory.join("borders.json");
+        if let Ok(text) = serde_json::to_string_pretty(&borders) {
+            if std::fs::write(&path, text).is_ok() {
+                self.log(
+                    LogKind::Info,
+                    format!(
+                        "borders.json actualizado automáticamente ({} borde(s))",
+                        borders.len()
+                    ),
+                );
+            }
         }
     }
 

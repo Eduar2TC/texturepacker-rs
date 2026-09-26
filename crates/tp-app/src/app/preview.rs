@@ -114,6 +114,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     let mut picked: Option<String> = None;
     // Banda 9-patch que se está arrastrando (None = nada).
     let mut drag: Option<(Edge, i32)> = None;
+    let mut border_released = false;
 
     egui::ScrollArea::both()
         .id_salt("preview_scroll")
@@ -190,10 +191,11 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 let is_selected = |id: &str| app.selected_sprite.as_deref() == Some(id);
                 for sprite in &sprites {
                     let interactive = is_selected(&sprite.id) && !sprite.is_alias;
-                    if let Some((edge, value)) =
+                    if let Some((edge, value, released)) =
                         draw_borders(ui, painter, sprite, &to_screen, zoom, interactive)
                     {
                         drag = Some((edge, value));
+                        border_released |= released;
                     }
                 }
             }
@@ -218,6 +220,10 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
 
     if let Some((edge, value)) = drag {
         set_selected_border_edge(app, edge, value);
+        // Al soltar la banda, persistir borders.json (si hay directorio).
+        if border_released {
+            app.auto_save_borders();
+        }
     }
     if let Some(id) = picked {
         app.select_sprite(&id);
@@ -317,7 +323,7 @@ fn draw_borders(
     to_screen: &impl Fn(i32, i32) -> egui::Pos2,
     zoom: f32,
     interactive: bool,
-) -> Option<(Edge, i32)> {
+) -> Option<(Edge, i32, bool)> {
     let v = sprite.visible_frame;
     if v.width <= 0 || v.height <= 0 {
         return None;
@@ -358,6 +364,7 @@ fn draw_borders(
     ];
 
     let mut dragged: Option<(Edge, i32)> = None;
+    let mut released = false;
     for (edge, from, to) in bands {
         // Solo dibujar bandas con valor > 0 (las ocultas no se pueden arrastrar
         // hasta darles valor en el editor).
@@ -423,8 +430,11 @@ fn draw_borders(
                 {
                     dragged = Some((edge, new_value));
                 }
+                if response.drag_stopped() {
+                    released = true;
+                }
             }
         }
     }
-    dragged
+    dragged.map(|(edge, value)| (edge, value, released))
 }

@@ -33,6 +33,10 @@ opt-level = 3
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# El allow de chunks_exact_to_as_chunks (ver abajo) no existe en clippy < 1.98
+# y generaría unknown_lints; silenciado explícitamente para mantener
+# `-D warnings` estable entre toolchains.
+unknown_lints = "allow"
 
 [workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
