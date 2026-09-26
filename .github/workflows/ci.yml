@@ -32,6 +32,28 @@ jobs:
       - name: Tests del workspace
         run: cargo test --workspace --locked
 
+  msrv:
+    name: MSRV 1.93.0 (cargo check + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar Rust 1.93.0 (versión mínima soportada)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.93.0
+
+      - name: Caché de cargo (MSRV)
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: msrv
+
+      - name: cargo check --workspace --locked
+        run: cargo check --workspace --all-targets --locked
+
+      - name: Tests del workspace
+        run: cargo test --workspace --locked
+
   gpu-formats:
     name: build con ASTC (gpu-formats)
     runs-on: ubuntu-latest
