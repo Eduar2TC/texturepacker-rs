@@ -469,7 +469,8 @@ impl App {
                     continue;
                 }
             };
-            let b = tp_core::ingest::detect_borders(&rgba, w, h, threshold, tolerance, max_search);
+            let b =
+                tp_core::ingest::detect_borders_auto(&rgba, w, h, threshold, tolerance, max_search);
             let border = if b == [0, 0, 0, 0] { None } else { Some(b) };
             results.push((i, id, border));
         }

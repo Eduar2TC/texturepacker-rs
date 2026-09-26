@@ -537,6 +537,9 @@ fn is_solid_line(
 /// (3-patch on one axis, or no 9-patch at all if everything is 0).
 ///
 /// Runs on the **untrimmed** RGBA pixels (`load_image_rgba` output).
+///
+/// For sprites surrounded by a transparent margin use
+/// [`detect_borders_auto`], which crops the margin before the scan.
 pub fn detect_borders(
     rgba: &[u8],
     width: i32,
@@ -579,6 +582,44 @@ pub fn detect_borders(
         measure(false, false), // right: columnas desde el borde derecho
         measure(true, false),  // bottom: filas desde el borde inferior
     ]
+}
+
+/// Auto-detect 9-patch borders tolerating a fully transparent margin around
+/// the sprite: the visible bounding box (alpha > `threshold`) is cropped with
+/// [`trim_rgba`] and the solid-bar scan runs inside it, so sprites whose
+/// frame does not touch the image edges are detected too.
+///
+/// The returned values keep the project convention (borders measured on the
+/// **untrimmed** source image, like `borders.json`): each face adds the
+/// distance from the image edge to the bounding box. When no solid bar is
+/// found the result is `[0, 0, 0, 0]` — margins alone never count as bars.
+pub fn detect_borders_auto(
+    rgba: &[u8],
+    width: i32,
+    height: i32,
+    threshold: u8,
+    tolerance: i32,
+    max_search: i32,
+) -> DetectedBorders {
+    let (bounds, trimmed) = trim_rgba(rgba, width, height, threshold);
+    if bounds.width <= 0 || bounds.height <= 0 {
+        return [0, 0, 0, 0];
+    }
+    let mut b = detect_borders(
+        &trimmed,
+        bounds.width,
+        bounds.height,
+        threshold,
+        tolerance,
+        max_search,
+    );
+    if b != [0, 0, 0, 0] {
+        b[0] += bounds.x;
+        b[1] += bounds.y;
+        b[2] += width - bounds.x - bounds.width;
+        b[3] += height - bounds.y - bounds.height;
+    }
+    b
 }
 
 #[cfg(test)]
@@ -681,6 +722,53 @@ mod tests {
         }
         assert_eq!(detect_borders(&img, 6, 6, 0, 0, 64), [0, 2, 0, 0]);
         assert_eq!(detect_borders(&img, 6, 6, 0, 0, 1), [0, 1, 0, 0]);
+    }
+
+    #[test]
+    fn detect_borders_auto_tolerates_transparent_margin() {
+        // Marco de 1 px (azul) alrededor de un interior de gradiente 6×6, con
+        // margen transparente de 3 px arriba/izquierda y 5 px derecha/abajo
+        // (lienzo 16×16). El margen no debe detener el análisis y los valores
+        // se expresan sobre la imagen sin recortar: [1+3, 1+3, 1+5, 1+5].
+        let mut img = vec![0u8; 16 * 16 * 4];
+        for y in 0..16i32 {
+            for x in 0..16i32 {
+                let i = ((y * 16 + x) * 4) as usize;
+                if (4..10).contains(&x) && (4..10).contains(&y) {
+                    img[i..i + 4].copy_from_slice(&[(x * 20) as u8, (y * 20) as u8, 0, 255]);
+                } else if (3..11).contains(&x) && (3..11).contains(&y) {
+                    img[i..i + 4].copy_from_slice(&[0, 0, 255, 255]);
+                }
+            }
+        }
+        assert_eq!(detect_borders_auto(&img, 16, 16, 0, 0, 64), [4, 4, 6, 6]);
+    }
+
+    #[test]
+    fn detect_borders_auto_matches_plain_detection_without_margin() {
+        // Sin margen: auto y directa coinciden (el recorte no cambia nada).
+        let mut img = vec![0u8; 10 * 10 * 4];
+        for y in 0..10i32 {
+            for x in 0..10i32 {
+                let i = ((y * 10 + x) * 4) as usize;
+                if (3..7).contains(&x) && (3..7).contains(&y) {
+                    // gradiente central (no sólido)
+                    img[i..i + 4].copy_from_slice(&[(x * 20) as u8, (y * 20) as u8, 0, 255]);
+                } else {
+                    img[i..i + 4].copy_from_slice(&[0, 0, 255, 255]);
+                }
+            }
+        }
+        assert_eq!(detect_borders(&img, 10, 10, 0, 0, 64), [3, 3, 3, 3]);
+        assert_eq!(detect_borders_auto(&img, 10, 10, 0, 0, 64), [3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn detect_borders_auto_ignores_margins_as_bars() {
+        // Solo margen transparente y contenido sin barras: ceros, el margen
+        // nunca cuenta como barra (distinto de contar el margen como borde).
+        let img = vec![0u8; 6 * 6 * 4];
+        assert_eq!(detect_borders_auto(&img, 6, 6, 0, 0, 64), [0, 0, 0, 0]);
     }
 
     #[test]

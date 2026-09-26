@@ -144,7 +144,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 | Ruta de la textura en los metadatos            | ✅     | Prefijo aplicado a `meta.image` y a `pages[].file` (`--texture-path`) |
 | Nombres de sprite                              | ✅     | Ids relativos con subcarpeta; extensión opcional (`trim_sprite_names`) y carpeta inteligente opcional |
 | Pivots                                         | ✅     | Por defecto + `pivots.json` + edición en GUI |
-| Bordes 9-patch / 3-patch                    | ✅     | `[izq, arriba, der, abajo]` en píxeles vía `borders.json`, editor en la GUI (presets 9-patch/3-patch), **detección automática** de filas/columnas de color sólido (botón «🔎 Detectar»), guías verdes arrastrables con el ratón en la vista previa y metadato `border` por frame |
+| Bordes 9-patch / 3-patch                    | ✅     | `[izq, arriba, der, abajo]` en píxeles vía `borders.json`, editor en la GUI (presets 9-patch/3-patch), **detección automática** de filas/columnas de color sólido (botón «🔎 Detectar»; recorta primero el margen transparente exterior, si lo hay), guías verdes arrastrables con el ratón en la vista previa y metadato `border` por frame |
 | Co-packing de normal maps                      | ✅     | `*_normal.png` en el mismo frame/página/rotación |
 | Cuantización (RGBA4444/RGB565)                 | ✅     | Aplicada a toda la página |
 | Pixel format RGBA5551 / RGBA5555 / BGRA8888    | ✅     | `pixel_format = "RGBA5551"` cuantiza a la rejilla 5-5-5-1 (expansión por replicación de bits, alfa 0/255); `"RGBA5555"` (20 bits) mantiene el alfa también en 5 bits; `"BGRA8888"` intercambia R/B en el archivo |
@@ -302,7 +302,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 166 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 169 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones

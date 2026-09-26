@@ -330,10 +330,18 @@ fn draw_borders(
     }
     let border = sprite.border.unwrap_or([0; 4]);
     let [mut l, mut t, mut r, mut b] = border;
-    l = l.clamp(0, v.width);
-    r = r.clamp(0, v.width);
-    t = t.clamp(0, v.height);
-    b = b.clamp(0, v.height);
+    // Los valores se miden sobre la imagen original (convención de
+    // borders.json): descontar el margen transparente que se recortó al
+    // empaquetar para dibujar las bandas dentro del frame visible.
+    let (margin_left, margin_top) = (sprite.offset_x.max(0), sprite.offset_y.max(0));
+    let (margin_right, margin_bottom) = (
+        (sprite.raw_width - sprite.offset_x - sprite.trimmed_bounds.width).max(0),
+        (sprite.raw_height - sprite.offset_y - sprite.trimmed_bounds.height).max(0),
+    );
+    l = (l - margin_left).clamp(0, v.width);
+    r = (r - margin_right).clamp(0, v.width);
+    t = (t - margin_top).clamp(0, v.height);
+    b = (b - margin_bottom).clamp(0, v.height);
     let (stroke, thick) = if interactive {
         (
             egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(0, 255, 80)),
