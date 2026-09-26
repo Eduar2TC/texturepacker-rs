@@ -1,5 +1,7 @@
 # TexturePacker-RS 🧩
 
+[![CI](https://github.com/Eduar2TC/texturepacker-rs/actions/workflows/ci.yml/badge.svg)](https://github.com/Eduar2TC/texturepacker-rs/actions/workflows/ci.yml)
+
 Una aplicación de escritorio **en Rust** para generar atlas de texturas,
 desarrollada de forma independiente (entrada: CLI / GUI / archivo de proyecto;
 pipeline: ingesta → polígonos → empaquetado → VRAM → exportación).

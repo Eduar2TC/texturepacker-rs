@@ -69,9 +69,8 @@ jobs:
   gpu-formats:
     name: build con ASTC (gpu-formats)
     runs-on: ubuntu-latest
-    # El encoder ASTC compila C++ de ARM astcenc; se permite fallo hasta
-    # validar el runner. Quita `continue-on-error` para hacerlo bloqueante.
-    continue-on-error: true
+    # El encoder ASTC compila C++ de ARM astcenc (el runner trae toolchain
+    # C/C++ de serie).
     steps:
       - uses: actions/checkout@v4
 
