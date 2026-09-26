@@ -105,6 +105,10 @@ tp-cli pack --input sprites/ --output build/ --no-multipack   # falla si no cabe
 
 # Descifrar una textura cifrada
 tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png
+
+# Vista previa con el pixel format del atlas (corrige el orden de canales,
+# p. ej. BGRA8888 vuelve a RGBA para ver los colores correctos)
+tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format bgra8888
 ```
 
 ## Cobertura de la especificación
@@ -298,7 +302,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 162 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 166 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones

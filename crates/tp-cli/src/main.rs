@@ -20,7 +20,7 @@ fn usage() -> ! {
          USO:\n\
          \x20 tp-cli pack <proyecto.tpproj>\n\
          \x20 tp-cli pack --input DIR --output DIR [opciones]\n\
-         \x20 tp-cli decrypt <archivo.tpenc> --key CLAVE -o salida.png\n\
+         \x20 tp-cli decrypt <archivo.tpenc> --key CLAVE -o salida.png [--pixel-format F]\n\
          \n\
          OPCIONES de pack:\n\
          \x20 --max-size N          Tamaño máximo del atlas (512..8192, potencia de 2)\n\
@@ -263,17 +263,7 @@ fn cmd_pack(args: &[String]) {
             .unwrap_or_else(|_| fail("--webp-quality inválido".into()));
     }
     if let Some(v) = val("pixel-format") {
-        cfg.pixel_format = match v.to_ascii_lowercase().as_str() {
-            "rgba8888" => PixelFormat::Rgba8888,
-            "rgb888" => PixelFormat::Rgb888,
-            "alpha8" => PixelFormat::Alpha8,
-            "intensity8" => PixelFormat::Intensity8,
-            "alpha-intensity8" | "alpha_intensity8" => PixelFormat::AlphaIntensity8,
-            "rgba5551" | "5551" => PixelFormat::Rgba5551,
-            "rgba5555" | "5555" => PixelFormat::Rgba5555,
-            "bgra8888" => PixelFormat::Bgra8888,
-            _ => fail(format!("--pixel-format inválido: {v}")),
-        };
+        cfg.pixel_format = parse_pixel_format(&v);
     }
     if let Some(v) = val("strategy").or_else(|| val("maxrects-heuristics")) {
         cfg.packing_strategy = PackingStrategy::parse(v.as_str())
@@ -309,7 +299,7 @@ fn cmd_pack(args: &[String]) {
             .parse()
             .unwrap_or_else(|_| fail("--height inválido".into()));
     }
-    // Doc oficial: --variant <escala>[:<nombre>]; acepta varios separados por
+    // --variant <escala>[:<nombre>]; acepta varios separados por
     // coma. El nombre se usa tal cual como sufijo {v}.
     if let Some(v) = val("variant") {
         let mut names: Vec<(f32, String)> = Vec::new();
@@ -474,10 +464,42 @@ fn cmd_decrypt(args: &[String]) {
         .unwrap_or_else(|e| fail(format!("No se pudo leer {}: {e}", file.display())));
     let plain = tp_core::export::decrypt_bytes(&data, key)
         .unwrap_or_else(|e| fail(format!("Descifrado fallido: {e}")));
-    std::fs::write(&out_path, &plain)
+    let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.as_str());
+
+    // Vista previa: con `--pixel-format` se re-aplica la conversión del atlas
+    // (BGRA8888 y demás) para que la imagen se vea con los colores correctos.
+    let preview = match val("pixel-format") {
+        Some(pf) => tp_core::export::decode_texture_preview_png(&plain, parse_pixel_format(pf))
+            .unwrap_or_else(|e| fail(format!("No se pudo generar la vista previa: {e}"))),
+        None => plain,
+    };
+
+    std::fs::write(&out_path, &preview)
         .unwrap_or_else(|e| fail(format!("No se pudo escribir {}: {e}", out_path.display())));
     let _ = flags;
-    println!("✔ Descifrado: {}", out_path.display());
+    match val("pixel-format") {
+        Some(pf) => println!(
+            "✔ Descifrado + vista previa ({}): {}",
+            pf.to_ascii_uppercase(),
+            out_path.display()
+        ),
+        None => println!("✔ Descifrado: {}", out_path.display()),
+    }
+}
+
+/// Parseo compartido del flag `--pixel-format` (pack y decrypt).
+fn parse_pixel_format(v: &str) -> PixelFormat {
+    match v.to_ascii_lowercase().as_str() {
+        "rgba8888" => PixelFormat::Rgba8888,
+        "rgb888" => PixelFormat::Rgb888, // compone sobre negro al decodificar
+        "alpha8" => PixelFormat::Alpha8, // nivel de alfa → gris
+        "intensity8" => PixelFormat::Intensity8,
+        "alpha-intensity8" | "alpha_intensity8" => PixelFormat::AlphaIntensity8,
+        "rgba5551" | "5551" => PixelFormat::Rgba5551,
+        "rgba5555" | "5555" => PixelFormat::Rgba5555,
+        "bgra8888" => PixelFormat::Bgra8888,
+        _ => fail(format!("--pixel-format inválido: {v}")),
+    }
 }
 
 #[cfg(test)]
@@ -486,6 +508,61 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn pixel_format_flag_is_shared_between_commands() {
+        assert!(matches!(
+            parse_pixel_format("BGRA8888"),
+            PixelFormat::Bgra8888
+        ));
+        assert!(matches!(
+            parse_pixel_format("rgba5555"),
+            PixelFormat::Rgba5555
+        ));
+        // Variantes con alias.
+        assert!(matches!(parse_pixel_format("5551"), PixelFormat::Rgba5551));
+        assert!(matches!(
+            parse_pixel_format("Alpha-Intensity8"),
+            PixelFormat::AlphaIntensity8
+        ));
+    }
+
+    #[test]
+    fn decrypt_writes_preview_png_with_bgra_restored() {
+        use image::ImageEncoder;
+
+        // Atlas "publicado" con BGRA8888 (R y B intercambiados) y cifrado.
+        let bgra = vec![255u8, 0, 0, 255, 0, 0, 255, 255]; // azul, rojo
+        let mut atlas = Vec::new();
+        image::codecs::png::PngEncoder::new_with_quality(
+            &mut atlas,
+            image::codecs::png::CompressionType::Default,
+            image::codecs::png::FilterType::Adaptive,
+        )
+        .write_image(&bgra, 2, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+        let enc = tp_core::export::encrypt_bytes(&atlas, "clave").unwrap();
+        let f = std::env::temp_dir().join("tpcli_decrypt_preview.tpenc");
+        let o = std::env::temp_dir().join("tpcli_decrypt_preview_out.png");
+        std::fs::write(&f, &enc).unwrap();
+
+        cmd_decrypt(&args(&[
+            f.to_str().unwrap(),
+            "--key",
+            "clave",
+            "-o",
+            o.to_str().unwrap(),
+            "--pixel-format",
+            "bgra8888",
+        ]));
+        let out = std::fs::read(&o).unwrap();
+        let img = image::load_from_memory(&out).unwrap().to_rgba8();
+        // Con la conversión, R/B vuelven al orden natural RGBA.
+        assert_eq!(img.as_raw(), &[0, 0, 255, 255, 255, 0, 0, 255]);
+        let _ = std::fs::remove_file(&f);
+        let _ = std::fs::remove_file(f.with_extension("dec.png"));
+        let _ = std::fs::remove_file(&o);
     }
 
     #[test]
@@ -604,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn official_flags_parse() {
+    fn canonical_flags_parse() {
         // Aliases con los nombres canónicos de las opciones.
         let (_, values, flags) = parse_args(&args(&[
             "--input",
