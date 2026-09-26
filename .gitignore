@@ -1,4 +1,19 @@
-/target
+# Rust / Cargo
+/target/
+**/*.rs.bk
 
 # Freebuff desktop app internal state (SQLite db), not part of the project
 /.freebuff
+
+# Capturas de trabajo de la raíz del repo (zq*.png, zz_*.png)
+/zq*.png
+/zz_*.png
+
+# Artefactos de editores y sistema operativo
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
