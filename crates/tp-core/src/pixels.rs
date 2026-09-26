@@ -5,29 +5,50 @@
 //! - Color quantization (RGBA4444 / RGB565) with error diffusion
 //!   (Floyd–Steinberg / Atkinson)
 
-use crate::config::{ColorDepth, DitheringAlgorithm};
+use crate::config::{AlphaHandling, ColorDepth, DitheringAlgorithm};
 use crate::types::Rect;
+
+/// Layout of one sprite inside the atlas page: visible frame (inset by
+/// `padding`), extrusion and 90° CW rotation.
+#[derive(Debug, Clone, Copy)]
+pub struct BlitLayout {
+    pub frame: Rect,
+    pub padding: i32,
+    pub extrude: i32,
+    pub rotated: bool,
+}
+
+/// The trimmed RGBA8 pixels of a sprite and their dimensions.
+#[derive(Debug, Clone, Copy)]
+pub struct TrimmedSprite<'a> {
+    pub pixels: &'a [u8],
+    pub width: i32,
+    pub height: i32,
+}
 
 /// Blit a trimmed sprite into an atlas page at its frame, applying extrusion
 /// and rotation.
 ///
-/// `page` is the RGBA8 canvas. The visible region of `frame` (inset by
-/// `padding`) receives the sprite. Extrusion extends the border pixels by
-/// `extrude` pixels into the padding (clamped so it never leaves the frame).
+/// `page` is the RGBA8 canvas. The visible region of `layout.frame` (inset by
+/// `layout.padding`) receives the sprite. Extrusion extends the border pixels
+/// by `layout.extrude` pixels into the padding (clamped so it never leaves
+/// the frame).
 pub fn blit_sprite(
     page: &mut [u8],
     page_w: i32,
     page_h: i32,
-    frame: Rect,
-    padding: i32,
-    extrude: i32,
-    trimmed: &[u8],
-    trim_w: i32,
-    trim_h: i32,
-    rotated: bool,
+    layout: BlitLayout,
+    sprite: TrimmedSprite<'_>,
 ) {
-    let extrude = extrude.clamp(0, padding.max(0));
+    let Rect {
+        x: frame_x,
+        y: frame_y,
+        ..
+    } = layout.frame;
+    let rotated = layout.rotated;
+    let extrude = layout.extrude.clamp(0, layout.padding.max(0));
     let e = extrude;
+    let (trimmed, trim_w, trim_h) = (sprite.pixels, sprite.width, sprite.height);
 
     // Build the extruded buffer: (tw + 2e) x (th + 2e), border-clamped.
     let ew = trim_w + 2 * e;
@@ -44,8 +65,8 @@ pub fn blit_sprite(
     }
 
     // The extruded region sits in the frame at (vx - e, vy - e).
-    let vx = frame.x + padding;
-    let vy = frame.y + padding;
+    let vx = frame_x + layout.padding;
+    let vy = frame_y + layout.padding;
     let ox = vx - e;
     let oy = vy - e;
 
@@ -78,8 +99,88 @@ pub fn apply_quantization(
 ) {
     match depth {
         ColorDepth::Rgba8888 => {}
-        ColorDepth::Rgba4444 => quantize_page(page, width, height, 4, true, dither),
+        ColorDepth::Rgba4444 => {
+            quantize_page(page, width, height, 4, dither.dithers_alpha(), dither)
+        }
         ColorDepth::Rgb565 => quantize_rgb565_page(page, width, height, dither),
+    }
+}
+
+/// Apply the *Transparency Handling* pre-pass to an RGBA8 page.
+///
+/// - `KeepTransparentPixels`: no-op (transparent pixels keep their colors).
+/// - `ClearTransparentPixels`: transparent pixels become transparent black,
+///   improving packing ratio and identical sprite detection.
+/// - `ReduceBorderArtifacts`: transparent pixels get the color of the nearest
+///   solid pixel (alpha bleeding), removing dark halos around sprites.
+/// - `PremultiplyAlpha`: `rgb = rgb * a / 255`.
+pub fn apply_alpha_handling(page: &mut [u8], width: usize, height: usize, mode: AlphaHandling) {
+    match mode {
+        AlphaHandling::KeepTransparentPixels => {}
+        AlphaHandling::ClearTransparentPixels => {
+            for px in page.chunks_exact_mut(4) {
+                if px[3] == 0 {
+                    px[0] = 0;
+                    px[1] = 0;
+                    px[2] = 0;
+                }
+            }
+        }
+        AlphaHandling::PremultiplyAlpha => {
+            for px in page.chunks_exact_mut(4) {
+                let a = u32::from(px[3]);
+                for channel in &mut px[..3] {
+                    *channel = ((u32::from(*channel) * a + 127) / 255) as u8;
+                }
+            }
+        }
+        AlphaHandling::ReduceBorderArtifacts => bleed_alpha(page, width, height),
+    }
+}
+
+/// Alpha bleeding: transparent pixels receive the color of the nearest solid
+/// pixel. A few 4-neighbour passes spread the color outwards; alpha stays 0.
+fn bleed_alpha(page: &mut [u8], width: usize, height: usize) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    // `has_color[i]` = the pixel already carries a usable color (solid, or
+    // bled into in a previous pass).
+    let mut has_color: Vec<bool> = page.chunks_exact(4).map(|px| px[3] > 0).collect();
+    let passes = width.max(height).min(16);
+    const NEIGHBOURS: [(i32, i32); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];
+
+    for _ in 0..passes {
+        let mut changed = false;
+        for y in 0..height {
+            for x in 0..width {
+                let i = y * width + x;
+                if has_color[i] {
+                    continue;
+                }
+                let mut source: Option<[u8; 3]> = None;
+                for (dx, dy) in NEIGHBOURS {
+                    let nx = x as i32 + dx;
+                    let ny = y as i32 + dy;
+                    if nx < 0 || ny < 0 || nx >= width as i32 || ny >= height as i32 {
+                        continue;
+                    }
+                    let ni = ny as usize * width + nx as usize;
+                    if has_color[ni] {
+                        source = Some([page[ni * 4], page[ni * 4 + 1], page[ni * 4 + 2]]);
+                        break;
+                    }
+                }
+                if let Some(rgb) = source {
+                    page[i * 4..i * 4 + 3].copy_from_slice(&rgb);
+                    has_color[i] = true;
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
     }
 }
 
@@ -102,18 +203,29 @@ pub fn quantize_page(
     };
 
     let mut f: Vec<f32> = page.iter().map(|&v| v as f32).collect();
-    let channels = if dither_alpha { 4 } else { 3 };
+    let dither_ctx = |x: usize, y: usize, channel: usize| DitherContext {
+        width,
+        height,
+        x,
+        y,
+        channel,
+        dither,
+    };
 
     for y in 0..height {
         for x in 0..width {
             let idx = (y * width + x) * 4;
-            for c in 0..channels {
+            for c in 0..4 {
                 let i = idx + c;
                 let old = f[i];
                 let q = quant(old);
                 let err = old - q;
                 f[i] = q;
-                distribute_error(&mut f, width, height, x, y, c, err, dither);
+                // The alpha channel is always quantized; only the `*Alpha`
+                // algorithms diffuse error into it (docs: *Dithering*).
+                if c < 3 || dither_alpha {
+                    distribute_error(&mut f, dither_ctx(x, y, c), err);
+                }
             }
         }
     }
@@ -123,16 +235,26 @@ pub fn quantize_page(
     }
 }
 
-fn distribute_error(
-    f: &mut [f32],
+/// Where and how to spread quantization error: the pixel being quantized,
+/// the page dimensions, the channel and the diffusion algorithm.
+struct DitherContext {
     width: usize,
     height: usize,
     x: usize,
     y: usize,
-    c: usize,
-    err: f32,
+    channel: usize,
     dither: DitheringAlgorithm,
-) {
+}
+
+fn distribute_error(f: &mut [f32], ctx: DitherContext, err: f32) {
+    let DitherContext {
+        width,
+        height,
+        x,
+        y,
+        channel: c,
+        dither,
+    } = ctx;
     let add = |f: &mut [f32], x: usize, y: usize, w: f32| {
         if x < width && y < height {
             let i = (y * width + x) * 4 + c;
@@ -141,7 +263,7 @@ fn distribute_error(
     };
     match dither {
         DitheringAlgorithm::None => {}
-        DitheringAlgorithm::FloydSteinberg => {
+        DitheringAlgorithm::FloydSteinberg | DitheringAlgorithm::FloydSteinbergAlpha => {
             add(f, x + 1, y, 7.0 / 16.0);
             if x > 0 {
                 add(f, x - 1, y + 1, 3.0 / 16.0);
@@ -149,7 +271,7 @@ fn distribute_error(
             add(f, x, y + 1, 5.0 / 16.0);
             add(f, x + 1, y + 1, 1.0 / 16.0);
         }
-        DitheringAlgorithm::Atkinson => {
+        DitheringAlgorithm::Atkinson | DitheringAlgorithm::AtkinsonAlpha => {
             add(f, x + 1, y, 1.0 / 8.0);
             add(f, x + 2, y, 1.0 / 8.0);
             if x > 0 {
@@ -200,16 +322,28 @@ pub fn quantize_rgb565_page(
     };
 
     let mut f: Vec<f32> = page.iter().map(|&v| v as f32).collect();
+    let dither_ctx = |x: usize, y: usize, channel: usize| DitherContext {
+        width,
+        height,
+        x,
+        y,
+        channel,
+        dither,
+    };
 
     for y in 0..height {
         for x in 0..width {
             let i = (y * width + x) * 4;
-            for (c, (step, levels)) in [(0usize, (r_step, 31.0)), (1, (g_step, 63.0)), (2, (b_step, 31.0))] {
+            for (c, (step, levels)) in [
+                (0usize, (r_step, 31.0)),
+                (1, (g_step, 63.0)),
+                (2, (b_step, 31.0)),
+            ] {
                 let old = f[i + c];
                 let q = quant(old, step, levels);
                 let err = old - q;
                 f[i + c] = q;
-                distribute_error(&mut f, width, height, x, y, c, err, dither);
+                distribute_error(&mut f, dither_ctx(x, y, c), err);
             }
         }
     }
@@ -245,13 +379,17 @@ mod tests {
             &mut page,
             10,
             10,
-            Rect::new(0, 0, 6, 6),
-            2,
-            1,
-            &trimmed,
-            2,
-            2,
-            false,
+            BlitLayout {
+                frame: Rect::new(0, 0, 6, 6),
+                padding: 2,
+                extrude: 1,
+                rotated: false,
+            },
+            TrimmedSprite {
+                pixels: &trimmed,
+                width: 2,
+                height: 2,
+            },
         );
         // Border-adjacent pixel inside the frame must be the border color.
         let at = |x: i32, y: i32| {
@@ -275,13 +413,17 @@ mod tests {
             &mut page,
             8,
             8,
-            Rect::new(1, 1, 4, 5),
-            1,
-            0,
-            &trimmed,
-            2,
-            1,
-            true,
+            BlitLayout {
+                frame: Rect::new(1, 1, 4, 5),
+                padding: 1,
+                extrude: 0,
+                rotated: true,
+            },
+            TrimmedSprite {
+                pixels: &trimmed,
+                width: 2,
+                height: 1,
+            },
         );
         let at = |x: i32, y: i32| {
             let i = ((y * 8 + x) * 4) as usize;
@@ -296,7 +438,13 @@ mod tests {
     #[test]
     fn rgba4444_quantizes() {
         let mut buf = vec![200u8, 100, 50, 10];
-        apply_quantization(&mut buf, 1, 1, ColorDepth::Rgba4444, DitheringAlgorithm::None);
+        apply_quantization(
+            &mut buf,
+            1,
+            1,
+            ColorDepth::Rgba4444,
+            DitheringAlgorithm::None,
+        );
         // 200 -> 12*17=204, 100 -> 6*17=102, 50 -> 3*17=51, 10 -> 1*17=17
         assert_eq!(buf[0], 204);
         assert_eq!(buf[1], 102);
@@ -322,8 +470,8 @@ mod tests {
     fn dithering_changes_values_but_stays_in_range() {
         let mut buf = vec![100u8; 8 * 8 * 4];
         // give it a gradient-ish variance
-        for i in 0..buf.len() {
-            buf[i] = (i * 7 % 256) as u8;
+        for (i, v) in buf.iter_mut().enumerate() {
+            *v = (i * 7 % 256) as u8;
         }
         apply_quantization(
             &mut buf,
@@ -333,5 +481,97 @@ mod tests {
             DitheringAlgorithm::FloydSteinberg,
         );
         assert!(buf.iter().all(|&v| v % 17 == 0 || v == 0));
+    }
+
+    fn alpha_sample() -> Vec<u8> {
+        // 4x1: sólido semitransparente + tres transparentes con color residual.
+        vec![
+            200, 100, 50, 128, // sólido
+            123, 45, 67, 0, // transparente con color sobrante
+            0, 0, 0, 0, // transparente negro
+            10, 20, 30, 0, // transparente con color
+        ]
+    }
+
+    #[test]
+    fn alpha_handling_keep_clear_and_premultiply() {
+        let mut keep = alpha_sample();
+        apply_alpha_handling(&mut keep, 4, 1, AlphaHandling::KeepTransparentPixels);
+        assert_eq!(keep, alpha_sample());
+
+        let mut clear = alpha_sample();
+        apply_alpha_handling(&mut clear, 4, 1, AlphaHandling::ClearTransparentPixels);
+        assert_eq!(&clear[0..4], &[200, 100, 50, 128], "el sólido no cambia");
+        assert_eq!(&clear[4..8], &[0, 0, 0, 0], "color residual limpiado");
+        assert_eq!(&clear[8..12], &[0, 0, 0, 0]);
+        assert_eq!(&clear[12..16], &[0, 0, 0, 0]);
+
+        let mut pre = alpha_sample();
+        apply_alpha_handling(&mut pre, 4, 1, AlphaHandling::PremultiplyAlpha);
+        // 200*128/255 = 100.39 -> 100 (redondeo con +127)
+        assert_eq!(&pre[0..4], &[100, 50, 25, 128]);
+        assert_eq!(&pre[4..7], &[0, 0, 0], "a=0 anula el color");
+        assert_eq!(pre[3], 128, "el alfa no cambia");
+    }
+
+    #[test]
+    fn alpha_bleeding_fills_neighbours_without_touching_alpha() {
+        let mut page = alpha_sample();
+        apply_alpha_handling(&mut page, 4, 1, AlphaHandling::ReduceBorderArtifacts);
+        // Los tres transparentes toman el color del sólido vecino…
+        assert_eq!(&page[4..8], &[200, 100, 50, 0]);
+        assert_eq!(&page[8..12], &[200, 100, 50, 0]);
+        assert_eq!(&page[12..16], &[200, 100, 50, 0]);
+        // …pero el alfa sigue siendo 0 y el sólido intacto.
+        assert_eq!(&page[0..4], &[200, 100, 50, 128]);
+    }
+
+    #[test]
+    fn only_alpha_variants_diffuse_error_into_alpha() {
+        let make = || {
+            let mut buf = Vec::with_capacity(8 * 8 * 4);
+            for y in 0..8 {
+                for x in 0..8 {
+                    buf.extend_from_slice(&[128, 64, 200, (x * 20 + y * 3) as u8]);
+                }
+            }
+            buf
+        };
+        let quant17 = |v: u8| (((v as f32) / 17.0).round().clamp(0.0, 15.0) * 17.0) as u8;
+
+        let mut plain = make();
+        apply_quantization(
+            &mut plain,
+            8,
+            8,
+            ColorDepth::Rgba4444,
+            DitheringAlgorithm::FloydSteinberg,
+        );
+        for (i, px) in plain.chunks_exact(4).enumerate() {
+            let x = i % 8;
+            let y = i / 8;
+            assert_eq!(
+                px[3],
+                quant17((x * 20 + y * 3) as u8),
+                "FS sin alpha debe cuantizar sin difundir"
+            );
+        }
+
+        let mut with_alpha = make();
+        apply_quantization(
+            &mut with_alpha,
+            8,
+            8,
+            ColorDepth::Rgba4444,
+            DitheringAlgorithm::FloydSteinbergAlpha,
+        );
+        assert!(
+            with_alpha.chunks_exact(4).enumerate().any(|(i, px)| {
+                let x = i % 8;
+                let y = i / 8;
+                px[3] != quant17((x * 20 + y * 3) as u8)
+            }),
+            "FloydSteinbergAlpha debe difundir error en el canal alfa"
+        );
     }
 }

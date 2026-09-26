@@ -201,7 +201,7 @@ fn marching_squares(alpha: &[u8], w: i32, h: i32) -> Vec<Vec<Point2D>> {
             if x + 1 < w && y + 1 < h && solid(x + 1, y + 1) {
                 uf.union(i, i + w as usize + 1);
             }
-            if x - 1 >= 0 && y + 1 < h && solid(x - 1, y + 1) {
+            if x > 0 && y + 1 < h && solid(x - 1, y + 1) {
                 uf.union(i, i + w as usize - 1);
             }
         }
@@ -230,12 +230,12 @@ fn marching_squares(alpha: &[u8], w: i32, h: i32) -> Vec<Vec<Point2D>> {
                 4 => segments.push((mt, mr)), // TR
                 8 => segments.push((ml, mt)), // TL
                 // two adjacent corners (solid strip)
-                3 => segments.push((ml, mr)), // BL+BR
-                6 => segments.push((mt, mb)), // TR+BR
+                3 => segments.push((ml, mr)),  // BL+BR
+                6 => segments.push((mt, mb)),  // TR+BR
                 12 => segments.push((ml, mr)), // TL+TR
-                9 => segments.push((mt, mb)), // TL+BL
+                9 => segments.push((mt, mb)),  // TL+BL
                 // three solid corners (single empty corner)
-                7 => segments.push((mb, ml)), // empty TL
+                7 => segments.push((mb, ml)),  // empty TL
                 11 => segments.push((mr, mb)), // empty TR
                 13 => segments.push((mt, mr)), // empty BR
                 14 => segments.push((ml, mt)), // empty BL
@@ -449,9 +449,7 @@ fn point_in_polygon(p: Point2D, poly: &[Point2D]) -> bool {
     for i in 0..poly.len() {
         let a = poly[i];
         let b = poly[j];
-        if (a.y > p.y) != (b.y > p.y)
-            && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x
-        {
+        if (a.y > p.y) != (b.y > p.y) && p.x < (b.x - a.x) * (p.y - a.y) / (b.y - a.y) + a.x {
             inside = !inside;
         }
         j = i;
@@ -587,11 +585,11 @@ fn is_ear(pts: &[Point2D], prev: &[usize], next: &[usize], i: usize) -> bool {
     // vertices is harmless: their coordinates are valid and a clipped vertex
     // inside the ear would only make us reject an ear that is actually fine,
     // which the safety fallback recovers from.
-    for k in 0..pts.len() {
+    for (k, &pt) in pts.iter().enumerate() {
         if k == p || k == i || k == q {
             continue;
         }
-        if point_in_triangle(pts[k], a, b, c) {
+        if point_in_triangle(pt, a, b, c) {
             return false;
         }
     }
@@ -660,7 +658,11 @@ mod tests {
         // Marching squares produces a slightly beveled rectangle (half-pixel
         // corners); RDP keeps the corner points. At least 4 vertices, and a
         // simple polygon of N vertices triangulates to N-2 triangles.
-        assert!(poly.mesh.vertices.len() >= 4, "got {}", poly.mesh.vertices.len());
+        assert!(
+            poly.mesh.vertices.len() >= 4,
+            "got {}",
+            poly.mesh.vertices.len()
+        );
         assert!(poly.mesh.indices.len() >= 6);
         assert_eq!(poly.mesh.indices.len() % 3, 0);
         let n = poly.mesh.vertices.len() as u32;

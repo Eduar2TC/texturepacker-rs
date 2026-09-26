@@ -57,13 +57,25 @@ struct BlockColours {
 impl Default for BlockColours {
     fn default() -> Self {
         Self {
-            a: Colour { r: 0, g: 0, b: 0, a: 15 },
-            b: Colour { r: 0, g: 0, b: 0, a: 15 },
+            a: Colour {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 15,
+            },
+            b: Colour {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 15,
+            },
             a_opaque: true,
             b_opaque: true,
         }
     }
 }
+
+use crate::error::Result;
 
 // ---------------------------------------------------------------------------
 // Quantization helpers (canonical values are what the decoder reconstructs)
@@ -203,17 +215,42 @@ fn fit_block(px: &[u8]) -> BlockColours {
     let (br5, bg5, bb5) = (q5(br), q5(bg), q5(bb));
 
     let a = if a_opaque {
-        Colour { r: ar5, g: ag5, b: q4rep(ab5), a: 15 }
+        Colour {
+            r: ar5,
+            g: ag5,
+            b: q4rep(ab5),
+            a: 15,
+        }
     } else {
-        Colour { r: q4rep(ar5), g: q4rep(ag5), b: q3rep(ab5), a: qa(max_a) }
+        Colour {
+            r: q4rep(ar5),
+            g: q4rep(ag5),
+            b: q3rep(ab5),
+            a: qa(max_a),
+        }
     };
     let b = if b_opaque {
-        Colour { r: br5, g: bg5, b: q4rep(bb5), a: 15 }
+        Colour {
+            r: br5,
+            g: bg5,
+            b: q4rep(bb5),
+            a: 15,
+        }
     } else {
-        Colour { r: q4rep(br5), g: q4rep(bg5), b: q4rep(bb5), a: qa(min_a) }
+        Colour {
+            r: q4rep(br5),
+            g: q4rep(bg5),
+            b: q4rep(bb5),
+            a: qa(min_a),
+        }
     };
 
-    BlockColours { a, b, a_opaque, b_opaque }
+    BlockColours {
+        a,
+        b,
+        a_opaque,
+        b_opaque,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -224,43 +261,46 @@ fn fit_block(px: &[u8]) -> BlockColours {
 /// offsets 0..4 — identical to the reference decoder's `INTERP_WEIGHT`.
 const INTERP: [[i32; 3]; 4] = [[2, 2, 0], [1, 3, 0], [0, 4, 0], [0, 3, 1]];
 
-/// Decoded 8-bit colour at texel (tx, ty) of block (bx, by), obtained by
-/// bilinearly interpolating the 3×3 colour neighbourhood (toroidal wrap)
-/// exactly as the PVRTC decoder does, including the UNORM conversions
-/// (RGB: `(c >> 1) + (c >> 6)`; alpha: `c + (c >> 4)`).
-fn interpolate(
-    blocks: &[BlockColours],
+/// One colour plane (A or B) of the block grid.
+struct Plane<'a> {
+    blocks: &'a [BlockColours],
     nb_x: usize,
     nb_y: usize,
-    bx: usize,
-    by: usize,
-    tx: usize,
-    ty: usize,
-    use_b: bool,
-) -> [u8; 4] {
-    let mut clr = [0i32; 4];
-    for dy in 0..3 {
-        let yb = (by + nb_y - 1 + dy) % nb_y;
-        for dx in 0..3 {
-            let xb = (bx + nb_x - 1 + dx) % nb_x;
-            let c = if use_b {
-                blocks[yb * nb_x + xb].b
-            } else {
-                blocks[yb * nb_x + xb].a
-            };
-            let w = INTERP[tx][dx] * INTERP[ty][dy];
-            clr[0] += c.r as i32 * w;
-            clr[1] += c.g as i32 * w;
-            clr[2] += c.b as i32 * w;
-            clr[3] += c.a as i32 * w;
+}
+
+impl Plane<'_> {
+    /// Decoded 8-bit colour at texel (tx, ty) of block (bx, by), obtained by
+    /// bilinearly interpolating the 3×3 colour neighbourhood (toroidal wrap)
+    /// exactly as the PVRTC decoder does, including the UNORM conversions
+    /// (RGB: `(c >> 1) + (c >> 6)`; alpha: `c + (c >> 4)`).
+    fn interpolate(&self, bx: usize, by: usize, tx: usize, ty: usize, use_b: bool) -> [u8; 4] {
+        let (blocks, nb_x, nb_y) = (self.blocks, self.nb_x, self.nb_y);
+        let row_weights = INTERP[ty];
+        let col_weights = INTERP[tx];
+        let mut clr = [0i32; 4];
+        for (dy, &wy) in row_weights.iter().enumerate() {
+            let yb = (by + nb_y - 1 + dy) % nb_y;
+            for (dx, &wx) in col_weights.iter().enumerate() {
+                let xb = (bx + nb_x - 1 + dx) % nb_x;
+                let c = if use_b {
+                    blocks[yb * nb_x + xb].b
+                } else {
+                    blocks[yb * nb_x + xb].a
+                };
+                let w = wx * wy;
+                clr[0] += c.r as i32 * w;
+                clr[1] += c.g as i32 * w;
+                clr[2] += c.b as i32 * w;
+                clr[3] += c.a as i32 * w;
+            }
         }
+        [
+            ((clr[0] >> 1) + (clr[0] >> 6)) as u8,
+            ((clr[1] >> 1) + (clr[1] >> 6)) as u8,
+            ((clr[2] >> 1) + (clr[2] >> 6)) as u8,
+            (clr[3] + (clr[3] >> 4)) as u8,
+        ]
     }
-    [
-        ((clr[0] >> 1) + (clr[0] >> 6)) as u8,
-        ((clr[1] >> 1) + (clr[1] >> 6)) as u8,
-        ((clr[2] >> 1) + (clr[2] >> 6)) as u8,
-        (clr[3] + (clr[3] >> 4)) as u8,
-    ]
 }
 
 /// Standard modulation weights (M = 0): bits 00/01/10/11 → 0/3/5/8.
@@ -314,16 +354,12 @@ fn morton(x: usize, y: usize, min_dim: usize) -> usize {
 /// data: `width * height / 2` bytes, in reflected Morton word order.
 ///
 /// Requires `width` and `height` to be powers of two ≥ 8 (PVRTC1 constraint).
-pub fn encode_pvrtc_4bpp(
-    rgba: &[u8],
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>, String> {
+pub fn encode_pvrtc_4bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     if width < 8 || height < 8 || !width.is_power_of_two() || !height.is_power_of_two() {
-        return Err(format!(
+        return Err(crate::error::TpError::Other(format!(
             "PVRTC_4BPP requiere dimensiones potencia de dos ≥ 8x8 \
              (se obtuvo {width}x{height})"
-        ));
+        )));
     }
     if rgba.len() != width * height * 4 {
         return Err("PVRTC: buffer RGBA de tamaño incorrecto".into());
@@ -352,6 +388,11 @@ pub fn encode_pvrtc_4bpp(
     }
 
     // Pass 2: per-texel modulation search, then assemble the 64-bit words.
+    let plane_a = Plane {
+        blocks: &blocks,
+        nb_x,
+        nb_y,
+    };
     let mut out = vec![0u8; nb_x * nb_y * 8];
     for by in 0..nb_y {
         for bx in 0..nb_x {
@@ -360,8 +401,8 @@ pub fn encode_pvrtc_4bpp(
                 let y = by * 4 + ty;
                 for tx in 0..4 {
                     let x = bx * 4 + tx;
-                    let a8 = interpolate(&blocks, nb_x, nb_y, bx, by, tx, ty, false);
-                    let b8 = interpolate(&blocks, nb_x, nb_y, bx, by, tx, ty, true);
+                    let a8 = plane_a.interpolate(bx, by, tx, ty, false);
+                    let b8 = plane_a.interpolate(bx, by, tx, ty, true);
                     let s = (y * width + x) * 4;
                     let src = [rgba[s], rgba[s + 1], rgba[s + 2], rgba[s + 3]];
                     let bits = choose_mod(&src, &a8, &b8) as u32;
@@ -407,8 +448,16 @@ mod tests {
 
     #[test]
     fn sizes_and_errors() {
-        assert_eq!(encode_pvrtc_4bpp(&solid(8, 8, [0; 4]), 8, 8).unwrap().len(), 32);
-        assert_eq!(encode_pvrtc_4bpp(&solid(16, 8, [0; 4]), 16, 8).unwrap().len(), 64);
+        assert_eq!(
+            encode_pvrtc_4bpp(&solid(8, 8, [0; 4]), 8, 8).unwrap().len(),
+            32
+        );
+        assert_eq!(
+            encode_pvrtc_4bpp(&solid(16, 8, [0; 4]), 16, 8)
+                .unwrap()
+                .len(),
+            64
+        );
         assert!(encode_pvrtc_4bpp(&solid(100, 100, [0; 4]), 100, 100).is_err());
         assert!(encode_pvrtc_4bpp(&solid(4, 4, [0; 4]), 4, 4).is_err());
         assert!(encode_pvrtc_4bpp(&solid(8, 8, [0; 4]), 8, 8).is_ok());
@@ -441,12 +490,7 @@ mod tests {
         let mut rgba = Vec::with_capacity(w * h * 4);
         for y in 0..h {
             for x in 0..w {
-                rgba.extend_from_slice(&[
-                    (x * 17) as u8,
-                    (y * 17) as u8,
-                    ((x + y) * 8) as u8,
-                    255,
-                ]);
+                rgba.extend_from_slice(&[(x * 17) as u8, (y * 17) as u8, ((x + y) * 8) as u8, 255]);
             }
         }
         let enc = encode_pvrtc_4bpp(&rgba, w, h).unwrap();
@@ -505,10 +549,10 @@ mod tests {
         let w = 16;
         let h = 16;
         let quads = [
-            [255u8, 0, 0, 255],    // top-left
-            [0, 255, 0, 255],      // top-right
-            [0, 0, 255, 255],      // bottom-left
-            [255, 255, 0, 255],    // bottom-right
+            [255u8, 0, 0, 255], // top-left
+            [0, 255, 0, 255],   // top-right
+            [0, 0, 255, 255],   // bottom-left
+            [255, 255, 0, 255], // bottom-right
         ];
         let mut rgba = Vec::with_capacity(w * h * 4);
         for y in 0..h {

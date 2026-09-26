@@ -167,17 +167,17 @@ fn encode_eac_alpha(alpha: &[u8; 16]) -> [u8; 8] {
 
     for &base in &base_candidates {
         for m in 1..=15i32 {
-            for t in 0..16usize {
+            for (t, table) in EAC_MODIFIER_TABLE.iter().enumerate() {
                 let mut err: i64 = 0;
                 let mut mods = [0u8; 16];
-                for i in 0..16 {
+                for (i, &a) in alpha.iter().enumerate() {
                     let mut best = 0usize;
                     let mut be = i64::MAX;
-                    for (mi, &mv) in EAC_MODIFIER_TABLE[t].iter().enumerate() {
+                    for (mi, &mv) in table.iter().enumerate() {
                         // Decoded value clamps to [0, 255]; use the *true*
                         // decoded error, not the unclamped delta.
                         let val = (base + m * mv as i32).clamp(0, 255);
-                        let e = (alpha[i] as i32 - val).abs() as i64;
+                        let e = (a as i32 - val).abs() as i64;
                         if e < be {
                             be = e;
                             best = mi;
@@ -202,8 +202,8 @@ fn encode_eac_alpha(alpha: &[u8; 16]) -> [u8; 8] {
     // Modifier bitstream: pixel i's 2 bits at bits [3i, 3i+2] of a u64,
     // stored big-endian in bytes 2..8 (matches the reference decoder).
     let mut word: u64 = 0;
-    for i in 0..16 {
-        word |= (best_mods[i] as u64) << (3 * i);
+    for (i, &m) in best_mods.iter().enumerate() {
+        word |= (m as u64) << (3 * i);
     }
     out[2..8].copy_from_slice(&word.to_be_bytes()[2..8]);
     out
@@ -219,11 +219,11 @@ fn encode_eac_alpha(alpha: &[u8; 16]) -> [u8; 8] {
 fn pack_selectors(sel: &[u8; 16]) -> (u16, u16) {
     let mut k = 0u16;
     let mut j = 0u16;
-    for i in 0..16 {
-        if sel[i] & 1 == 1 {
+    for (i, &s) in sel.iter().enumerate() {
+        if s & 1 == 1 {
             j |= 1 << i;
         }
-        if sel[i] & 2 == 2 {
+        if s & 2 == 2 {
             k |= 1 << i;
         }
     }
@@ -258,7 +258,11 @@ fn expand7(v: i32) -> i32 {
 /// Clamp an 8-bit channel delta to the range representable by a 4-bit color.
 #[inline]
 fn add_clamp(c: [i32; 3], d: i32) -> [i32; 3] {
-    [(c[0] + d).clamp(0, 255), (c[1] + d).clamp(0, 255), (c[2] + d).clamp(0, 255)]
+    [
+        (c[0] + d).clamp(0, 255),
+        (c[1] + d).clamp(0, 255),
+        (c[2] + d).clamp(0, 255),
+    ]
 }
 
 /// For each pixel, best palette index and total error (stream order).
@@ -399,24 +403,24 @@ fn encode_individual(rgb: &[[u8; 3]; 16]) -> (i64, [u8; 8]) {
     let mut best_j = 0u16;
     let mut best_k = 0u16;
 
-    for flip in 0..2usize {
+    for (flip, &sub) in SUBBLOCK_TABLE.iter().enumerate() {
         let mut sub0: Vec<(usize, [u8; 3])> = Vec::new();
         let mut sub1: Vec<(usize, [u8; 3])> = Vec::new();
-        for i in 0..16 {
-            // Track each pixel's STREAM position: the index bits live at
-            // stream bit positions, which differ from subblock-local order
-            // when the block is split 2x4.
-            if SUBBLOCK_TABLE[flip][i] == 0 {
-                sub0.push((i, rgb[i]));
+        // Track each pixel's STREAM position: the index bits live at
+        // stream bit positions, which differ from subblock-local order
+        // when the block is split 2x4.
+        for (i, &c) in rgb.iter().enumerate() {
+            if sub[i] == 0 {
+                sub0.push((i, c));
             } else {
-                sub1.push((i, rgb[i]));
+                sub1.push((i, c));
             }
         }
 
-        let (r0, g0, b0, c0, j0, k0) = encode_subblock(&sub0);
-        let (r1, g1, b1, c1, j1, k1) = encode_subblock(&sub1);
-        let err = subblock_error(&sub0, r0, g0, b0, c0, j0, k0)
-            + subblock_error(&sub1, r1, g1, b1, c1, j1, k1);
+        let (r0, g0, b0, c0, j0, k0) = encode_subblock(&Subblock { pixels: &sub0 });
+        let (r1, g1, b1, c1, j1, k1) = encode_subblock(&Subblock { pixels: &sub1 });
+        let err = subblock_error(&Subblock { pixels: &sub0 }, r0, g0, b0, c0, j0, k0)
+            + subblock_error(&Subblock { pixels: &sub1 }, r1, g1, b1, c1, j1, k1);
 
         if err < best_err {
             best_err = err;
@@ -444,12 +448,20 @@ fn encode_individual(rgb: &[[u8; 3]; 16]) -> (i64, [u8; 8]) {
     (best_err, out)
 }
 
+/// One subblock: pixel colors paired with their STREAM position (the index
+/// bits live at stream bit positions, which differ from subblock-local order
+/// when the block is split 2x4).
+struct Subblock<'a> {
+    pixels: &'a [(usize, [u8; 3])],
+}
+
 /// Encode one subblock (up to 8 pixels): returns (r4, g4, b4, table_code,
 /// j-bits, k-bits) where the per-pixel index bits are OR-ed for both subblocks.
 ///
 /// The 4-bit base per channel is searched over {min, mean, max} so both
 /// bright and dark gradients can be covered by the modifier range.
-fn encode_subblock(pixels: &[(usize, [u8; 3])]) -> (u8, u8, u8, u8, u16, u16) {
+fn encode_subblock(sb: &Subblock<'_>) -> (u8, u8, u8, u8, u16, u16) {
+    let pixels = sb.pixels;
     debug_assert!(!pixels.is_empty());
     let n = pixels.len();
 
@@ -482,15 +494,15 @@ fn encode_subblock(pixels: &[(usize, [u8; 3])]) -> (u8, u8, u8, u8, u16, u16) {
         for gi in 0..3 {
             for bi in 0..3 {
                 let base = [candidates[ri][0], candidates[gi][1], candidates[bi][2]];
-                for code in 0..8usize {
+                for (code, table) in ETC1_MODIFIER_TABLE.iter().enumerate() {
                     let mut err: i64 = 0;
                     let mut j = 0u16;
                     let mut k = 0u16;
                     for &(stream_pos, p) in pixels.iter() {
                         let mut best_local = i64::MAX;
                         let mut best_jk = 0u8;
-                        for jbit in 0..2usize {
-                            let m = ETC1_MODIFIER_TABLE[code][jbit] as i64;
+                        for (jbit, &mv) in table.iter().enumerate() {
+                            let m = mv as i64;
                             for kbit in 0..2usize {
                                 let sign = if kbit == 1 { -1 } else { 1 };
                                 let mut e: i64 = 0;
@@ -525,19 +537,19 @@ fn encode_subblock(pixels: &[(usize, [u8; 3])]) -> (u8, u8, u8, u8, u16, u16) {
         }
     }
 
-    (best_base[0], best_base[1], best_base[2], best_code, best_j, best_k)
+    (
+        best_base[0],
+        best_base[1],
+        best_base[2],
+        best_code,
+        best_j,
+        best_k,
+    )
 }
 
 /// Compute the error of a subblock with the given encoding (for comparing flips).
-fn subblock_error(
-    pixels: &[(usize, [u8; 3])],
-    r4: u8,
-    g4: u8,
-    b4: u8,
-    code: u8,
-    j: u16,
-    k: u16,
-) -> i64 {
+fn subblock_error(sb: &Subblock<'_>, r4: u8, g4: u8, b4: u8, code: u8, j: u16, k: u16) -> i64 {
+    let pixels = sb.pixels;
     let base = [(r4 as i64) * 17, (g4 as i64) * 17, (b4 as i64) * 17];
     let mut err = 0i64;
     for &(stream_pos, p) in pixels.iter() {
@@ -560,7 +572,8 @@ struct EncResult {
 }
 
 /// Error + selectors for a subblock given fixed 5-bit bases and table code.
-fn diff_block_error(pixels: &[(usize, [u8; 3])], base: [u8; 3], code: usize) -> (i64, u16, u16) {
+fn diff_block_error(sb: &Subblock<'_>, base: [u8; 3], code: usize) -> (i64, u16, u16) {
+    let pixels = sb.pixels;
     let base8 = [
         expand5(base[0] as i32) as i64,
         expand5(base[1] as i32) as i64,
@@ -572,8 +585,8 @@ fn diff_block_error(pixels: &[(usize, [u8; 3])], base: [u8; 3], code: usize) -> 
     for &(pos, p) in pixels {
         let mut best = i64::MAX;
         let mut best_jk = 0u8;
-        for jbit in 0..2usize {
-            let m = ETC1_MODIFIER_TABLE[code][jbit] as i64;
+        for (jbit, &mv) in ETC1_MODIFIER_TABLE[code].iter().enumerate() {
+            let m = mv as i64;
             for kbit in 0..2usize {
                 let sign = if kbit == 1 { -1 } else { 1 };
                 let mut e = 0i64;
@@ -599,11 +612,12 @@ fn diff_block_error(pixels: &[(usize, [u8; 3])], base: [u8; 3], code: usize) -> 
 }
 
 /// Best (err, table, j, k) for a subblock with fixed 5-bit bases.
-fn diff_with_fixed_base(pixels: &[(usize, [u8; 3])], base: [u8; 3]) -> (i64, u8, u16, u16) {
+fn diff_with_fixed_base(sb: &Subblock<'_>, base: [u8; 3]) -> (i64, u8, u16, u16) {
+    let pixels = sb.pixels;
     let mut best_err = i64::MAX;
     let mut best = (0u8, 0u16, 0u16);
     for code in 0..8usize {
-        let (err, j, k) = diff_block_error(pixels, base, code);
+        let (err, j, k) = diff_block_error(&Subblock { pixels }, base, code);
         if err < best_err {
             best_err = err;
             best = (code as u8, j, k);
@@ -620,7 +634,8 @@ fn clamp_delta(r0: u8, r1: u8) -> u8 {
 }
 
 /// Search a subblock with 5-bit bases: returns (err, r5, g5, b5, code, j, k).
-fn encode_diff_subblock(pixels: &[(usize, [u8; 3])]) -> (i64, u8, u8, u8, u8, u16, u16) {
+fn encode_diff_subblock(sb: &Subblock<'_>) -> (i64, u8, u8, u8, u8, u16, u16) {
+    let pixels = sb.pixels;
     let n = pixels.len();
     let mut best_err = i64::MAX;
     let mut best = (0u8, 0u8, 0u8, 0u8, 0u16, 0u16);
@@ -648,7 +663,7 @@ fn encode_diff_subblock(pixels: &[(usize, [u8; 3])]) -> (i64, u8, u8, u8, u8, u1
             for bi in 0..3 {
                 let base = [cands[ri][0], cands[gi][1], cands[bi][2]];
                 for code in 0..8usize {
-                    let (err, j, k) = diff_block_error(pixels, base, code);
+                    let (err, j, k) = diff_block_error(&Subblock { pixels }, base, code);
                     if err < best_err {
                         best_err = err;
                         best = (base[0], base[1], base[2], code as u8, j, k);
@@ -663,26 +678,27 @@ fn encode_diff_subblock(pixels: &[(usize, [u8; 3])]) -> (i64, u8, u8, u8, u8, u1
 fn encode_differential(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
     let mut best: Option<EncResult> = None;
 
-    for flip in 0..2usize {
+    for (flip, &sub) in SUBBLOCK_TABLE.iter().enumerate() {
         let mut sub0: Vec<(usize, [u8; 3])> = Vec::new();
         let mut sub1: Vec<(usize, [u8; 3])> = Vec::new();
-        for i in 0..16 {
-            if SUBBLOCK_TABLE[flip][i] == 0 {
-                sub0.push((i, rgb[i]));
+        for (i, &c) in rgb.iter().enumerate() {
+            if sub[i] == 0 {
+                sub0.push((i, c));
             } else {
-                sub1.push((i, rgb[i]));
+                sub1.push((i, c));
             }
         }
 
-        let (e0, r0, g0, b0, c0, j0, k0) = encode_diff_subblock(&sub0);
-        let (_, r1, g1, b1, _, _, _) = encode_diff_subblock(&sub1);
+        let (e0, r0, g0, b0, c0, j0, k0) = encode_diff_subblock(&Subblock { pixels: &sub0 });
+        let (_, r1, g1, b1, _, _, _) = encode_diff_subblock(&Subblock { pixels: &sub1 });
 
         // Clamp subblock-1 bases into the valid delta range, then re-evaluate
         // subblock 1 with the fixed bases (best table + selectors).
         let r1c = clamp_delta(r0, r1);
         let g1c = clamp_delta(g0, g1);
         let b1c = clamp_delta(b0, b1);
-        let (e1c, c1c, j1c, k1c) = diff_with_fixed_base(&sub1, [r1c, g1c, b1c]);
+        let (e1c, c1c, j1c, k1c) =
+            diff_with_fixed_base(&Subblock { pixels: &sub1 }, [r1c, g1c, b1c]);
         let err = e0 + e1c;
 
         let mut block = [0u8; 8];
@@ -693,7 +709,7 @@ fn encode_differential(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
         block[4..6].copy_from_slice(&(k0 | k1c).to_be_bytes());
         block[6..8].copy_from_slice(&(j0 | j1c).to_be_bytes());
 
-        if best.as_ref().map_or(true, |b| err < b.err) {
+        if best.as_ref().is_none_or(|b| err < b.err) {
             best = Some(EncResult { err, block });
         }
     }
@@ -723,8 +739,8 @@ fn encode_t(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
 
     for &c0 in &cands {
         for &c1 in &cands {
-            for dist in 0..8usize {
-                let d = ETC2_DISTANCE_TABLE[dist] as i32;
+            for (dist, &dv) in ETC2_DISTANCE_TABLE.iter().enumerate() {
+                let d = dv as i32;
                 let c0x = expand4_3(c0);
                 let c1x = expand4_3(c1);
                 // Palette: [C0, C1+d, C1, C1-d].
@@ -755,7 +771,7 @@ fn encode_t(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
                 block[4..6].copy_from_slice(&k.to_be_bytes());
                 block[6..8].copy_from_slice(&j.to_be_bytes());
 
-                if best.as_ref().map_or(true, |b| err < b.err) {
+                if best.as_ref().is_none_or(|b| err < b.err) {
                     best = Some(EncResult { err, block });
                 }
             }
@@ -796,7 +812,12 @@ fn encode_h(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
                 let c0x = expand4_3(c0);
                 let c1x = expand4_3(c1);
                 // Palette: [C0+d, C0-d, C1+d, C1-d].
-                let palette = [add_clamp(c0x, d), add_clamp(c0x, -d), add_clamp(c1x, d), add_clamp(c1x, -d)];
+                let palette = [
+                    add_clamp(c0x, d),
+                    add_clamp(c0x, -d),
+                    add_clamp(c1x, d),
+                    add_clamp(c1x, -d),
+                ];
                 let (err, sel) = best_palette_error(rgb, &palette);
 
                 let r0 = c0[0];
@@ -838,7 +859,7 @@ fn encode_h(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
                 block[4..6].copy_from_slice(&k.to_be_bytes());
                 block[6..8].copy_from_slice(&j.to_be_bytes());
 
-                if best.as_ref().map_or(true, |b| err < b.err) {
+                if best.as_ref().is_none_or(|b| err < b.err) {
                     best = Some(EncResult { err, block });
                 }
             }
@@ -876,15 +897,10 @@ fn encode_planar(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
     // 3-point fit through (0,0), (3,0), (0,3). Keep the better one.
     let mut best: Option<EncResult> = None;
 
-    let fits = [
-        planar_ls_fit(rgb),
-        planar_3point_fit(rgb),
-    ];
-    for fit in fits {
-        if let Some((err, block)) = fit {
-            if best.as_ref().map_or(true, |b| err < b.err) {
-                best = Some(EncResult { err, block });
-            }
+    let fits = [planar_ls_fit(rgb), planar_3point_fit(rgb)];
+    for (err, block) in fits.into_iter().flatten() {
+        if best.as_ref().is_none_or(|b| err < b.err) {
+            best = Some(EncResult { err, block });
         }
     }
     best
@@ -919,26 +935,26 @@ fn planar_pack(rgb: &[[u8; 3]; 16], o: [u8; 3], h: [u8; 3], v: [u8; 3]) -> (i64,
     let bv8 = expand6(bv);
 
     let mut err = 0i64;
-    for i in 0..16 {
+    for (i, &px) in rgb.iter().enumerate() {
         let (x, y) = stream_xy(i);
         let xi = x as i32;
         let yi = y as i32;
         let r = ((xi * (rh8 - ro8) + yi * (rv8 - ro8) + 4 * ro8 + 2) >> 2).clamp(0, 255);
         let g = ((xi * (gh8 - go8) + yi * (gv8 - go8) + 4 * go8 + 2) >> 2).clamp(0, 255);
         let b = ((xi * (bh8 - bo8) + yi * (bv8 - bo8) + 4 * bo8 + 2) >> 2).clamp(0, 255);
-        err += (rgb[i][0] as i64 - r as i64).abs()
-            + (rgb[i][1] as i64 - g as i64).abs()
-            + (rgb[i][2] as i64 - b as i64).abs();
+        err += (px[0] as i64 - r as i64).abs()
+            + (px[1] as i64 - g as i64).abs()
+            + (px[2] as i64 - b as i64).abs();
     }
 
     // Overflow padding (ETCPACK `stuff57bits`): red and green must NOT
     // overflow, blue must overflow.
     let red_bit = (ro >> 5) & 1; // = bit 62 in the stuffed word
     let green_bit = (go >> 5) & 1;
-    let bb = planar_overflow_bit((bo >> 2) as u8 & 3, (bo & 7) as u8);
+    let bb = planar_overflow_bit(((bo >> 2) & 3) as u8, (bo & 7) as u8);
 
     let mut block = [0u8; 8];
-    block[0] = ((((!red_bit & 1) as i32) << 7)
+    block[0] = (((!red_bit & 1) << 7)
         | (((ro >> 5) & 1) << 6)
         | (((ro >> 4) & 1) << 5)
         | (((ro >> 3) & 1) << 4)
@@ -946,7 +962,7 @@ fn planar_pack(rgb: &[[u8; 3]; 16], o: [u8; 3], h: [u8; 3], v: [u8; 3]) -> (i64,
         | (((ro >> 1) & 1) << 2)
         | ((ro & 1) << 1)
         | go1) as u8; // GO1
-    block[1] = ((((!green_bit & 1) as i32) << 7)
+    block[1] = (((!green_bit & 1) << 7)
         | (((go >> 5) & 1) << 6)
         | (((go >> 4) & 1) << 5)
         | (((go >> 3) & 1) << 4)
@@ -962,11 +978,11 @@ fn planar_pack(rgb: &[[u8; 3]; 16], o: [u8; 3], h: [u8; 3], v: [u8; 3]) -> (i64,
         | (((!bb & 1) as i32) << 2)
         | (((bo >> 2) & 1) << 1) // BO3 bit 2
         | ((bo >> 1) & 1)) as u8; // BO3 bit 1
-    block[3] = ((((bo & 1) as i32) << 7) // BO3 bit 0
+    block[3] = (((bo & 1) << 7) // BO3 bit 0
         | (rh1 << 2) // RH1 = H bits 5:1
         | (1 << 1)
         | rh2) as u8; // RH2 = H bit 0
-    // GH (7 bits), BH, RV, GV, BV in word 2 (bytes 4-7).
+                      // GH (7 bits), BH, RV, GV, BV in word 2 (bytes 4-7).
     block[4] = (((gh >> 6) << 7)
         | (((gh >> 5) & 1) << 6)
         | (((gh >> 4) & 1) << 5)
@@ -1013,10 +1029,10 @@ fn planar_ls_fit(rgb: &[[u8; 3]; 16]) -> Option<(i64, [u8; 8])> {
     let mut sum = [0i64; 3];
     let mut sum_x = [0i64; 3];
     let mut sum_y = [0i64; 3];
-    for i in 0..16 {
+    for (i, &px) in rgb.iter().enumerate() {
         let (x, y) = stream_xy(i);
         for c in 0..3 {
-            let p = rgb[i][c] as i64;
+            let p = px[c] as i64;
             sum[c] += p;
             sum_x[c] += p * x as i64;
             sum_y[c] += p * y as i64;
@@ -1129,9 +1145,12 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
     let g = green1 as i32 + dgreen2;
     let b = blue1 as i32 + dblue2;
 
-    if r < 0 || r > 31 {
+    if !(0..=31).contains(&r) {
         // T mode.
-        let r0 = ((block[0] >> 4) & 1) << 3 | ((block[0] >> 3) & 1) << 2 | ((block[0] >> 1) & 1) << 1 | (block[0] & 1);
+        let r0 = ((block[0] >> 4) & 1) << 3
+            | ((block[0] >> 3) & 1) << 2
+            | ((block[0] >> 1) & 1) << 1
+            | (block[0] & 1);
         let g0 = block[1] >> 4;
         let b0 = block[1] & 0xF;
         let r1 = block[2] >> 4;
@@ -1144,9 +1163,9 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
         let palette = [c0, add_clamp(c1, d), c1, add_clamp(c1, -d)];
         let j = u16::from_be_bytes([block[6], block[7]]);
         let k = u16::from_be_bytes([block[4], block[5]]);
-        for i in 0..16 {
+        for (i, o) in out.iter_mut().enumerate() {
             let s = (((k >> i) & 1) << 1) | ((j >> i) & 1);
-            out[i] = [
+            *o = [
                 palette[s as usize][0] as u8,
                 palette[s as usize][1] as u8,
                 palette[s as usize][2] as u8,
@@ -1155,13 +1174,25 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
         return out;
     }
 
-    if g < 0 || g > 31 {
+    if !(0..=31).contains(&g) {
         // H mode.
-        let r0 = ((block[0] >> 6) & 1) << 3 | ((block[0] >> 5) & 1) << 2 | ((block[0] >> 4) & 1) << 1 | ((block[0] >> 3) & 1);
-        let g0 = ((block[0] >> 2) & 1) << 3 | ((block[0] >> 1) & 1) << 2 | (block[0] & 1) << 1 | ((block[1] >> 4) & 1);
-        let b0 = ((block[1] >> 3) & 1) << 3 | ((block[1] >> 1) & 1) << 2 | (block[1] & 1) << 1 | ((block[2] >> 7) & 1);
+        let r0 = ((block[0] >> 6) & 1) << 3
+            | ((block[0] >> 5) & 1) << 2
+            | ((block[0] >> 4) & 1) << 1
+            | ((block[0] >> 3) & 1);
+        let g0 = ((block[0] >> 2) & 1) << 3
+            | ((block[0] >> 1) & 1) << 2
+            | (block[0] & 1) << 1
+            | ((block[1] >> 4) & 1);
+        let b0 = ((block[1] >> 3) & 1) << 3
+            | ((block[1] >> 1) & 1) << 2
+            | (block[1] & 1) << 1
+            | ((block[2] >> 7) & 1);
         let r1 = (block[2] >> 3) & 0xF;
-        let g1 = ((block[2] >> 2) & 1) << 3 | ((block[2] >> 1) & 1) << 2 | (block[2] & 1) << 1 | ((block[3] >> 7) & 1);
+        let g1 = ((block[2] >> 2) & 1) << 3
+            | ((block[2] >> 1) & 1) << 2
+            | (block[2] & 1) << 1
+            | ((block[3] >> 7) & 1);
         let b1 = (block[3] >> 3) & 0xF;
         let stored = (((block[3] >> 2) & 1) << 1) | (block[3] & 1);
         let c0 = [(r0 as i32) * 17, (g0 as i32) * 17, (b0 as i32) * 17];
@@ -1169,12 +1200,17 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
         let implied = if packed_cmp(c0, c1) { 1 } else { 0 };
         let dist = ((stored << 1) | implied) as usize;
         let d = ETC2_DISTANCE_TABLE[dist] as i32;
-        let palette = [add_clamp(c0, d), add_clamp(c0, -d), add_clamp(c1, d), add_clamp(c1, -d)];
+        let palette = [
+            add_clamp(c0, d),
+            add_clamp(c0, -d),
+            add_clamp(c1, d),
+            add_clamp(c1, -d),
+        ];
         let j = u16::from_be_bytes([block[6], block[7]]);
         let k = u16::from_be_bytes([block[4], block[5]]);
-        for i in 0..16 {
+        for (i, o) in out.iter_mut().enumerate() {
             let s = (((k >> i) & 1) << 1) | ((j >> i) & 1);
-            out[i] = [
+            *o = [
                 palette[s as usize][0] as u8,
                 palette[s as usize][1] as u8,
                 palette[s as usize][2] as u8,
@@ -1183,7 +1219,7 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
         return out;
     }
 
-    if b < 0 || b > 31 {
+    if !(0..=31).contains(&b) {
         // Planar mode.
         let ro = (((block[0] >> 6) & 1) << 5
             | ((block[0] >> 5) & 1) << 4
@@ -1199,7 +1235,7 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
         let gh = ((block[4] >> 1) & 0x7F) as i32;
         let bh = (((block[4] & 1) << 5) | ((block[5] >> 3) & 0x1F)) as i32;
         let rv = (((block[5] & 7) << 3) | ((block[6] >> 5) & 7)) as i32;
-        let gv = ((((block[6] & 0x1F) as i32) << 2) | (((block[7] >> 6) & 3) as i32)) as i32;
+        let gv = (((block[6] & 0x1F) as i32) << 2) | (((block[7] >> 6) & 3) as i32);
         let bv = (block[7] & 0x3F) as i32;
 
         let ro8 = expand6(ro);
@@ -1212,11 +1248,11 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
         let gv8 = expand7(gv);
         let bv8 = expand6(bv);
 
-        for i in 0..16 {
+        for (i, o) in out.iter_mut().enumerate() {
             let (x, y) = stream_xy(i);
             let xi = x as i32;
             let yi = y as i32;
-            out[i] = [
+            *o = [
                 ((xi * (rh8 - ro8) + yi * (rv8 - ro8) + 4 * ro8 + 2) >> 2).clamp(0, 255) as u8,
                 ((xi * (gh8 - go8) + yi * (gv8 - go8) + 4 * go8 + 2) >> 2).clamp(0, 255) as u8,
                 ((xi * (bh8 - bo8) + yi * (bv8 - bo8) + 4 * bo8 + 2) >> 2).clamp(0, 255) as u8,
@@ -1226,7 +1262,11 @@ fn decode_rgb_to_stream(block: &[u8]) -> [[u8; 3]; 16] {
     }
 
     // Differential mode.
-    let c0 = [expand5(red1 as i32), expand5(green1 as i32), expand5(blue1 as i32)];
+    let c0 = [
+        expand5(red1 as i32),
+        expand5(green1 as i32),
+        expand5(blue1 as i32),
+    ];
     let c1 = [expand5(r), expand5(g), expand5(b)];
     let codes = [block[3] >> 5, (block[3] >> 2) & 7];
     let flip = block[3] & 1;
@@ -1307,18 +1347,26 @@ mod tests {
     fn individual_roundtrip_close() {
         // Two flat halves: individual mode should get very close.
         let mut colors = [[0u8; 3]; 16];
-        for i in 0..16 {
-            colors[i] = if i < 8 { [100, 50, 200] } else { [200, 100, 50] };
+        for (i, c) in colors.iter_mut().enumerate() {
+            *c = if i < 8 {
+                [100, 50, 200]
+            } else {
+                [200, 100, 50]
+            };
         }
         let pixels = block_of(colors);
         let decoded = roundtrip(&pixels);
-        for i in 0..16 {
-            let expect = if i < 8 { [100, 50, 200] } else { [200, 100, 50] };
+        for (i, d) in decoded.iter().enumerate() {
+            let expect = if i < 8 {
+                [100, 50, 200]
+            } else {
+                [200, 100, 50]
+            };
             for c in 0..3 {
                 assert!(
-                    (decoded[i][c] as i64 - expect[c] as i64).abs() <= 3,
+                    (d[c] as i64 - expect[c] as i64).abs() <= 3,
                     "pixel {i} ch {c}: {} vs {}",
-                    decoded[i][c],
+                    d[c],
                     expect[c]
                 );
             }
@@ -1353,7 +1401,12 @@ mod tests {
         for i in 0..16 {
             for c in 0..3 {
                 let e = (pixels[i][c] as i64 - decoded[i][c] as i64).abs();
-                assert!(e <= 20, "pixel {i} ch {c}: {} vs {}", pixels[i][c], decoded[i][c]);
+                assert!(
+                    e <= 20,
+                    "pixel {i} ch {c}: {} vs {}",
+                    pixels[i][c],
+                    decoded[i][c]
+                );
             }
         }
     }
@@ -1501,7 +1554,12 @@ mod tests {
         let d = ETC2_DISTANCE_TABLE[dist] as i32;
         let c0x = expand4_3(c0);
         let c1x = expand4_3(c1);
-        let palette = [add_clamp(c0x, d), add_clamp(c0x, -d), add_clamp(c1x, d), add_clamp(c1x, -d)];
+        let palette = [
+            add_clamp(c0x, d),
+            add_clamp(c0x, -d),
+            add_clamp(c1x, d),
+            add_clamp(c1x, -d),
+        ];
         let mut sel = [0u8; 16];
         for (i, s) in sel.iter_mut().enumerate() {
             *s = ((i * 3) % 4) as u8;
@@ -1528,7 +1586,12 @@ mod tests {
         let d = ETC2_DISTANCE_TABLE[dist] as i32;
         let c0x = expand4_3(c0);
         let c1x = expand4_3(c1);
-        let palette = [add_clamp(c0x, d), add_clamp(c0x, -d), add_clamp(c1x, d), add_clamp(c1x, -d)];
+        let palette = [
+            add_clamp(c0x, d),
+            add_clamp(c0x, -d),
+            add_clamp(c1x, d),
+            add_clamp(c1x, -d),
+        ];
         let mut colors = [[0u8; 3]; 16];
         for (i, c) in colors.iter_mut().enumerate() {
             let p = palette[(i * 3) % 4];
@@ -1583,7 +1646,7 @@ mod tests {
         let bo8 = expand6(o[2] as i32);
         let bh8 = expand6(h[2] as i32);
         let bv8 = expand6(v[2] as i32);
-        for i in 0..16 {
+        for (i, d) in decoded.iter().enumerate() {
             // decoded[i] is in SCAN order: scan pixel i = (x = i % 4, y = i / 4).
             let xi = (i % 4) as i32;
             let yi = (i / 4) as i32;
@@ -1592,7 +1655,7 @@ mod tests {
                 ((xi * (gh8 - go8) + yi * (gv8 - go8) + 4 * go8 + 2) >> 2) as u8,
                 ((xi * (bh8 - bo8) + yi * (bv8 - bo8) + 4 * bo8 + 2) >> 2) as u8,
             ];
-            assert_eq!(decoded[i], expect, "pixel {i}");
+            assert_eq!(*d, expect, "pixel {i}");
         }
     }
 
@@ -1639,8 +1702,14 @@ mod tests {
         let dgreen2 = sign_extend3(enc.block[1] & 7);
         let blue1 = enc.block[2] >> 3;
         let dblue2 = sign_extend3(enc.block[2] & 7);
-        assert!((0..=31).contains(&(red1 as i32 + dred2)), "R must not overflow");
-        assert!((0..=31).contains(&(green1 as i32 + dgreen2)), "G must not overflow");
+        assert!(
+            (0..=31).contains(&(red1 as i32 + dred2)),
+            "R must not overflow"
+        );
+        assert!(
+            (0..=31).contains(&(green1 as i32 + dgreen2)),
+            "G must not overflow"
+        );
         assert!(
             blue1 as i32 + dblue2 < 0 || blue1 as i32 + dblue2 > 31,
             "B must overflow for planar"
@@ -1705,7 +1774,9 @@ mod tests {
 
     #[test]
     fn eac_alpha_roundtrip() {
-        let alpha = [0u8, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240];
+        let alpha = [
+            0u8, 16, 32, 48, 64, 80, 96, 112, 128, 144, 160, 176, 192, 208, 224, 240,
+        ];
         // Mirror encode_block: modifiers are written in reverse column-major
         // order, so feed the encoder the reversed ramp.
         let mut alpha_rev = [0u8; 16];
@@ -1717,9 +1788,7 @@ mod tests {
         let base = out[0] as i32;
         let mult = (out[1] >> 4) as i32;
         let table = (out[1] & 0xF) as usize;
-        let mut word = u64::from_be_bytes([
-            0, 0, out[2], out[3], out[4], out[5], out[6], out[7],
-        ]);
+        let mut word = u64::from_be_bytes([0, 0, out[2], out[3], out[4], out[5], out[6], out[7]]);
         let mut err = 0i64;
         for i in 0..16 {
             // EAC stores 3 bits per texel (an index 0..7 into the 8-value
@@ -1738,17 +1807,17 @@ mod tests {
     /// Stream-order RGB from a block of scan-order pixels.
     fn rgb_stream(pixels: &[[u8; 4]; 16]) -> [[u8; 3]; 16] {
         let mut rgb = [[0u8; 3]; 16];
-        for i in 0..16 {
+        for (i, c) in rgb.iter_mut().enumerate() {
             let s = stream_to_scan(i);
-            rgb[i] = [pixels[s][0], pixels[s][1], pixels[s][2]];
+            *c = [pixels[s][0], pixels[s][1], pixels[s][2]];
         }
         rgb
     }
 
     fn rgb_stream_of(colors: &[[u8; 3]; 16]) -> [[u8; 3]; 16] {
         let mut rgb = [[0u8; 3]; 16];
-        for i in 0..16 {
-            rgb[i] = colors[stream_to_scan(i)];
+        for (i, c) in rgb.iter_mut().enumerate() {
+            *c = colors[stream_to_scan(i)];
         }
         rgb
     }
@@ -1768,14 +1837,25 @@ mod tests {
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(rgb8, &mut theirs);
         for i in 0..16 {
-            let t = [((theirs[i] >> 16) & 0xFF) as u8, ((theirs[i] >> 8) & 0xFF) as u8, (theirs[i] & 0xFF) as u8];
-            println!("px{i} ours={:?} theirs={:?} src={:?}", ours[i], t, pixels[i]);
+            let t = [
+                ((theirs[i] >> 16) & 0xFF) as u8,
+                ((theirs[i] >> 8) & 0xFF) as u8,
+                (theirs[i] & 0xFF) as u8,
+            ];
+            println!(
+                "px{i} ours={:?} theirs={:?} src={:?}",
+                ours[i], t, pixels[i]
+            );
         }
 
         // Differential test block
         let mut colors = [[0u8; 3]; 16];
-        for i in 0..16 {
-            colors[i] = if i < 8 { [100, 50, 200] } else { [120, 60, 220] };
+        for (i, c) in colors.iter_mut().enumerate() {
+            *c = if i < 8 {
+                [100, 50, 200]
+            } else {
+                [120, 60, 220]
+            };
         }
         let rgb = rgb_stream_of(&colors);
         let enc = encode_differential(&rgb).expect("differential");
@@ -1784,8 +1864,17 @@ mod tests {
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);
         for i in 0..16 {
-            let t = [((theirs[i] >> 16) & 0xFF) as u8, ((theirs[i] >> 8) & 0xFF) as u8, (theirs[i] & 0xFF) as u8];
-            println!("dpx{i} ours={:?} theirs={:?} src={:?}", ours[i], t, colors[stream_to_scan(i)]);
+            let t = [
+                ((theirs[i] >> 16) & 0xFF) as u8,
+                ((theirs[i] >> 8) & 0xFF) as u8,
+                (theirs[i] & 0xFF) as u8,
+            ];
+            println!(
+                "dpx{i} ours={:?} theirs={:?} src={:?}",
+                ours[i],
+                t,
+                colors[stream_to_scan(i)]
+            );
         }
     }
 
@@ -1803,7 +1892,17 @@ mod tests {
         println!("decoded={:?}", decode_etc2_rgb_block(&block));
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(&block, &mut theirs);
-        println!("theirs={:?}", theirs.iter().map(|v| [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]).collect::<Vec<_>>());
+        println!(
+            "theirs={:?}",
+            theirs
+                .iter()
+                .map(|v| [
+                    ((v >> 16) & 0xFF) as u8,
+                    ((v >> 8) & 0xFF) as u8,
+                    (v & 0xFF) as u8
+                ])
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -1827,7 +1926,17 @@ mod tests {
         println!("T ours={:?}", decode_etc2_rgb_block(&enc.block));
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);
-        println!("T theirs={:?}", theirs.iter().map(|v| [(*v & 0xFF) as u8, ((*v >> 8) & 0xFF) as u8, ((*v >> 16) & 0xFF) as u8]).collect::<Vec<_>>());
+        println!(
+            "T theirs={:?}",
+            theirs
+                .iter()
+                .map(|v| [
+                    (*v & 0xFF) as u8,
+                    ((*v >> 8) & 0xFF) as u8,
+                    ((*v >> 16) & 0xFF) as u8
+                ])
+                .collect::<Vec<_>>()
+        );
 
         // H test palette
         let c0 = [15u8, 5, 3];
@@ -1838,7 +1947,12 @@ mod tests {
         let d = ETC2_DISTANCE_TABLE[dist] as i32;
         let c0x = expand4_3(c0);
         let c1x = expand4_3(c1);
-        let palette = [add_clamp(c0x, d), add_clamp(c0x, -d), add_clamp(c1x, d), add_clamp(c1x, -d)];
+        let palette = [
+            add_clamp(c0x, d),
+            add_clamp(c0x, -d),
+            add_clamp(c1x, d),
+            add_clamp(c1x, -d),
+        ];
         let mut colors = [[0u8; 3]; 16];
         for (i, c) in colors.iter_mut().enumerate() {
             let p = palette[(i * 3) % 4];
@@ -1869,15 +1983,24 @@ mod tests {
         // which mode did the full encoder pick?
         let full = encode_block(&pixels);
         let fdec = decode_etc2_rgb_block(&full[8..16]);
-        println!("full bytes={:02x?} dec[0]={:?} src[0]={:?}", &full[8..16], fdec[0], pixels[0]);
+        println!(
+            "full bytes={:02x?} dec[0]={:?} src[0]={:?}",
+            &full[8..16],
+            fdec[0],
+            pixels[0]
+        );
     }
 
     /// A block with two flat halves: the full encoder picks individual mode,
     /// which texture2ddecoder decodes correctly (its H/planar decoders are buggy).
     fn two_half_block() -> [[u8; 4]; 16] {
         let mut colors = [[0u8; 3]; 16];
-        for i in 0..16 {
-            colors[i] = if i < 8 { [100, 50, 200] } else { [200, 100, 50] };
+        for (i, c) in colors.iter_mut().enumerate() {
+            *c = if i < 8 {
+                [100, 50, 200]
+            } else {
+                [200, 100, 50]
+            };
         }
         block_of(colors)
     }
@@ -1894,7 +2017,11 @@ mod tests {
 
         // texture2ddecoder packs each pixel as u32::from_le_bytes([b, g, r, a]).
         let to_rgb = |v: u32| -> [u8; 3] {
-            [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]
+            [
+                ((v >> 16) & 0xFF) as u8,
+                ((v >> 8) & 0xFF) as u8,
+                (v & 0xFF) as u8,
+            ]
         };
         let ours = decode_etc2_rgb_block(rgb8);
         let mut theirs = [0u32; 16];
@@ -1912,7 +2039,11 @@ mod tests {
         let block = encode_block(&pixels);
         let rgb8 = &block[8..16];
         let to_rgb = |v: u32| -> [u8; 3] {
-            [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]
+            [
+                ((v >> 16) & 0xFF) as u8,
+                ((v >> 8) & 0xFF) as u8,
+                (v & 0xFF) as u8,
+            ]
         };
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(rgb8, &mut theirs);
@@ -1944,7 +2075,11 @@ mod tests {
             *c = [p[0] as u8, p[1] as u8, p[2] as u8];
         }
         let to_rgb = |v: u32| -> [u8; 3] {
-            [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]
+            [
+                ((v >> 16) & 0xFF) as u8,
+                ((v >> 8) & 0xFF) as u8,
+                (v & 0xFF) as u8,
+            ]
         };
         let rgb = rgb_stream_of(&colors);
         let enc = encode_t(&rgb).unwrap();
@@ -1952,7 +2087,11 @@ mod tests {
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);
         for i in 0..16 {
-            assert_eq!(ours[i], to_rgb(theirs[i]), "T decoder mismatch at pixel {i}");
+            assert_eq!(
+                ours[i],
+                to_rgb(theirs[i]),
+                "T decoder mismatch at pixel {i}"
+            );
         }
     }
 
@@ -1961,12 +2100,20 @@ mod tests {
         // Force differential mode with two flat subblocks and confirm both
         // decoders agree and the result is exact.
         let mut colors = [[0u8; 3]; 16];
-        for i in 0..16 {
+        for (i, c) in colors.iter_mut().enumerate() {
             // Bases picked so the 5-bit deltas are valid and the modifier is 0.
-            colors[i] = if i < 8 { [100, 50, 200] } else { [120, 60, 220] };
+            *c = if i < 8 {
+                [100, 50, 200]
+            } else {
+                [120, 60, 220]
+            };
         }
         let to_rgb = |v: u32| -> [u8; 3] {
-            [((v >> 16) & 0xFF) as u8, ((v >> 8) & 0xFF) as u8, (v & 0xFF) as u8]
+            [
+                ((v >> 16) & 0xFF) as u8,
+                ((v >> 8) & 0xFF) as u8,
+                (v & 0xFF) as u8,
+            ]
         };
         let rgb = rgb_stream_of(&colors);
         let enc = encode_differential(&rgb).expect("differential");
@@ -1974,7 +2121,11 @@ mod tests {
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);
         for i in 0..16 {
-            assert_eq!(ours[i], to_rgb(theirs[i]), "differential decoder mismatch at pixel {i}");
+            assert_eq!(
+                ours[i],
+                to_rgb(theirs[i]),
+                "differential decoder mismatch at pixel {i}"
+            );
         }
     }
 }

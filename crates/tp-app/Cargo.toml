@@ -10,3 +10,6 @@ tp-core = { path = "../tp-core" }
 eframe.workspace = true
 rfd.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true

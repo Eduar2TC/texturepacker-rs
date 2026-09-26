@@ -8,3 +8,6 @@ description = "TexturePacker-RS command-line interface"
 [dependencies]
 tp-core = { path = "../tp-core" }
 serde_json.workspace = true
+
+[lints]
+workspace = true

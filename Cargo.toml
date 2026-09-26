@@ -15,15 +15,23 @@ serde_json = "1"
 toml = "0.8"
 thiserror = "2"
 rayon = "1.10"
-image = { version = "0.25", default-features = false, features = ["png", "webp", "jpeg"] }
+image = { version = "0.25", default-features = false, features = [
+    "png", "webp", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "dds", "qoi",
+] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 aes-gcm = "0.10"
 rand = "0.9"
 handlebars = "6"
 eframe = "0.33"
-rfd = "0.15"
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 astcenc-rs = { version = "0.2" }
 
 [profile.release]
 lto = "thin"
 opt-level = 3
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }

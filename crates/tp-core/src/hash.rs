@@ -66,7 +66,10 @@ mod tests {
         let a = vec![10u8; 4 * 4 * 4];
         let h = hash_pixels_rgba(&a);
         assert_eq!(table.lookup_or_register(&h, "a", &a, 4, 4), None);
-        assert_eq!(table.lookup_or_register(&h, "b", &a, 4, 4), Some("a".into()));
+        assert_eq!(
+            table.lookup_or_register(&h, "b", &a, 4, 4),
+            Some("a".into())
+        );
     }
 
     #[test]
