@@ -27,7 +27,12 @@ pub struct Rect {
 
 impl Rect {
     pub fn new(x: i32, y: i32, width: i32, height: i32) -> Self {
-        Self { x, y, width, height }
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
     }
 
     pub fn area(&self) -> i64 {
@@ -91,6 +96,10 @@ pub struct SpriteAsset {
     pub alias_target_id: Option<String>,
     /// Normalized pivot (0..1 relative to the *original* sprite size).
     pub pivot: Point2D,
+    /// 9-patch borders in pixels `[left, top, right, bottom]` measured on the
+    /// *untrimmed* source image (docs: *Borders*). `None` when the sprite is
+    /// not a 9-patch / 3-patch.
+    pub border: Option<[i32; 4]>,
     /// Local-space mesh (trimmed coordinates) when polygon mode is enabled.
     pub mesh: Option<TriangleMesh>,
     /// Frame allocated inside the atlas page (includes padding).

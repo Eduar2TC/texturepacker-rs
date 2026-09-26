@@ -12,7 +12,8 @@
 //! 10. Cifrar si hay clave.
 //! 11. Guardar imágenes + renderizar plantilla de metadatos.
 
-use crate::config::ProjectConfig;
+use crate::config::{AlphaHandling, ProjectConfig};
+use crate::error::{Result, TpError};
 use crate::export;
 use crate::ingest::{self, IngestedSprite};
 use crate::pack::{self, PackItem, PackerOptions};
@@ -26,6 +27,9 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Instant;
 
+/// Loaded normal-map companion: `(width, height, RGBA8 pixels)`.
+type NormalLoad = Result<Option<(i32, i32, Vec<u8>)>>;
+
 /// Result of a full pipeline run: serializable summary + in-memory pages
 /// (for the GUI preview).
 pub struct PipelineOutput {
@@ -34,21 +38,75 @@ pub struct PipelineOutput {
 }
 
 /// Run the whole packing pipeline for a project configuration.
-pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
+pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     config.validate()?;
     let mut stage_times: Vec<(String, u64)> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
     // ------------------------------------------------------------------
+    // Ajustes de rejilla (docs: *Align to grid* / *Common divisor* / *Border
+    // padding*). Alinear obliga a que el padding sea múltiplo del valor; los
+    // tamaños de los sprites se estiran hasta el múltiplo común en la ingesta.
+    // ------------------------------------------------------------------
+    let align = config.align_to_grid.max(0);
+    let align_up = |v: i32| {
+        let v = v.max(0);
+        if align > 0 {
+            let rest = v % align;
+            if rest == 0 {
+                v
+            } else {
+                v + (align - rest)
+            }
+        } else {
+            v
+        }
+    };
+    let pad = align_up(config.padding);
+    let border = align_up(config.border_padding);
+    if pad != config.padding || border != config.border_padding {
+        warnings.push(format!(
+            "Padding ajustado a {pad} px y borde a {border} px para respetar la rejilla de {align} px"
+        ));
+    }
+    let (div_x, div_y) = config.effective_divisors();
+
+    // Avisos de exportación (docs: *flip-y*, *Pixel format*).
+    if config.flip_vertical && !config.gpu_format.is_hardware() {
+        warnings.push(
+            "Voltear verticalmente (flip Y) solo aplica a formatos de hardware \
+             (ASTC/ETC2/PVRTC); se ignora con el formato actual"
+                .to_string(),
+        );
+    }
+    if config.pixel_format != crate::config::PixelFormat::Rgba8888
+        && config.gpu_format.is_hardware()
+    {
+        warnings.push(
+            "El formato de píxel solo aplica a PNG/PNG8/JPG/WebP; los formatos \
+             de hardware comprimen RGBA y lo ignoran"
+                .to_string(),
+        );
+    }
+
+    // ------------------------------------------------------------------
     // PASO 1 + 2: discover, load (parallel), trim, hash
     // ------------------------------------------------------------------
     let t = Instant::now();
-    let ingested = ingest::ingest(
-        &config.input_directory,
-        config.trim_threshold,
-        config.enable_normal_maps,
-        config.recursive,
-    );
+    let ingested = ingest::ingest(&ingest::IngestOptions {
+        input_directory: &config.input_directory,
+        trim_threshold: config.trim_threshold,
+        trim_mode: config.effective_trim_mode(),
+        trim_margin: config.trim_margin,
+        enable_normal_maps: config.enable_normal_maps,
+        recursive: config.recursive,
+        extra_inputs: &config.extra_inputs,
+        excluded_inputs: &config.excluded_inputs,
+        trim_sprite_names: config.trim_sprite_names,
+        prepend_folder_name: config.prepend_folder_name,
+        common_divisor_x: div_x,
+        common_divisor_y: div_y,
+    });
     warnings.extend(ingested.warnings);
     if ingested.sprites.is_empty() {
         return Err("No se encontraron sprites válidos en el directorio de entrada".into());
@@ -60,7 +118,11 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
     // PASO 3: alias resolution
     // ------------------------------------------------------------------
     let t = Instant::now();
-    let aliases = ingest::resolve_aliases(&sprites);
+    let aliases = if config.enable_aliasing {
+        ingest::resolve_aliases(&sprites)
+    } else {
+        vec![(false, None); sprites.len()]
+    };
     let alias_count = aliases.iter().filter(|(a, _)| *a).count();
     stage_times.push(("aliasing".into(), t.elapsed().as_millis() as u64));
 
@@ -74,8 +136,11 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
     // PASO 4 (optional): polygon engine (contour -> RDP -> earcut)
     // ------------------------------------------------------------------
     let t = Instant::now();
+    // Docs: *Algorithm → Polygon* — trim mode Polygon (or the legacy
+    // `enable_polygon` switch) enables mesh extraction and polygon packing.
+    let use_polygon = config.effective_algorithm() == crate::config::PackingAlgorithm::Polygon;
     let mut meshes: Vec<Option<polygon::Polygons>> = vec![None; sprites.len()];
-    if config.enable_polygon {
+    if use_polygon {
         meshes = sprites
             .par_iter()
             .enumerate()
@@ -110,15 +175,54 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
             mesh: meshes[i].as_ref().map(|m| m.mesh.clone()),
         });
     }
-    let opts = PackerOptions::new(
-        config.packing_strategy,
-        config.allow_rotation,
-        config.max_texture_size,
-        config.padding,
-        config.enable_polygon,
-    );
+    let opts = PackerOptions {
+        strategy: config.effective_strategy(),
+        algorithm: config.effective_algorithm(),
+        pack_mode: config.pack_mode,
+        size_constraints: config.size_constraints,
+        force_squared: config.force_squared,
+        fixed_width: config.fixed_width,
+        fixed_height: config.fixed_height,
+        basic_sort_by: config.basic_sort_by,
+        basic_order: config.basic_order,
+        word_align_mod: config.word_align_mod(),
+        ..PackerOptions::new(
+            config.packing_strategy,
+            config.allow_rotation,
+            config.max_texture_size,
+            pad,
+            border,
+            use_polygon,
+        )
+    };
     let pack_out = pack::pack(&items, &opts)?;
     stage_times.push(("packing".into(), t.elapsed().as_millis() as u64));
+
+    // Docs: *Multipack* — con la opción desactivada todas las imágenes deben
+    // caber en una sola hoja.
+    if !config.multipack && pack_out.pages.len() > 1 {
+        let (pw, ph) = (pack_out.pages[0].width, pack_out.pages[0].height);
+        return Err(crate::error::TpError::Pack(format!(
+            "Los sprites no caben en un solo atlas de {}x{} (harían {} hojas); \
+             activa «Multipack» o aumenta el tamaño máximo",
+            pw,
+            ph,
+            pack_out.pages.len()
+        )));
+    }
+    // Docs: *Multipack placeholders* — avisar cuando varias hojas se nombran
+    // con el sufijo implícito `_N` en vez de un placeholder `{n}`/`{n1}`.
+    if pack_out.pages.len() > 1 && !has_page_placeholder(&config.base_file_name) {
+        warnings.push(format!(
+            "Multipack: {} hojas generadas y el nombre base \"{}\" no contiene {{n}} o {{n1}}; \
+             se nombran con el sufijo _N (p. ej. {}_1). Añade {{n1}} al nombre base para \
+             nombrar cada hoja (p. ej. {}{{n1}}).",
+            pack_out.pages.len(),
+            config.base_file_name,
+            config.base_file_name,
+            config.base_file_name
+        ));
+    }
 
     // Frame bookkeeping: non-alias sprites get their placement.
     let mut frame: Vec<Option<Rect>> = vec![None; sprites.len()];
@@ -155,8 +259,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
         .iter()
         .map(|p| AtlasPage::new(p.index, p.width, p.height))
         .collect();
-    let has_normals = config.enable_normal_maps
-        && sprites.iter().any(|s| s.normal_path.is_some());
+    let has_normals = config.enable_normal_maps && sprites.iter().any(|s| s.normal_path.is_some());
     if has_normals {
         for page in &mut pages {
             page.normal_pixels = Some(vec![0u8; (page.width * page.height * 4) as usize]);
@@ -166,7 +269,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
 
     // Preload normal-map pixels (parallel).
     let t = Instant::now();
-    let normal_load: Vec<Result<Option<(i32, i32, Vec<u8>)>, String>> = sprites
+    let normal_load: Vec<NormalLoad> = sprites
         .par_iter()
         .map(|s| match &s.normal_path {
             Some(p) => ingest::load_image_rgba(p).map(Some),
@@ -178,7 +281,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
         match item {
             Ok(img) => normal_images.push(img),
             Err(e) => {
-                warnings.push(e);
+                warnings.push(e.to_string());
                 normal_images.push(None);
             }
         }
@@ -189,16 +292,13 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
     // PASO 8: blit sprites into page buffers (parallel)
     // ------------------------------------------------------------------
     let t = Instant::now();
-    let page_pixels: Vec<Mutex<Vec<u8>>> = pages
-        .iter()
-        .map(|p| Mutex::new(p.pixels.clone()))
-        .collect();
+    let page_pixels: Vec<Mutex<Vec<u8>>> =
+        pages.iter().map(|p| Mutex::new(p.pixels.clone())).collect();
     let page_normals: Vec<Mutex<Vec<u8>>> = pages
         .iter()
         .map(|p| Mutex::new(p.normal_pixels.clone().unwrap_or_default()))
         .collect();
 
-    let pad = config.padding.max(0);
     let extrude = config.extrude.max(0);
 
     (0..sprites.len()).into_par_iter().for_each(|i| {
@@ -217,13 +317,17 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
             &mut px,
             page.width,
             page.height,
-            fr,
-            pad,
-            extrude,
-            &s.pixels,
-            s.trimmed_bounds.width,
-            s.trimmed_bounds.height,
-            rotated[i],
+            pixels::BlitLayout {
+                frame: fr,
+                padding: pad,
+                extrude,
+                rotated: rotated[i],
+            },
+            pixels::TrimmedSprite {
+                pixels: &s.pixels,
+                width: s.trimmed_bounds.width,
+                height: s.trimmed_bounds.height,
+            },
         );
         drop(px);
 
@@ -233,14 +337,18 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
                 &mut np,
                 page.width,
                 page.height,
-                fr,
-                pad,
-                extrude,
-                npix,
-                *nw,
-                *nh,
+                pixels::BlitLayout {
+                    frame: fr,
+                    padding: pad,
+                    extrude,
+                    rotated: rotated[i],
+                },
+                pixels::TrimmedSprite {
+                    pixels: npix,
+                    width: *nw,
+                    height: *nh,
+                },
                 s,
-                rotated[i],
             );
         }
     });
@@ -252,6 +360,18 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
         }
     }
     stage_times.push(("blit".into(), t.elapsed().as_millis() as u64));
+
+    // ------------------------------------------------------------------
+    // PASO 8b: transparency handling (docs: *Transparency Handling*)
+    // ------------------------------------------------------------------
+    if config.alpha_handling != AlphaHandling::KeepTransparentPixels {
+        let t = Instant::now();
+        let mode = config.alpha_handling;
+        pages.par_iter_mut().for_each(|p| {
+            pixels::apply_alpha_handling(&mut p.pixels, p.width as usize, p.height as usize, mode);
+        });
+        stage_times.push(("alpha-handling".into(), t.elapsed().as_millis() as u64));
+    }
 
     // ------------------------------------------------------------------
     // PASO 9: quantization + dithering (parallel over pages)
@@ -277,11 +397,11 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
     // Assemble SpriteAsset list
     // ------------------------------------------------------------------
     let pivot_overrides = ingest::load_pivot_overrides(&config.input_directory).unwrap_or_default();
+    let border_overrides =
+        ingest::load_border_overrides(&config.input_directory).unwrap_or_default();
     let mut sprite_assets: Vec<SpriteAsset> = Vec::with_capacity(sprites.len());
-    let alias_targets: std::collections::HashSet<String> = aliases
-        .iter()
-        .filter_map(|(_, t)| t.clone())
-        .collect();
+    let alias_targets: std::collections::HashSet<String> =
+        aliases.iter().filter_map(|(_, t)| t.clone()).collect();
 
     for (i, s) in sprites.iter().enumerate() {
         let (is_alias, alias_target) = aliases[i].clone();
@@ -335,6 +455,7 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
             is_alias,
             alias_target_id: alias_target,
             pivot,
+            border: border_overrides.get(&s.id).copied(),
             mesh,
             allocated_frame: fr,
             visible_frame: vis,
@@ -352,18 +473,29 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
     let t = Instant::now();
     let output_dir = &config.output_directory;
     std::fs::create_dir_all(output_dir)
-        .map_err(|e| format!("No se pudo crear {}: {e}", output_dir.display()))?;
+        .map_err(|e| TpError::Other(format!("No se pudo crear {}: {e}", output_dir.display())))?;
 
     let mut output_files: Vec<String> = Vec::new();
     let mut base_page_infos: Vec<PageInfo> = Vec::new();
 
+    // Opciones de codificación comunes a todas las hojas y variantes.
+    let enc_opts = export::EncodeOptions::from_config(config);
+    let flip_active = config.flip_vertical && config.gpu_format.is_hardware();
+
+    // Sufijo {v} de cada escala: nombre explícito de `variant_names`
+    // (docs: *Scaling variants*, p. ej. `1.0 → -ipadhd`) o convención
+    // automática @2x / -hd / -sd.
+    let variant_for = |scale: f32| -> String {
+        config
+            .variant_names
+            .iter()
+            .find(|(s, _)| (*s - scale).abs() < 1e-6)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| variant_suffix(scale))
+    };
     for scale in &config.scale_variants {
         let is_base = (*scale - 1.0).abs() < 1e-6;
-        let variant = if is_base {
-            String::new()
-        } else {
-            format!("_{scale}x")
-        };
+        let variant = variant_for(*scale);
 
         let mut variant_page_infos: Vec<PageInfo> = Vec::new();
         let mut variant_image_files: Vec<String> = Vec::new();
@@ -380,12 +512,21 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
 
             let file_name = page_file_name(config, page.index, &variant);
             let bytes = {
-                let (scaled, _w, _h) = if is_base {
+                let (mut scaled, _w, _h) = if is_base {
                     (page.pixels.clone(), sw, sh)
                 } else {
-                    export::scale_rgba(&page.pixels, page.width as usize, page.height as usize, *scale)
+                    export::scale_rgba(
+                        &page.pixels,
+                        page.width as usize,
+                        page.height as usize,
+                        *scale,
+                        config.scale_mode,
+                    )
                 };
-                export::encode_to_bytes(&scaled, _w, _h, config.gpu_format)?
+                if flip_active {
+                    export::flip_vertical_rgba(&mut scaled, _w, _h);
+                }
+                export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?
             };
 
             let (final_name, final_bytes) = match &config.encryption_key {
@@ -403,12 +544,21 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
             let mut normal_name = None;
             if let Some(npix) = &page.normal_pixels {
                 let nfile = normal_page_file_name(config, page.index, &variant);
-                let (nscaled, nw2, nh2) = if is_base {
+                let (mut nscaled, nw2, nh2) = if is_base {
                     (npix.clone(), sw, sh)
                 } else {
-                    export::scale_rgba(npix, page.width as usize, page.height as usize, *scale)
+                    export::scale_rgba(
+                        npix,
+                        page.width as usize,
+                        page.height as usize,
+                        *scale,
+                        config.scale_mode,
+                    )
                 };
-                let nbytes = export::encode_to_bytes(&nscaled, nw2, nh2, config.gpu_format)?;
+                if flip_active {
+                    export::flip_vertical_rgba(&mut nscaled, nw2, nh2);
+                }
+                let nbytes = export::encode_to_bytes(&nscaled, nw2, nh2, &enc_opts)?;
                 let (nfinal_name, nfinal_bytes) = match &config.encryption_key {
                     Some(key) => (
                         format!("{nfile}.tpenc"),
@@ -439,17 +589,58 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput, String> {
             base_page_infos = variant_page_infos.clone();
         }
 
-        // Metadata via template engine.
-        let meta_name = metadata_file_name(config, &variant);
-        let content = templates::render(
-            &pending_result(config, &sprite_assets, &warnings, &stage_times, output_files.clone(), alias_count, &base_page_infos),
-            &variant_page_infos,
-            &variant_image_files,
-            *scale,
-            config,
-        )?;
-        write_file(&output_dir.join(&meta_name), content.as_bytes())?;
-        output_files.push(meta_name);
+        // Metadata via template engine. Con un placeholder de página en el
+        // nombre base cada hoja escribe su propio data file con solo sus
+        // frames (docs: *Multipack*); sin él se emite un único fichero con
+        // todas las páginas.
+        let per_page = has_page_placeholder(&config.base_file_name);
+        if per_page {
+            for (pinfo, image) in variant_page_infos.iter().zip(&variant_image_files) {
+                let page_sprites: Vec<SpriteAsset> = sprite_assets
+                    .iter()
+                    .filter(|s| s.atlas_page_index == pinfo.index as i32)
+                    .cloned()
+                    .collect();
+                let page_infos = [pinfo.clone()];
+                let meta_name = metadata_file_name(config, &variant, pinfo.index, per_page);
+                let content = templates::render(
+                    &pending_result(
+                        config,
+                        &page_sprites,
+                        &warnings,
+                        &stage_times,
+                        output_files.clone(),
+                        alias_count,
+                        &page_infos,
+                    ),
+                    &page_infos,
+                    std::slice::from_ref(image),
+                    *scale,
+                    config,
+                )?;
+                write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+                output_files.push(meta_name);
+            }
+        } else {
+            let meta_name = metadata_file_name(config, &variant, 0, per_page);
+            let content = templates::render(
+                &pending_result(
+                    config,
+                    &sprite_assets,
+                    &warnings,
+                    &stage_times,
+                    output_files.clone(),
+                    alias_count,
+                    &base_page_infos,
+                ),
+                &variant_page_infos,
+                &variant_image_files,
+                *scale,
+                config,
+            )?;
+            write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+            output_files.push(meta_name);
+        }
     }
     stage_times.push(("export".into(), t.elapsed().as_millis() as u64));
 
@@ -477,15 +668,12 @@ fn blit_normal(
     page: &mut [u8],
     page_w: i32,
     page_h: i32,
-    frame: Rect,
-    padding: i32,
-    extrude: i32,
-    normal: &[u8],
-    nw: i32,
-    nh: i32,
+    layout: pixels::BlitLayout,
+    normal: pixels::TrimmedSprite<'_>,
     sprite: &IngestedSprite,
-    rotated: bool,
 ) {
+    let (nw, nh) = (normal.width, normal.height);
+    let normal = normal.pixels;
     let (tw, th) = (sprite.trimmed_bounds.width, sprite.trimmed_bounds.height);
     if tw <= 0 || th <= 0 {
         return;
@@ -505,9 +693,11 @@ fn blit_normal(
         // Nearest-neighbor scale to the original size, then sub-rect copy.
         let mut scaled = vec![0u8; (sprite.raw_width * sprite.raw_height * 4) as usize];
         for y in 0..sprite.raw_height {
-            let sy = ((y as f32 / sprite.raw_height as f32) * nh as f32).min(nh as f32 - 1.0) as i32;
+            let sy =
+                ((y as f32 / sprite.raw_height as f32) * nh as f32).min(nh as f32 - 1.0) as i32;
             for x in 0..sprite.raw_width {
-                let sx = ((x as f32 / sprite.raw_width as f32) * nw as f32).min(nw as f32 - 1.0) as i32;
+                let sx =
+                    ((x as f32 / sprite.raw_width as f32) * nw as f32).min(nw as f32 - 1.0) as i32;
                 let src = ((sy * nw + sx) * 4) as usize;
                 let dst = ((y * sprite.raw_width + x) * 4) as usize;
                 scaled[dst..dst + 4].copy_from_slice(&normal[src..src + 4]);
@@ -515,7 +705,8 @@ fn blit_normal(
         }
         let mut out = vec![0u8; (tw * th * 4) as usize];
         for y in 0..th {
-            let src_row = (sprite.trimmed_bounds.y + y) * sprite.raw_width + sprite.trimmed_bounds.x;
+            let src_row =
+                (sprite.trimmed_bounds.y + y) * sprite.raw_width + sprite.trimmed_bounds.x;
             let dst_row = y * tw;
             out[(dst_row * 4) as usize..((dst_row + tw) * 4) as usize]
                 .copy_from_slice(&scaled[(src_row * 4) as usize..((src_row + tw) * 4) as usize]);
@@ -527,55 +718,121 @@ fn blit_normal(
         page,
         page_w,
         page_h,
-        frame,
-        padding,
-        extrude,
-        &trimmed,
-        tw,
-        th,
-        rotated,
+        layout,
+        pixels::TrimmedSprite {
+            pixels: &trimmed,
+            width: tw,
+            height: th,
+        },
     );
 }
 
-fn page_file_name(config: &ProjectConfig, index: usize, variant: &str) -> String {
-    if index == 0 {
-        format!("{}{}.{}", config.base_file_name, variant, config.gpu_format.file_extension())
-    } else {
-        format!(
-            "{}_{}{}.{}",
-            config.base_file_name,
-            index,
-            variant,
-            config.gpu_format.file_extension()
-        )
+/// True when the base file name contains a multipack placeholder:
+/// `{n}` (índice desde 0), `{n0}` (desde 0) or `{n1}` (desde 1).
+fn has_page_placeholder(base: &str) -> bool {
+    base.contains("{n}") || base.contains("{n0}") || base.contains("{n1}")
+}
+
+/// Expand a file-name stem for one sheet + scale variant.
+///
+/// Placeholders (docs: *Multipack placeholders*): `{n}`/`{n0}` → índice de
+/// hoja desde 0, `{n1}` → desde 1, `{v}` → sufijo de variante (incluye el
+/// guion bajo: `""` en la base, `_0.5x` en el resto). Cuando el nombre no
+/// contiene el placeholder correspondiente se conserva la nomenclatura
+/// implícita: `atlas`, `atlas_1`, `atlas_0.5x`, `atlas_1_0.5x`.
+fn expand_name(base: &str, index: usize, variant: &str) -> String {
+    let has_n = has_page_placeholder(base);
+    let has_v = base.contains("{v}");
+    let mut s = base.to_string();
+    // Sufijo de página implícito: se coloca antes de `{v}` si lo hay.
+    if !has_n && index > 0 {
+        if let Some(pos) = s.find("{v}") {
+            s.insert_str(pos, &format!("_{index}"));
+        } else {
+            s.push_str(&format!("_{index}"));
+        }
     }
+    s = s
+        .replace("{n1}", &(index + 1).to_string())
+        .replace("{n0}", &index.to_string())
+        .replace("{n}", &index.to_string());
+    if has_v {
+        s = s.replace("{v}", variant);
+    } else {
+        s.push_str(variant);
+    }
+    s
+}
+
+/// Append `ext` unless the stem already ends with it (`sheet{n1}.png` no
+/// debe producir `sheet1.png.png`).
+fn with_ext(stem: &str, ext: &str) -> String {
+    if stem.to_lowercase().ends_with(&format!(".{ext}")) {
+        stem.to_string()
+    } else {
+        format!("{stem}.{ext}")
+    }
+}
+
+/// Variant suffix `{v}` following TexturePacker's conventions: `@2x` for
+/// integer scales (Retina/iOS), `-hd`/`-sd` for 0.5/1.0 cocos2d pairs, and the
+/// plain scale value with dot for anything else (`_0.75x`-style is replaced by
+/// `@0.75x`). Base scale 1.0 without other variants gets an empty suffix.
+fn variant_suffix(scale: f32) -> String {
+    match scale {
+        s if (s - 2.0).abs() < 1e-6 => "@2x".to_string(),
+        s if (s - 4.0).abs() < 1e-6 => "@4x".to_string(),
+        s if (s - 0.5).abs() < 1e-6 => "-hd".to_string(),
+        s if (s - 0.25).abs() < 1e-6 => "-lhd".to_string(),
+        s if (s - 1.0 / 3.0).abs() < 1e-3 => "-sd".to_string(),
+        s => {
+            let text = format!("{s}");
+            let text = text.trim_end_matches('0').trim_end_matches('.');
+            if text == "1" {
+                String::new()
+            } else {
+                format!("@{text}x")
+            }
+        }
+    }
+}
+
+fn page_file_name(config: &ProjectConfig, index: usize, variant: &str) -> String {
+    let stem = expand_name(&config.base_file_name, index, variant);
+    with_ext(&stem, config.gpu_format.file_extension())
 }
 
 fn normal_page_file_name(config: &ProjectConfig, index: usize, variant: &str) -> String {
-    if index == 0 {
-        format!("{}_normal{}.{}", config.base_file_name, variant, config.gpu_format.file_extension())
+    let stem = expand_name(&format!("{}_normal", config.base_file_name), index, variant);
+    with_ext(&stem, config.gpu_format.file_extension())
+}
+
+fn metadata_file_name(
+    config: &ProjectConfig,
+    variant: &str,
+    index: usize,
+    per_page: bool,
+) -> String {
+    let stem = if per_page {
+        expand_name(&config.base_file_name, index, variant)
     } else {
-        format!(
-            "{}_normal_{}{}.{}",
-            config.base_file_name,
-            index,
-            variant,
-            config.gpu_format.file_extension()
-        )
+        // Un único data file: la hoja 0 evita el índice implícito.
+        expand_name(&config.base_file_name, 0, variant)
+    };
+    with_ext(&stem, templates::metadata_extension(config.template_format))
+}
+
+fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| {
+                TpError::Other(format!("No se pudo crear {}: {e}", parent.display()))
+            })?;
+        }
     }
-}
-
-fn metadata_file_name(config: &ProjectConfig, variant: &str) -> String {
-    format!(
-        "{}{}.{}",
-        config.base_file_name,
-        variant,
-        templates::metadata_extension(config.template_format)
-    )
-}
-
-fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    std::fs::write(path, bytes).map_err(|e| format!("No se pudo escribir {}: {e}", path.display()))
+    std::fs::write(path, bytes).map_err(|e| {
+        crate::error::TpError::Other(format!("No se pudo escribir {}: {e}", path.display()))
+    })
 }
 
 fn fill_ratio(pixels: &[u8], w: i32, h: i32) -> f32 {
@@ -609,5 +866,62 @@ fn pending_result(
         total_sprites: sprites.len(),
         alias_count,
         output_files,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expand_name_keeps_implicit_naming() {
+        assert_eq!(variant_suffix(1.0), "");
+        assert_eq!(variant_suffix(0.5), "-hd");
+        assert_eq!(variant_suffix(2.0), "@2x");
+        assert_eq!(variant_suffix(4.0), "@4x");
+        assert_eq!(variant_suffix(0.25), "-lhd");
+        assert_eq!(variant_suffix(0.75), "@0.75x");
+        assert_eq!(expand_name("atlas", 0, ""), "atlas");
+        assert_eq!(expand_name("atlas", 1, ""), "atlas_1");
+        assert_eq!(expand_name("atlas", 0, "_0.5x"), "atlas_0.5x");
+        assert_eq!(expand_name("atlas", 1, "_0.5x"), "atlas_1_0.5x");
+    }
+
+    #[test]
+    fn expand_name_page_placeholders() {
+        assert_eq!(expand_name("sheet{n}", 0, ""), "sheet0");
+        assert_eq!(expand_name("sheet{n}", 3, "_2x"), "sheet3_2x");
+        assert_eq!(expand_name("sheet{n0}", 0, ""), "sheet0");
+        assert_eq!(expand_name("sheet{n1}", 0, ""), "sheet1");
+        assert_eq!(expand_name("sheet{n1}", 1, ""), "sheet2");
+        assert_eq!(expand_name("out/{n1}/atlas", 0, ""), "out/1/atlas");
+    }
+
+    #[test]
+    fn expand_name_variant_placeholder() {
+        assert_eq!(expand_name("atlas{v}", 0, ""), "atlas");
+        assert_eq!(expand_name("atlas{v}", 0, "_0.5x"), "atlas_0.5x");
+        assert_eq!(expand_name("atlas{v}", 1, "_0.5x"), "atlas_1_0.5x");
+        assert_eq!(expand_name("atlas{n1}{v}", 0, ""), "atlas1");
+        assert_eq!(expand_name("atlas{n1}{v}", 1, "_0.5x"), "atlas2_0.5x");
+        assert_eq!(expand_name("atlas_{v}", 0, "_0.5x"), "atlas__0.5x");
+    }
+
+    #[test]
+    fn with_ext_avoids_double_extension() {
+        assert_eq!(with_ext("sheet1", "png"), "sheet1.png");
+        assert_eq!(with_ext("sheet1.png", "png"), "sheet1.png");
+        assert_eq!(with_ext("atlas", "json"), "atlas.json");
+        assert_eq!(with_ext("sheet1.PNG", "png"), "sheet1.PNG");
+    }
+
+    #[test]
+    fn page_placeholder_detection() {
+        assert!(has_page_placeholder("sheet{n}"));
+        assert!(has_page_placeholder("sheet{n0}"));
+        assert!(has_page_placeholder("sheet{n1}"));
+        assert!(!has_page_placeholder("atlas"));
+        assert!(!has_page_placeholder("atlas{v}"));
+        assert!(!has_page_placeholder("banana"));
     }
 }
