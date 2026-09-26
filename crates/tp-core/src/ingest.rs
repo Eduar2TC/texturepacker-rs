@@ -6,10 +6,12 @@
 //! - Normal-map (`*_normal.*`) pairing
 //! - Per-sprite pivot overrides (`pivots.json` in the input directory)
 
+use crate::config::TrimMode;
+use crate::error::{Result, TpError};
 use crate::hash::{hash_pixels_rgba, AliasTable};
 use crate::types::Rect;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// A sprite loaded and preprocessed (trimmed), before packing.
@@ -34,42 +36,116 @@ pub struct IngestResult {
     pub warnings: Vec<String>,
 }
 
+/// Discovery & loading options for [`ingest`].
+#[derive(Debug, Clone)]
+pub struct IngestOptions<'a> {
+    /// Root directory scanned first.
+    pub input_directory: &'a Path,
+    /// Alpha threshold (0-255) below which a pixel counts as transparent.
+    pub trim_threshold: i32,
+    /// Trim mode; [`TrimMode::None`] keeps the whole image untouched.
+    pub trim_mode: TrimMode,
+    /// Transparent margin kept around the trimmed bounding box.
+    pub trim_margin: i32,
+    /// Pair `*_normal.*` companions instead of treating them as sprites.
+    pub enable_normal_maps: bool,
+    /// Recurse into subdirectories of `input_directory`.
+    pub recursive: bool,
+    /// Extra sprite files or folders added on top of `input_directory`
+    /// (folders are always scanned recursively).
+    pub extra_inputs: &'a [PathBuf],
+    /// Files to skip, whatever their origin.
+    pub excluded_inputs: &'a [PathBuf],
+    /// Remove image file extensions from sprite ids (docs: *Trim sprite
+    /// names*). When `false` the id keeps e.g. `.png`.
+    pub trim_sprite_names: bool,
+    /// Prepend the smart folder's name to the ids of the files inside it
+    /// (docs: *Prepend folder name*).
+    pub prepend_folder_name: bool,
+    /// Extend sprite sizes (with transparency) to be divisible by this value
+    /// (docs: *Common divisor*). `1` leaves sizes untouched.
+    pub common_divisor_x: i32,
+    /// Same as [`Self::common_divisor_x`] for the vertical axis.
+    pub common_divisor_y: i32,
+}
+
 /// Normalized pivot overrides: sprite id -> (x, y) in 0..=1.
 pub type PivotOverrides = HashMap<String, crate::types::Point2D>;
 
-/// Discover image files under `dir` (recursively when `recursive`).
-fn discover_images(dir: &Path, recursive: bool) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let mut stack = vec![dir.to_path_buf()];
-    while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                if recursive {
-                    stack.push(path);
-                }
-            } else if is_image_file(&path) {
-                out.push(path);
+/// Canonical path used to compare sprites across roots and exclusion lists.
+pub fn normalize_path(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn walk_images(dir: &Path, recursive: bool, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if recursive {
+                walk_images(&path, recursive, out);
             }
+        } else if is_image_file(&path) {
+            out.push(path);
         }
+    }
+}
+
+/// Discover image files from `input_directory` plus `extra_inputs`, skipping
+/// `excluded_inputs` and de-duplicating across roots.
+fn discover_images(options: &IngestOptions) -> Vec<PathBuf> {
+    let mut collected: Vec<PathBuf> = Vec::new();
+    if !options.input_directory.as_os_str().is_empty() {
+        if options.input_directory.is_file() {
+            if is_image_file(options.input_directory) {
+                collected.push(options.input_directory.to_path_buf());
+            }
+        } else {
+            walk_images(options.input_directory, options.recursive, &mut collected);
+        }
+    }
+    for extra in options.extra_inputs {
+        if extra.is_dir() {
+            walk_images(extra, true, &mut collected);
+        } else if is_image_file(extra) {
+            collected.push(extra.clone());
+        }
+    }
+
+    let excluded: HashSet<PathBuf> = options
+        .excluded_inputs
+        .iter()
+        .map(|p| normalize_path(p))
+        .collect();
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let mut out: Vec<PathBuf> = Vec::new();
+    for path in collected {
+        let norm = normalize_path(&path);
+        if excluded.contains(&norm) || !seen.insert(norm) {
+            continue;
+        }
+        out.push(path);
     }
     out.sort();
     out
 }
 
-fn is_image_file(path: &Path) -> bool {
+pub fn is_image_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()),
-        Some(e) if matches!(e.as_str(), "png" | "webp" | "jpg" | "jpeg")
+        Some(e) if matches!(
+            e.as_str(),
+            "png" | "webp" | "jpg" | "jpeg" | "tga" | "bmp" | "gif" | "ico" | "tiff"
+                | "tif" | "dds" | "qoi"
+        )
     )
 }
 
 /// Load one image file into RGBA8 pixels. Returns `Err` with a message.
-pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>), String> {
-    let img = image::open(path).map_err(|e| format!("{}: {e}", path.display()))?;
+pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
+    let img = image::open(path).map_err(|e| TpError::Other(format!("{}: {e}", path.display())))?;
     let rgba = img.to_rgba8();
     let (w, h) = rgba.dimensions();
     Ok((w as i32, h as i32, rgba.into_raw()))
@@ -77,12 +153,7 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>), String> {
 
 /// Compute the bounding box of pixels with alpha > `threshold` and return the
 /// trimmed buffer. `(0,0,0,0)` bounds mean the sprite is fully transparent.
-pub fn trim_rgba(
-    pixels: &[u8],
-    width: i32,
-    height: i32,
-    threshold: u8,
-) -> (Rect, Vec<u8>) {
+pub fn trim_rgba(pixels: &[u8], width: i32, height: i32, threshold: u8) -> (Rect, Vec<u8>) {
     let mut min_x = width;
     let mut min_y = height;
     let mut max_x = -1i32;
@@ -122,83 +193,147 @@ pub fn trim_rgba(
             .copy_from_slice(&pixels[(src_row * 4) as usize..((src_row + tw) * 4) as usize]);
     }
 
-    (
-        Rect::new(min_x, min_y, tw, th),
-        trimmed,
-    )
+    (Rect::new(min_x, min_y, tw, th), trimmed)
+}
+
+/// Expand `bounds` by `margin` transparent pixels (clamped to the image) and
+/// re-extract the region from the *original* pixels.
+fn apply_trim_margin(
+    original: &[u8],
+    width: i32,
+    height: i32,
+    bounds: Rect,
+    trimmed: Vec<u8>,
+    margin: i32,
+) -> (Rect, Vec<u8>) {
+    if margin <= 0 || bounds.width <= 0 || bounds.height <= 0 {
+        return (bounds, trimmed);
+    }
+    let x0 = (bounds.x - margin).max(0);
+    let y0 = (bounds.y - margin).max(0);
+    let x1 = (bounds.x + bounds.width + margin).min(width);
+    let y1 = (bounds.y + bounds.height + margin).min(height);
+    let w = x1 - x0;
+    let h = y1 - y0;
+    let mut out = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        let src = (((y0 + y) * width + x0) * 4) as usize;
+        let dst = (y * w * 4) as usize;
+        out[dst..dst + (w as usize * 4)].copy_from_slice(&original[src..src + (w as usize * 4)]);
+    }
+    (Rect::new(x0, y0, w, h), out)
 }
 
 /// Load `pivots.json` (map of sprite id -> {x, y} normalized 0..1) from `dir`,
 /// if present.
-pub fn load_pivot_overrides(dir: &Path) -> Result<PivotOverrides, String> {
+pub fn load_pivot_overrides(dir: &Path) -> Result<PivotOverrides> {
     let path = dir.join("pivots.json");
     if !path.exists() {
         return Ok(HashMap::new());
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("pivots.json: {e}"))?;
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| TpError::Other(format!("pivots.json: {e}")))?;
     let map: HashMap<String, crate::types::Point2D> =
-        serde_json::from_str(&text).map_err(|e| format!("pivots.json: {e}"))?;
+        serde_json::from_str(&text).map_err(|e| TpError::Other(format!("pivots.json: {e}")))?;
+    Ok(map)
+}
+
+/// Load `borders.json` (map of sprite id -> [left, top, right, bottom] in
+/// pixels of the untrimmed source image) from `dir`, if present.
+pub fn load_border_overrides(dir: &Path) -> Result<HashMap<String, [i32; 4]>> {
+    let path = dir.join("borders.json");
+    if !path.exists() {
+        return Ok(HashMap::new());
+    }
+    let text =
+        std::fs::read_to_string(&path).map_err(|e| TpError::Other(format!("borders.json: {e}")))?;
+    let map: HashMap<String, [i32; 4]> =
+        serde_json::from_str(&text).map_err(|e| TpError::Other(format!("borders.json: {e}")))?;
     Ok(map)
 }
 
 /// Main ingest entry point.
 ///
-/// Loads every image under `input_directory` (in parallel), trims it, hashes
-/// it, and pairs normal maps. `*_normal.*` files are *not* returned as sprites
-/// when `enable_normal_maps` is set — they are attached as companions.
-pub fn ingest(
-    input_directory: &Path,
-    trim_threshold: i32,
-    enable_normal_maps: bool,
-    recursive: bool,
-) -> IngestResult {
+/// Loads every discovered image (in parallel), trims it, hashes it, and pairs
+/// normal maps. `*_normal.*` files are *not* returned as sprites when
+/// `enable_normal_maps` is set — they are attached as companions.
+pub fn ingest(options: &IngestOptions) -> IngestResult {
     let mut result = IngestResult::default();
-    let threshold = trim_threshold.clamp(0, 255) as u8;
+    let threshold = options.trim_threshold.clamp(0, 255) as u8;
 
-    let files = discover_images(input_directory, recursive);
+    let files = discover_images(options);
     if files.is_empty() {
-        result
-            .warnings
-            .push(format!("No se encontraron imágenes en {}", input_directory.display()));
+        result.warnings.push(format!(
+            "No se encontraron imágenes en {}",
+            options.input_directory.display()
+        ));
         return result;
     }
 
     // Build a map base -> path so we can find `foo_normal.png` for `foo.png`.
-    let normal_candidates: HashMap<String, PathBuf> = if enable_normal_maps {
+    // Keyed by the extension-stripped relative id, so `hero/foo.png` pairs with
+    // `hero/foo_normal.png` (and not with a `foo.png` in another folder).
+    let normal_candidates: HashMap<String, PathBuf> = if options.enable_normal_maps {
         files
             .iter()
             .filter(|p| is_normal_file(p))
-            .filter_map(|p| {
-                file_stem(p).map(|s| {
-                    let base = s.strip_suffix("_normal").unwrap_or(&s).to_string();
-                    (base, p.clone())
-                })
+            .map(|p| {
+                let rel = sprite_rel_path(p, options);
+                let base = rel.strip_suffix("_normal").unwrap_or(&rel).to_string();
+                (base, p.clone())
             })
             .collect()
     } else {
         HashMap::new()
     };
 
+    let trim_mode = options.trim_mode;
+    let margin = options.trim_margin.max(0);
+
     // Parallel load + trim + hash.
-    let loaded: Vec<Result<Option<IngestedSprite>, String>> = files
+    let loaded: Vec<Result<Option<IngestedSprite>>> = files
         .par_iter()
-        .filter(|p| !(enable_normal_maps && is_normal_file(p)))
+        .filter(|p| !(options.enable_normal_maps && is_normal_file(p)))
         .map(|path| {
             let (w, h, rgba) = load_image_rgba(path)?;
-            let (bounds, trimmed) = trim_rgba(&rgba, w, h, threshold);
-            if trimmed.is_empty() {
-                return Ok(None); // fully transparent: skip
+            let (mut bounds, mut pixels) = if trim_mode.trims() {
+                let (bounds, trimmed) = trim_rgba(&rgba, w, h, threshold);
+                if trimmed.is_empty() {
+                    return Ok(None); // fully transparent: skip
+                }
+                apply_trim_margin(&rgba, w, h, bounds, trimmed, margin)
+            } else {
+                (Rect::new(0, 0, w, h), rgba)
+            };
+            // Docs: *Common divisor* — extend sizes (with transparency) to be
+            // divisible by the configured values.
+            let divisor = (
+                options.common_divisor_x.max(1),
+                options.common_divisor_y.max(1),
+            );
+            if divisor != (1, 1) {
+                let (b, p) = extend_to_divisor(bounds, &pixels, divisor);
+                bounds = b;
+                pixels = p;
             }
-            let id = file_stem(path).unwrap_or_else(|| "sprite".to_string());
-            let normal_path = normal_candidates.get(&id).cloned();
-            let hash = hash_pixels_rgba(&trimmed);
+            let rel = sprite_rel_path(path, options);
+            let normal_path = normal_candidates.get(&rel).cloned();
+            let id = if options.trim_sprite_names {
+                rel
+            } else {
+                match path.extension().and_then(|e| e.to_str()) {
+                    Some(ext) => format!("{rel}.{ext}"),
+                    None => rel,
+                }
+            };
+            let hash = hash_pixels_rgba(&pixels);
             Ok(Some(IngestedSprite {
                 id,
                 source_path: path.clone(),
                 raw_width: w,
                 raw_height: h,
                 trimmed_bounds: bounds,
-                pixels: trimmed,
+                pixels,
                 pixel_hash: hash,
                 normal_path,
             }))
@@ -206,10 +341,11 @@ pub fn ingest(
         .collect();
 
     let mut used_normals: Vec<PathBuf> = Vec::new();
+    let mut skipped_transparent = 0usize;
     for item in loaded {
         match item {
-            Err(e) => result.warnings.push(e),
-            Ok(None) => {}
+            Err(e) => result.warnings.push(e.to_string()),
+            Ok(None) => skipped_transparent += 1,
             Ok(Some(sprite)) => {
                 if let Some(n) = &sprite.normal_path {
                     used_normals.push(n.clone());
@@ -219,13 +355,21 @@ pub fn ingest(
         }
     }
 
-    if enable_normal_maps {
+    if skipped_transparent > 0 {
+        result.warnings.push(format!(
+            "{skipped_transparent} sprite(s) totalmente transparentes omitidos (trim mode {})",
+            trim_mode.as_str()
+        ));
+    }
+
+    if options.enable_normal_maps {
         // Warn about normal maps without a matching diffuse.
         for path in files.iter().filter(|p| is_normal_file(p)) {
             if !used_normals.contains(path) {
-                result
-                    .warnings
-                    .push(format!("Mapa de normales sin difusa asociada: {}", path.display()));
+                result.warnings.push(format!(
+                    "Mapa de normales sin difusa asociada: {}",
+                    path.display()
+                ));
             }
         }
     }
@@ -233,7 +377,7 @@ pub fn ingest(
     result
 }
 
-fn is_normal_file(path: &Path) -> bool {
+pub fn is_normal_file(path: &Path) -> bool {
     let Some(stem) = file_stem(path) else {
         return false;
     };
@@ -243,6 +387,85 @@ fn is_normal_file(path: &Path) -> bool {
 /// File stem without extension (lowercased handling kept as-is).
 fn file_stem(path: &Path) -> Option<String> {
     path.file_stem().and_then(|s| s.to_str()).map(String::from)
+}
+
+/// Sprite id *without* extension: the path relative to `input_directory` (or
+/// to the smart folder that contains it), with `/` separators — sub-folder
+/// names are always part of the sprite name, as in the official tool.
+///
+/// Falls back to the bare file name when the path lives outside every root
+/// (e.g. a single dropped image).
+fn sprite_rel_path(path: &Path, options: &IngestOptions) -> String {
+    let strip = |root: &Path| -> Option<String> {
+        if !root.is_dir() {
+            return None;
+        }
+        let rel = path.strip_prefix(root).ok()?;
+        if rel.as_os_str().is_empty() {
+            return None;
+        }
+        Some(to_posix_stem(rel))
+    };
+
+    if let Some(rel) = strip(options.input_directory) {
+        return rel;
+    }
+    for folder in options.extra_inputs {
+        if let Some(mut rel) = strip(folder) {
+            if options.prepend_folder_name {
+                if let Some(name) = folder.file_name().and_then(|n| n.to_str()) {
+                    rel = format!("{name}/{rel}");
+                }
+            }
+            return rel;
+        }
+    }
+    file_stem(path).unwrap_or_else(|| "sprite".to_string())
+}
+
+/// Join path components with `/` (asset names always use forward slashes),
+/// dropping the extension of the last component (like `Path::file_stem`).
+fn to_posix_stem(rel: &Path) -> String {
+    let mut parts: Vec<String> = rel
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    if let Some(last) = parts.last_mut() {
+        if let Some(dot) = last.rfind('.') {
+            if dot > 0 {
+                last.truncate(dot);
+            }
+        }
+    }
+    parts.join("/")
+}
+
+fn round_up(value: i32, divisor: i32) -> i32 {
+    let d = divisor.max(1);
+    let rest = value % d;
+    if rest == 0 {
+        value
+    } else {
+        value + (d - rest)
+    }
+}
+
+/// Extend the trimmed buffer with transparent pixels so both axes are
+/// divisible by the common divisor (docs: *Common divisor*).
+fn extend_to_divisor(bounds: Rect, pixels: &[u8], (dx, dy): (i32, i32)) -> (Rect, Vec<u8>) {
+    let nw = round_up(bounds.width, dx);
+    let nh = round_up(bounds.height, dy);
+    if nw == bounds.width && nh == bounds.height {
+        return (bounds, pixels.to_vec());
+    }
+    let mut out = vec![0u8; (nw * nh * 4) as usize];
+    let row_bytes = bounds.width as usize * 4;
+    for y in 0..bounds.height as usize {
+        let src = y * row_bytes;
+        let dst = y * nw as usize * 4;
+        out[dst..dst + row_bytes].copy_from_slice(&pixels[src..src + row_bytes]);
+    }
+    (Rect::new(bounds.x, bounds.y, nw, nh), out)
 }
 
 /// Resolve aliases: sprites whose trimmed pixels are byte-identical become
@@ -263,9 +486,515 @@ pub fn resolve_aliases(sprites: &[IngestedSprite]) -> Vec<(bool, Option<String>)
         .collect()
 }
 
+/// Candidate 9-patch borders detected on a sprite: `[left, top, right, bottom]`
+/// in pixels of the *untrimmed* source image.
+pub type DetectedBorders = [i32; 4];
+
+/// True when the scan line `line` (row if `is_row`, else column) is a *solid
+/// color bar*: it has at least one visible pixel (alpha > `threshold`) and all
+/// of them share the same RGBA value (within `tolerance` per channel).
+fn is_solid_line(
+    rgba: &[u8],
+    width: i32,
+    is_row: bool,
+    line: i32,
+    length: i32,
+    threshold: u8,
+    tolerance: i32,
+) -> bool {
+    let px = |j: i32| -> [u8; 4] {
+        let (x, y) = if is_row { (j, line) } else { (line, j) };
+        let i = ((y * width + x) * 4) as usize;
+        [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+    };
+    let mut first: Option<[u8; 4]> = None;
+    for j in 0..length {
+        let c = px(j);
+        if c[3] <= threshold {
+            continue; // los píxeles transparentes no rompen la barra
+        }
+        match first {
+            None => first = Some(c),
+            Some(f) => {
+                let same = f
+                    .iter()
+                    .zip(c.iter())
+                    .all(|(a, b)| (*a as i32 - *b as i32).abs() <= tolerance);
+                if !same {
+                    return false;
+                }
+            }
+        }
+    }
+    first.is_some()
+}
+
+/// Auto-detect 9-patch borders on a sprite, TexturePacker-style (docs:
+/// *Borders*): find the outermost rows/columns of solid color that frame the
+/// content. Each side is measured scanning inward while consecutive lines
+/// (up to `max_search` per side) qualify as solid bars; transparent margins or
+/// non-solid content stop the scan. Sides without a detected bar report 0
+/// (3-patch on one axis, or no 9-patch at all if everything is 0).
+///
+/// Runs on the **untrimmed** RGBA pixels (`load_image_rgba` output).
+pub fn detect_borders(
+    rgba: &[u8],
+    width: i32,
+    height: i32,
+    threshold: u8,
+    tolerance: i32,
+    max_search: i32,
+) -> DetectedBorders {
+    let measure = |is_row: bool, from_start: bool| -> i32 {
+        let (size, length) = if is_row {
+            (height, width)
+        } else {
+            (width, height)
+        };
+        if size <= 0 || length <= 0 {
+            return 0;
+        }
+        let limit = max_search.max(0).min(size);
+        let mut count = 0i32;
+        for step in 0..limit {
+            let line = if from_start { step } else { size - 1 - step };
+            if !is_solid_line(
+                rgba,
+                width,
+                is_row,
+                line,
+                length,
+                threshold,
+                tolerance.max(0),
+            ) {
+                break;
+            }
+            count += 1;
+        }
+        count
+    };
+    [
+        measure(false, true),  // left: columnas desde x=0
+        measure(true, true),   // top: filas desde y=0
+        measure(false, false), // right: columnas desde el borde derecho
+        measure(true, false),  // bottom: filas desde el borde inferior
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn detect_borders_finds_solid_frame() {
+        // Marco sólido de 3 px alrededor de un contenido de gradiente.
+        let mut img = vec![0u8; 10 * 10 * 4];
+        for y in 0..10i32 {
+            for x in 0..10i32 {
+                let i = ((y * 10 + x) * 4) as usize;
+                if !(3..7).contains(&x) || !(3..7).contains(&y) {
+                    img[i..i + 4].copy_from_slice(&[0, 0, 255, 255]);
+                } else {
+                    img[i..i + 4].copy_from_slice(&[(x * 20) as u8, (y * 20) as u8, 0, 255]);
+                }
+            }
+        }
+        assert_eq!(detect_borders(&img, 10, 10, 0, 0, 64), [3, 3, 3, 3]);
+    }
+
+    #[test]
+    fn detect_borders_stops_at_nonsolid_line() {
+        // Dos filas superiores sólidas; el resto es un gradiente por columna
+        // (cada fila no es de color uniforme).
+        let mut img = vec![0u8; 8 * 8 * 4];
+        for y in 0..8i32 {
+            for x in 0..8i32 {
+                let i = ((y * 8 + x) * 4) as usize;
+                let color: [u8; 4] = if y < 2 {
+                    [255, 0, 0, 255]
+                } else {
+                    [(x * 30) as u8, 0, 0, 255]
+                };
+                img[i..i + 4].copy_from_slice(&color);
+            }
+        }
+        assert_eq!(detect_borders(&img, 8, 8, 0, 0, 64), [0, 2, 0, 0]);
+    }
+
+    #[test]
+    fn detect_borders_transparent_margin_stops_the_scan() {
+        // Fila 0 transparente y fila 1 sólida: el escaneo se detiene en el
+        // margen (resultado conservador, 0).
+        let mut img = vec![0u8; 6 * 6 * 4];
+        for y in 0..6i32 {
+            for x in 0..6i32 {
+                let i = ((y * 6 + x) * 4) as usize;
+                let color: [u8; 4] = if y == 0 {
+                    [0, 0, 0, 0]
+                } else if y == 1 {
+                    [10, 200, 10, 255]
+                } else {
+                    [(x * 40) as u8, 0, 0, 255]
+                };
+                img[i..i + 4].copy_from_slice(&color);
+            }
+        }
+        assert_eq!(detect_borders(&img, 6, 6, 0, 0, 64), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn detect_borders_tolerance_within_line() {
+        // Fila 0 con píxeles alternando 100/101 (diferencia 1 por canal):
+        // no es barra con tolerancia 0, sí con tolerancia 1. El resto son
+        // gradientes por columna (nunca barras).
+        let mut img = vec![0u8; 6 * 6 * 4];
+        for y in 0..6i32 {
+            for x in 0..6i32 {
+                let i = ((y * 6 + x) * 4) as usize;
+                let color: [u8; 4] = if y == 0 {
+                    [100 + (x % 2) as u8, 0, 0, 255]
+                } else {
+                    [(x * 40) as u8, 0, 0, 255]
+                };
+                img[i..i + 4].copy_from_slice(&color);
+            }
+        }
+        assert_eq!(detect_borders(&img, 6, 6, 0, 0, 64), [0, 0, 0, 0]);
+        assert_eq!(detect_borders(&img, 6, 6, 0, 1, 64), [0, 1, 0, 0]);
+    }
+
+    #[test]
+    fn detect_borders_max_search_limits_the_scan() {
+        // Dos filas superiores uniformes y un gradiente debajo:
+        // la búsqueda completa detecta 2, limitada a 1 línea solo 1.
+        let mut img = vec![0u8; 6 * 6 * 4];
+        for y in 0..6i32 {
+            for x in 0..6i32 {
+                let i = ((y * 6 + x) * 4) as usize;
+                let color: [u8; 4] = if y < 2 {
+                    [100, 0, 0, 255]
+                } else {
+                    [(x * 40) as u8, 0, 0, 255]
+                };
+                img[i..i + 4].copy_from_slice(&color);
+            }
+        }
+        assert_eq!(detect_borders(&img, 6, 6, 0, 0, 64), [0, 2, 0, 0]);
+        assert_eq!(detect_borders(&img, 6, 6, 0, 0, 1), [0, 1, 0, 0]);
+    }
+
+    #[test]
+    fn detect_borders_fully_transparent_is_zero() {
+        let img = vec![0u8; 6 * 6 * 4];
+        assert_eq!(detect_borders(&img, 6, 6, 0, 0, 64), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn extra_inputs_and_exclusions_change_the_sprite_set() {
+        let root = std::env::temp_dir().join(format!("tp_ingest_{}", std::process::id()));
+        let extra = root.join("extra");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&extra).unwrap();
+        let write = |path: &Path, rgb: [u8; 3]| {
+            let img =
+                image::RgbaImage::from_pixel(4, 4, image::Rgba([rgb[0], rgb[1], rgb[2], 255]));
+            img.save(path).unwrap();
+        };
+        write(&root.join("a.png"), [255, 0, 0]);
+        write(&extra.join("c.png"), [0, 0, 255]);
+
+        let excluded = root.join("a.png");
+        let options = IngestOptions {
+            input_directory: &root,
+            trim_threshold: 1,
+            trim_mode: TrimMode::Trim,
+            trim_margin: 0,
+            enable_normal_maps: false,
+            recursive: true,
+            extra_inputs: std::slice::from_ref(&extra),
+            excluded_inputs: &[],
+            trim_sprite_names: true,
+            prepend_folder_name: false,
+            common_divisor_x: 1,
+            common_divisor_y: 1,
+        };
+
+        let all = ingest(&options);
+        assert_eq!(all.sprites.len(), 2);
+
+        let mut filtered_options = options.clone();
+        filtered_options.excluded_inputs = std::slice::from_ref(&excluded);
+        let filtered = ingest(&filtered_options);
+        let ids: Vec<&str> = filtered.sprites.iter().map(|s| s.id.as_str()).collect();
+        // `extra/c.png` lives inside the input root, so its id carries the
+        // sub-folder name (`extra/c`), as the official tool does.
+        assert_eq!(ids, vec!["extra/c"]);
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn trim_margin_expands_bounds_with_transparency() {
+        // 8x8, visible blob at (2,3)-(4,4) (3x2).
+        let buf = rgba(8, 8, |x, y| {
+            if (2..5).contains(&x) && (3..5).contains(&y) {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 0, 0]
+            }
+        });
+        let (bounds, trimmed) = trim_rgba(&buf, 8, 8, 1);
+        assert_eq!(
+            (bounds.x, bounds.y, bounds.width, bounds.height),
+            (2, 3, 3, 2)
+        );
+
+        let (b2, t2) = apply_trim_margin(&buf, 8, 8, bounds, trimmed, 2);
+        assert_eq!((b2.x, b2.y, b2.width, b2.height), (0, 1, 7, 6));
+        assert_eq!(t2.len(), 7 * 6 * 4);
+        // El pixel expandido en la esquina es transparente.
+        assert_eq!(&t2[0..4], &[0, 0, 0, 0]);
+        // El píxel original sigue en su sitio relativo (offset 2,2 dentro del recorte).
+        let idx = ((2 * 7 + 2) * 4) as usize;
+        assert_eq!(&t2[idx..idx + 4], &[255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn trim_margin_zero_returns_trimmed_buffer() {
+        let buf = rgba(4, 4, |x, y| {
+            if x == 1 && y == 1 {
+                [9, 9, 9, 255]
+            } else {
+                [0, 0, 0, 0]
+            }
+        });
+        let (bounds, trimmed) = trim_rgba(&buf, 4, 4, 1);
+        let (b2, t2) = apply_trim_margin(&buf, 4, 4, bounds, trimmed.clone(), 0);
+        assert_eq!(b2, bounds);
+        assert_eq!(t2, trimmed);
+    }
+
+    #[test]
+    fn trim_mode_none_keeps_full_image_and_transparent_sprites() {
+        let root = std::env::temp_dir().join(format!("tp_trimnone_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        // 4x4 con un píxel visible en el centro: con trim serían 1x1.
+        let mut img = image::RgbaImage::new(4, 4);
+        img.put_pixel(1, 1, image::Rgba([255, 0, 0, 255]));
+        img.save(root.join("blob.png")).unwrap();
+        // Totalmente transparente: se incluye porque no hay trim.
+        image::RgbaImage::new(4, 4)
+            .save(root.join("empty.png"))
+            .unwrap();
+
+        let options = IngestOptions {
+            input_directory: &root,
+            trim_threshold: 1,
+            trim_mode: TrimMode::None,
+            trim_margin: 0,
+            enable_normal_maps: false,
+            recursive: true,
+            extra_inputs: &[],
+            excluded_inputs: &[],
+            trim_sprite_names: true,
+            prepend_folder_name: false,
+            common_divisor_x: 1,
+            common_divisor_y: 1,
+        };
+        let out = ingest(&options);
+        assert_eq!(
+            out.sprites.len(),
+            2,
+            "modo None conserva hasta los transparentes: {out:?}"
+        );
+        for s in &out.sprites {
+            assert_eq!((s.trimmed_bounds.x, s.trimmed_bounds.y), (0, 0));
+            assert_eq!((s.trimmed_bounds.width, s.trimmed_bounds.height), (4, 4));
+            assert_eq!(s.pixels.len(), 4 * 4 * 4);
+        }
+
+        // Con trim: el blob queda en 1x1 y el transparente se descarta.
+        let mut trimmed_options = options.clone();
+        trimmed_options.trim_mode = TrimMode::Trim;
+        let out2 = ingest(&trimmed_options);
+        assert_eq!(out2.sprites.len(), 1);
+        assert_eq!(out2.sprites[0].trimmed_bounds.width, 1);
+        assert!(out2
+            .warnings
+            .iter()
+            .any(|w| w.contains("transparentes omitidos")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn sprite_ids_carry_folders_and_optional_extension() {
+        let root = std::env::temp_dir().join(format!("tp_ids_{}", std::process::id()));
+        let smart = std::env::temp_dir().join(format!("tp_ids_smart_{}", std::process::id()));
+        let root_smart = std::env::temp_dir().join(format!("tp_ids_root_{}", std::process::id()));
+        for d in [&root, &smart, &root_smart] {
+            let _ = std::fs::remove_dir_all(d);
+        }
+        std::fs::create_dir_all(root.join("hero")).unwrap();
+        std::fs::create_dir_all(&smart).unwrap();
+        std::fs::create_dir_all(root_smart.join("fx")).unwrap();
+        let write = |path: &Path| {
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+                .save(path)
+                .unwrap();
+        };
+        write(&root.join("hero/idle_00.png"));
+        write(&root.join("idle_01.png"));
+        write(&smart.join("glow.png"));
+        write(&root_smart.join("fx/glow.png"));
+
+        let no_extras: &[PathBuf] = &[];
+        let options = IngestOptions {
+            input_directory: &root,
+            trim_threshold: 1,
+            trim_mode: TrimMode::Trim,
+            trim_margin: 0,
+            enable_normal_maps: false,
+            recursive: true,
+            extra_inputs: no_extras,
+            excluded_inputs: &[],
+            trim_sprite_names: true,
+            prepend_folder_name: false,
+            common_divisor_x: 1,
+            common_divisor_y: 1,
+        };
+        let ids: Vec<String> = ingest(&options).sprites.into_iter().map(|s| s.id).collect();
+        assert_eq!(ids, vec!["hero/idle_00", "idle_01"]);
+
+        // Con extensiones: el nombre conserva `.png` (docs: *Trim sprite names*).
+        let mut with_ext = options.clone();
+        with_ext.trim_sprite_names = false;
+        let ids: Vec<String> = ingest(&with_ext)
+            .sprites
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(ids, vec!["hero/idle_00.png", "idle_01.png"]);
+
+        // Smart folder *dentro* de la raíz: siempre lleva su subcarpeta.
+        let mut inside_root = options.clone();
+        inside_root.input_directory = &root_smart;
+        let ids: Vec<String> = ingest(&inside_root)
+            .sprites
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(ids, vec!["fx/glow"]);
+
+        // Smart folder *fuera* de la raíz: prefijo solo con *Prepend folder name*.
+        let smart_slice = std::slice::from_ref(&smart);
+        let mut with_smart = options.clone();
+        with_smart.extra_inputs = smart_slice;
+        let ids: Vec<String> = ingest(&with_smart)
+            .sprites
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert!(ids.contains(&"glow".to_string()), "ids: {ids:?}");
+        let mut prefixed = with_smart.clone();
+        prefixed.prepend_folder_name = true;
+        let ids: Vec<String> = ingest(&prefixed)
+            .sprites
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        let smart_name = smart.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(ids.contains(&format!("{smart_name}/glow")), "ids: {ids:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
+        let _ = std::fs::remove_dir_all(&smart);
+        let _ = std::fs::remove_dir_all(&root_smart);
+    }
+
+    #[test]
+    fn common_divisor_extends_sizes_with_transparency() {
+        let root = std::env::temp_dir().join(format!("tp_divisor_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // 3x5 totalmente opaco: el divisor lo estira a 4x8 con transparencia.
+        image::RgbaImage::from_pixel(3, 5, image::Rgba([200, 60, 60, 255]))
+            .save(root.join("solid.png"))
+            .unwrap();
+
+        let options = IngestOptions {
+            input_directory: &root,
+            trim_threshold: 1,
+            trim_mode: TrimMode::Trim,
+            trim_margin: 0,
+            enable_normal_maps: false,
+            recursive: true,
+            extra_inputs: &[],
+            excluded_inputs: &[],
+            trim_sprite_names: true,
+            prepend_folder_name: false,
+            common_divisor_x: 4,
+            common_divisor_y: 8,
+        };
+        let out = ingest(&options);
+        assert_eq!(out.sprites.len(), 1);
+        let s = &out.sprites[0];
+        assert_eq!((s.trimmed_bounds.width, s.trimmed_bounds.height), (4, 8));
+        assert_eq!(s.pixels.len(), 4 * 8 * 4);
+        // El píxel original sigue en su sitio y el estirado es transparente.
+        assert_eq!(&s.pixels[0..4], &[200, 60, 60, 255]);
+        assert_eq!(&s.pixels[3 * 4..3 * 4 + 4], &[0, 0, 0, 0]);
+        assert_eq!(
+            &s.pixels[(7 * 4 + 3) * 4..(7 * 4 + 3) * 4 + 4],
+            &[0, 0, 0, 0]
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn normal_maps_pair_by_relative_id() {
+        let root = std::env::temp_dir().join(format!("tp_normals_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("hero")).unwrap();
+        let write = |path: &Path, rgb: [u8; 3]| {
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([rgb[0], rgb[1], rgb[2], 255]))
+                .save(path)
+                .unwrap();
+        };
+        write(&root.join("hero/idle.png"), [255, 0, 0]);
+        write(&root.join("hero/idle_normal.png"), [0, 0, 255]);
+        write(&root.join("idle_normal.png"), [0, 255, 0]); // sin difusa: aviso
+
+        let options = IngestOptions {
+            input_directory: &root,
+            trim_threshold: 1,
+            trim_mode: TrimMode::Trim,
+            trim_margin: 0,
+            enable_normal_maps: true,
+            recursive: true,
+            extra_inputs: &[],
+            excluded_inputs: &[],
+            trim_sprite_names: false,
+            prepend_folder_name: false,
+            common_divisor_x: 1,
+            common_divisor_y: 1,
+        };
+        let out = ingest(&options);
+        assert_eq!(out.sprites.len(), 1);
+        assert_eq!(out.sprites[0].id, "hero/idle.png");
+        assert!(
+            out.sprites[0].normal_path.is_some(),
+            "no emparejó la normal por id relativo"
+        );
+        assert!(out
+            .warnings
+            .iter()
+            .any(|w| w.contains("sin difusa asociada")));
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     fn rgba(w: i32, h: i32, solid: impl Fn(i32, i32) -> [u8; 4]) -> Vec<u8> {
         let mut buf = Vec::with_capacity((w * h * 4) as usize);
