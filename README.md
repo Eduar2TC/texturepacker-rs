@@ -319,6 +319,28 @@ flip vertical solo en formatos GPU e ingesta de TGA/BMP/QOI con deduplicación
 por hash) y del **Lote 9** (bordes 9-patch desde `borders.json` hasta los
 metadatos `border` del JSON).
 
+## Licencia y marcas
+
+**Licencia.** TexturePacker-RS se distribuye bajo los términos de la **licencia
+MIT**: puedes usarlo, estudiarlo, modificarlo y redistribuirlo libremente, en
+proyectos personales o comerciales. Las dependencias open source declaradas en
+`Cargo.toml` conservan sus propias licencias.
+
+**Proyecto independiente.** TexturePacker-RS es una herramienta original
+escrita en Rust, sin afiliación, patrocinio, colaboración ni respaldo de ningún
+proveedor de software comercial. Las técnicas que implementa (recorte de
+transparencias, padding, empaquetado en varias hojas, sufijos de variantes,
+formatos comprimidos de GPU) son convenciones generales del ecosistema de
+desarrollo de videojuegos y no pertenecen a nadie en particular.
+
+**Marcas.** Los nombres de productos o empresas que puedan aparecer en esta
+documentación se citan, en su caso, únicamente con fines de interoperabilidad
+e identificación técnica; cada uno pertenece a su respectivo titular, con el
+que este proyecto no mantiene vínculo alguno. El nombre *TexturePacker-RS*
+describe el propósito de la herramienta (empaquetar texturas, en Rust); si
+algún titular de marca considera que su uso induce a confusión, puede abrir
+una issue en el repositorio para resolverlo.
+
 ---
 
 Hecho con 🦀 · Licencia MIT
