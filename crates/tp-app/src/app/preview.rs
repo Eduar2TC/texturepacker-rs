@@ -157,7 +157,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     painter.rect_stroke(
                         r,
                         0.0,
-                        egui::Stroke::new(1.0, color),
+                        egui::Stroke::new(1.0_f32, color),
                         egui::StrokeKind::Inside,
                     );
                     if zoom > 1.5 {
@@ -273,7 +273,7 @@ fn draw_mesh(
             rect.min.y + v * page_h as f32 * zoom,
         )
     };
-    let stroke = egui::Stroke::new(0.6, egui::Color32::from_rgb(140, 140, 140));
+    let stroke = egui::Stroke::new(0.6_f32, egui::Color32::from_rgb(140, 140, 140));
     for tri in mesh.indices.chunks_exact(3) {
         let a = to_screen(mesh.uvs[tri[0] as usize].x, mesh.uvs[tri[0] as usize].y);
         let b = to_screen(mesh.uvs[tri[1] as usize].x, mesh.uvs[tri[1] as usize].y);
@@ -330,12 +330,12 @@ fn draw_borders(
     b = b.clamp(0, v.height);
     let (stroke, thick) = if interactive {
         (
-            egui::Stroke::new(2.0, egui::Color32::from_rgb(0, 255, 80)),
+            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(0, 255, 80)),
             6.0,
         )
     } else {
         (
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 255, 80)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0, 255, 80)),
             2.0,
         )
     };

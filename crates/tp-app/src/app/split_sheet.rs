@@ -112,7 +112,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(60)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(60)),
             egui::StrokeKind::Inside,
         );
         painter.text(
@@ -215,7 +215,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
                     painter.rect_stroke(
                         r,
                         0.0,
-                        egui::Stroke::new(1.0, egui::Color32::from_rgb(0, 220, 255)),
+                        egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(0, 220, 255)),
                         egui::StrokeKind::Inside,
                     );
                 }

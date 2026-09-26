@@ -201,10 +201,10 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
                         egui::Color32::from_rgb(120, 220, 255)
                     };
                     for w in pts.windows(2) {
-                        painter.line_segment([w[0], w[1]], egui::Stroke::new(1.5, color));
+                        painter.line_segment([w[0], w[1]], egui::Stroke::new(1.5_f32, color));
                     }
                     if let Some(last) = pts.last() {
-                        painter.line_segment([*last, pts[0]], egui::Stroke::new(1.5, color));
+                        painter.line_segment([*last, pts[0]], egui::Stroke::new(1.5_f32, color));
                     }
                 }
             }
@@ -215,7 +215,7 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
                 let pa = egui::pos2(rect.min.x + a.x * scale, rect.min.y + a.y * scale);
                 let pb = egui::pos2(rect.min.x + b.x * scale, rect.min.y + b.y * scale);
                 let pc = egui::pos2(rect.min.x + c.x * scale, rect.min.y + c.y * scale);
-                let stroke = egui::Stroke::new(0.5, egui::Color32::from_rgb(90, 90, 90));
+                let stroke = egui::Stroke::new(0.5_f32, egui::Color32::from_rgb(90, 90, 90));
                 painter.line_segment([pa, pb], stroke);
                 painter.line_segment([pb, pc], stroke);
                 painter.line_segment([pc, pa], stroke);
