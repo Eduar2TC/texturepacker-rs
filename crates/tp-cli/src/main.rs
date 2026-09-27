@@ -48,8 +48,8 @@ fn usage() -> ! {
          \x20 --jpg-quality N       Calidad JPG (0-100)\n\
          \x20 --pixel-format T      rgba8888 | rgb888 | alpha8 | intensity8 | alpha-intensity8 | rgba5551 | rgba5555 | bgra8888\n\
          \x20 --strategy T          bssf (ShortSideFit) | baf (AreaFit) | blsf (LongSideFit) | best | bottom-left | contact-point | guillotine (alias: --maxrects-heuristics)\n\
-         \x20 --strategy T          bssf | baf | blsf | best | bottom-left | contact-point | guillotine\n\
          \x20 --algorithm T         maxrects | polygon | guillotine | grid | basic | manual\n\
+         \x20 --auto-folders        pack por carpetas automático: cada subcarpeta de entrada produce su hoja en la subcarpeta de salida\n\
          \x20 --basic-sort-by T     best | name | width | height | area | circumference\n\
          \x20 --basic-order T       ascending | descending\n\
          \x20 --pack-mode T         fast | good | best\n\
@@ -390,6 +390,9 @@ fn cmd_pack(args: &[String]) {
     }
     if flags.iter().any(|f| f == "no-multipack") {
         cfg.multipack = false;
+    }
+    if flags.iter().any(|f| f == "auto-folders") {
+        cfg.auto_folder_groups = true;
     }
     if flags.iter().any(|f| f == "multipack") {
         cfg.multipack = true;

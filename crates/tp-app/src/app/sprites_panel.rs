@@ -554,6 +554,25 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
         .id_salt("output_groups")
         .default_open(false)
         .show(ui, |ui| {
+            // Modo automático (estilo TexturePacker original): ignora los
+            // grupos manuales y crea un grupo por subcarpeta de entrada.
+            let mut auto = app.config.auto_folder_groups;
+            if ui
+                .checkbox(&mut auto, "Automático por carpetas de entrada")
+                .on_hover_text(
+                    "Cada subcarpeta de entrada produce su hoja en la subcarpeta de salida \
+                     con el mismo nombre; los sprites de la raíz van a la hoja principal",
+                )
+                .changed()
+            {
+                app.config.auto_folder_groups = auto;
+                app.after_workspace_change();
+            }
+            if auto {
+                ui.weak("Las asignaciones manuales se ignoran en este modo.");
+                return;
+            }
+
             let mut remove: Option<usize> = None;
             let mut assign: Option<usize> = None;
             let mut clear: Option<usize> = None;

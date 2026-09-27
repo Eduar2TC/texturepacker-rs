@@ -1312,6 +1312,83 @@ fn manual_algorithm_keeps_gui_positions() {
 }
 
 #[test]
+fn auto_folder_groups_mirror_input_subfolders() {
+    // Modo automático (estilo TexturePacker original): cada subcarpeta de
+    // entrada produce su hoja en la subcarpeta de salida correspondiente.
+    let fx = Fixture::new("auto_folders");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    std::fs::create_dir_all(input.join("ui")).unwrap();
+    std::fs::create_dir_all(input.join("effects/deep")).unwrap();
+    write_png(&input.join("hero.png"), 16, 16, [255, 0, 0, 255]); // raíz
+    write_png(&input.join("ui/btn_ok.png"), 12, 10, [0, 255, 0, 255]);
+    write_png(&input.join("ui/btn_ko.png"), 12, 10, [255, 255, 0, 255]);
+    write_png(
+        &input.join("effects/deep/spark.png"),
+        8,
+        8,
+        [255, 160, 40, 255],
+    );
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        auto_folder_groups: true,
+        ..ProjectConfig::default()
+    };
+    let out = tp_core::pipeline::run(&cfg).unwrap();
+
+    // Espejo input → output (la ruta relativa completa se conserva).
+    assert!(output.join("atlas.png").is_file(), "raíz → raíz");
+    assert!(output.join("ui/atlas.png").is_file(), "ui → ui");
+    assert!(
+        output.join("effects/deep/atlas.png").is_file(),
+        "effects/deep → effects/deep"
+    );
+
+    // Contenido de cada hoja: solo los sprites de su carpeta. La ruta
+    // relativa de «effects/deep/spark.png» deriva el grupo «effects/deep».
+    let ids: Vec<&str> = {
+        let mut v = out
+            .result
+            .sprites
+            .iter()
+            .map(|s| s.id.as_str())
+            .collect::<Vec<_>>();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(
+        ids,
+        vec!["effects/deep/spark", "hero", "ui/btn_ko", "ui/btn_ok"]
+    );
+
+    let ids_on_page = |page: i32| -> Vec<&str> {
+        let mut v: Vec<&str> = out
+            .result
+            .sprites
+            .iter()
+            .filter(|s| s.atlas_page_index == page)
+            .map(|s| s.id.as_str())
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(ids_on_page(0), vec!["hero"], "raíz (siempre la página 0)");
+    assert_eq!(
+        ids_on_page(1),
+        vec!["effects/deep/spark"],
+        "effects/deep (alfabético antes que ui)"
+    );
+    assert_eq!(ids_on_page(2), vec!["ui/btn_ko", "ui/btn_ok"], "ui");
+
+    let files = out.result.output_files.join("\n");
+    assert!(files.contains("ui/"), "prefijo ui: {files}");
+    assert!(files.contains("effects/"), "prefijo effects: {files}");
+}
+
+#[test]
 fn grouped_packing_writes_subfolder_sheets() {
     use tp_core::config::FolderGroup;
 

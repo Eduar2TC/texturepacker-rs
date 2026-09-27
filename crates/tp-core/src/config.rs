@@ -794,6 +794,12 @@ pub struct ProjectConfig {
     /// name, output root); it also receives every unassigned sprite.
     #[serde(default = "default_folder_groups")]
     pub folder_groups: Vec<FolderGroup>,
+    /// Automatic pack-by-folder (like the original TexturePacker): every
+    /// input subfolder becomes an output subfolder — sprites in `<in>/ui/`
+    /// land in `<out>/ui/atlas.png`, root-level sprites in `<out>/atlas.png`.
+    /// Overrides manual groups when enabled.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub auto_folder_groups: bool,
     /// Scale variants to emit, e.g. `[1.0, 0.5]` produces `atlas.png` and
     /// `atlas-hd.png` (sufijos de variante tipo `-hd`, `@2x`...).
     pub scale_variants: Vec<f32>,
@@ -976,6 +982,7 @@ impl Default for ProjectConfig {
             prepend_folder_name: false,
             enable_auto_detect_animations: true,
             manual_grid: None,
+            auto_folder_groups: false,
         }
     }
 }

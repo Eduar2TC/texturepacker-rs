@@ -40,14 +40,16 @@ pub struct PipelineOutput {
 /// Run the whole packing pipeline for a project configuration and write
 /// the exported image/metadata files to the output directory.
 pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, true, None)
+    // Los grupos viajan siempre: el gancho de `execute` decide si están
+    // activos (modo manual con asignaciones o modo automático por carpetas).
+    execute(config, true, Some(&config.folder_groups))
 }
 
 /// Run the pipeline without touching the disk: pack in memory only, so the
 /// GUI can show a live preview of the workspace. No directory is created and
 /// no image or metadata file is rendered or written.
 pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, false, None)
+    execute(config, false, Some(&config.folder_groups))
 }
 
 /// Pack by manual folder groups (`folder_groups`): one pipeline run per
@@ -145,10 +147,41 @@ fn execute(
     let sprites = ingested.sprites;
     stage_times.push(("ingest".into(), t.elapsed().as_millis() as u64));
 
-    // Empaquetado por carpetas manuales: una ejecución por grupo con los
-    // sprites de los demás grupos excluidos (se re-ingestan filtrados).
+    // Empaquetado por carpetas (manual por grupos o automático por
+    // subcarpetas): una ejecución por grupo con los sprites de los demás
+    // grupos excluidos (se re-ingestan filtrados).
     if let Some(groups) = groups {
-        // Activo en cuanto hay un grupo con nombre y algún sprite asignado.
+        if config.auto_folder_groups {
+            // Modo automático (estilo TexturePacker original): cada subcarpeta
+            // de entrada se convierte en un grupo con su mismo nombre; los
+            // sprites de la raíz van a la hoja principal (siempre la página 0
+            // y las subcarpetas en orden alfabético, para salida determinista).
+            let mut derived: Vec<FolderGroup> = vec![FolderGroup::default()];
+            for s in &sprites {
+                let sub = s
+                    .source_path
+                    .strip_prefix(&config.input_directory)
+                    .ok()
+                    .and_then(|rel| rel.parent())
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if sub.is_empty() {
+                    continue;
+                }
+                match derived.iter_mut().find(|g| g.name == sub) {
+                    Some(g) => g.sprites.push(s.id.clone()),
+                    None => derived.push(FolderGroup {
+                        name: sub,
+                        sprites: vec![s.id.clone()],
+                    }),
+                }
+            }
+            if derived.len() > 1 {
+                derived[1..].sort_by(|a, b| a.name.cmp(&b.name));
+            }
+            return run_groups(config, &sprites, &derived, write_to_disk);
+        }
+        // Modo manual: activo en cuanto hay un grupo con nombre y sprites.
         if groups
             .iter()
             .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
