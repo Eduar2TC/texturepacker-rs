@@ -761,7 +761,7 @@ fn run_groups(
         if g.name.is_empty() {
             !assigned.contains(&s.id)
         } else {
-            g.sprites.iter().any(|id| assigned.contains(id))
+            g.sprites.iter().any(|id| id == &s.id)
         }
     };
 

@@ -1371,6 +1371,22 @@ fn grouped_packing_writes_subfolder_sheets() {
         assert!(s.visible_frame.x >= 0 && s.visible_frame.y >= 0);
     }
 
+    // Cada hoja contiene SOLO los sprites de su grupo (sin duplicados ni
+    // fugas de otros grupos): la exclusión por rutas debe aislarlos.
+    let ids_on_page = |page: i32| -> Vec<&str> {
+        let mut v: Vec<&str> = out
+            .result
+            .sprites
+            .iter()
+            .filter(|s| s.atlas_page_index == page)
+            .map(|s| s.id.as_str())
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(ids_on_page(0), vec!["bg", "hero"], "hoja principal");
+    assert_eq!(ids_on_page(1), vec!["btn_ko", "btn_ok"], "hoja ui");
+
     // El listado de archivos lleva el prefijo del grupo.
     let files = out.result.output_files.join("\n");
     assert!(files.contains("ui/"), "faltan rutas prefijadas: {files}");
