@@ -2,6 +2,7 @@
 
 use crate::error::{Result, TpError};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Output color depth / channel quantization.
@@ -422,6 +423,10 @@ pub enum PackingAlgorithm {
     /// Row based left-to-right layout (good for fixed-size sprites).
     #[serde(rename = "Basic")]
     Basic,
+    /// Positions fixed by hand (GUI): `manual_positions[id] = (x, y)`.
+    /// Sprites without an entry fall back to the Basic row layout.
+    #[serde(rename = "Manual")]
+    Manual,
     /// Polygon packing via MaxRects on bounding boxes + polygon occupancy
     /// Selected automatically when
     /// `trim_mode = "Polygon"`.
@@ -436,6 +441,7 @@ impl PackingAlgorithm {
             PackingAlgorithm::Guillotine => "Guillotine",
             PackingAlgorithm::Grid => "Grid",
             PackingAlgorithm::Basic => "Basic",
+            PackingAlgorithm::Manual => "Manual",
             PackingAlgorithm::Polygon => "Polygon",
         }
     }
@@ -447,6 +453,7 @@ impl PackingAlgorithm {
             "guillotine" => Some(PackingAlgorithm::Guillotine),
             "grid" => Some(PackingAlgorithm::Grid),
             "basic" => Some(PackingAlgorithm::Basic),
+            "manual" => Some(PackingAlgorithm::Manual),
             _ => None,
         }
     }
@@ -720,6 +727,11 @@ pub struct ProjectConfig {
     /// Sort direction for the `Basic` algorithm.
     #[serde(default)]
     pub basic_order: SortOrder,
+    /// Manual algorithm: atlas position (x, y) fixed by hand per sprite id,
+    /// in trimmed sprite coordinates (as shown in the GUI preview). Sprites
+    /// without an entry fall back to the Basic row layout.
+    #[serde(default)]
+    pub manual_positions: HashMap<String, (i32, i32)>,
     /// Scale variants to emit, e.g. `[1.0, 0.5]` produces `atlas.png` and
     /// `atlas-hd.png` (sufijos de variante tipo `-hd`, `@2x`...).
     pub scale_variants: Vec<f32>,
@@ -873,6 +885,7 @@ impl Default for ProjectConfig {
             fixed_height: 0,
             basic_sort_by: BasicSortBy::default(),
             basic_order: SortOrder::default(),
+            manual_positions: HashMap::new(),
             scale_variants: vec![1.0],
             variant_names: Vec::new(),
             enable_normal_maps: true,

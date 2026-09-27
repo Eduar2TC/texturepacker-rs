@@ -1267,3 +1267,46 @@ fn run_preview_does_not_write_any_file() {
     assert!(output.join("atlas.png").is_file());
     assert!(output.join("atlas.json").is_file());
 }
+
+#[test]
+fn manual_algorithm_keeps_gui_positions() {
+    let fx = Fixture::new("manual");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    write_png(&input.join("a.png"), 20, 12, [255, 0, 0, 255]);
+    write_png(&input.join("b.png"), 10, 10, [0, 255, 0, 255]);
+
+    let mut positions = std::collections::HashMap::new();
+    // Posición manual del sprite "a": (15, 3).
+    positions.insert("a".to_string(), (15, 3));
+    positions.insert("b".to_string(), (40, 30));
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        algorithm: tp_core::config::PackingAlgorithm::Manual,
+        pack_mode: PackMode::Fast,
+        trim_mode: tp_core::config::TrimMode::Trim,
+        manual_positions: positions,
+        ..ProjectConfig::default()
+    };
+
+    let out = tp_core::pipeline::run(&cfg).unwrap();
+    let sheet = output.join("atlas.png");
+    assert!(sheet.is_file());
+
+    // Cada sprite termina exactamente donde se pidió (+ borde/padding).
+    let find = |id: &str| {
+        out.result
+            .sprites
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .visible_frame
+    };
+    let a = find("a");
+    assert_eq!((a.x, a.y), (15 + 2, 3 + 2), "posición manual no respetada");
+    let b = find("b");
+    assert_eq!((b.x, b.y), (40 + 2, 30 + 2));
+    assert!(!a.intersects(&b));
+}

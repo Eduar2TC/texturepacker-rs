@@ -197,6 +197,7 @@ fn execute(config: &ProjectConfig, write_to_disk: bool) -> Result<PipelineOutput
         fixed_height: config.fixed_height,
         basic_sort_by: config.basic_sort_by,
         basic_order: config.basic_order,
+        manual_positions: config.manual_positions.clone(),
         word_align_mod: config.word_align_mod(),
         ..PackerOptions::new(
             config.packing_strategy,

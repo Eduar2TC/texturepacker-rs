@@ -54,6 +54,12 @@ pub struct PackOutput {
     pub pages: Vec<PackPage>,
 }
 
+/// Manual algorithm: atlas position per sprite id, hand-set in the GUI.
+/// The stored position refers to the **trimmed** sprite (no padding); the
+/// placement expands it with the shape padding exactly like the other
+/// algorithms.
+pub type ManualPositions = std::collections::HashMap<String, (i32, i32)>;
+
 #[derive(Debug, Clone)]
 pub struct PackerOptions {
     pub strategy: PackingStrategy,
@@ -83,6 +89,8 @@ pub struct PackerOptions {
     pub basic_order: SortOrder,
     /// Width alignment in pixels for `WordAligned` (1 = no alignment).
     pub word_align_mod: i32,
+    /// Manual algorithm: hand-set position per sprite id (trimmed coords).
+    pub manual_positions: ManualPositions,
 }
 
 impl PackerOptions {
@@ -110,6 +118,7 @@ impl PackerOptions {
             basic_sort_by: BasicSortBy::default(),
             basic_order: SortOrder::default(),
             word_align_mod: 1,
+            manual_positions: ManualPositions::new(),
         }
     }
 }
@@ -238,6 +247,7 @@ fn place_all(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
     match opts.algorithm {
         PackingAlgorithm::Grid => pack_grid(items, opts, cw, ch),
         PackingAlgorithm::Basic => pack_basic(items, opts, cw, ch),
+        PackingAlgorithm::Manual => pack_manual(items, opts, cw, ch),
         // Trim mode Polygon — the tightest packing for non-rectangular
         // sprites: MaxRects placement with polygon occupancy support.
         PackingAlgorithm::Polygon => pack_maxrects(items, opts, cw, ch),
@@ -638,6 +648,97 @@ fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
             rotated: false,
             page: page_idx,
         });
+    }
+    Ok(pages)
+}
+
+/// Manual placement: each sprite goes exactly where the user dragged it in
+/// the GUI (`manual_positions`), no rotation. Sprites without a position fall
+/// back to the Basic row flow. Multi-page is supported: sprites that do not
+/// fit the (fixed) canvas overflow to a new page keeping their position.
+fn pack_manual(
+    items: &[PackItem],
+    opts: &PackerOptions,
+    cw: i32,
+    ch: i32,
+) -> Result<Vec<PageState>> {
+    let pad = opts.padding.max(0);
+    let bp = opts.border_padding.max(0);
+    let (iw, ih) = (cw - 2 * bp, ch - 2 * bp);
+    if iw <= 0 || ih <= 0 {
+        return Err(TpError::Pack(format!(
+            "border_padding ({bp}) deja el área interior vacía en un atlas de {cw}x{ch}",
+        )));
+    }
+
+    let pos = |it: &PackItem| -> Option<(i32, i32)> { opts.manual_positions.get(&it.id).copied() };
+
+    // Con tamaños automáticos, el área necesaria fija el lienzo: recalcular
+    // no cambia las posiciones porque son relativas al borde del atlas.
+    let mut sorted: Vec<&PackItem> = items.iter().collect();
+    sorted.sort_by(|a, b| {
+        let ka = (a.width * a.height, a.id.as_str());
+        let kb = (b.width * b.height, b.id.as_str());
+        kb.cmp(&ka)
+    });
+
+    let mut pages: Vec<PageState> = vec![PageState::new(0, cw, ch, bp)];
+    let mut page_idx = 0usize;
+    let (mut x, mut y, mut row_h) = (bp, bp, 0);
+
+    for item in &sorted {
+        let w = item.width + 2 * pad;
+        let h = item.height + 2 * pad;
+        if w > iw || h > ih {
+            return Err(TpError::Pack(format!(
+                "El sprite '{}' ({}x{}) no cabe en un atlas de {cw}x{ch} \
+                 (padding {pad} + borde {bp})",
+                item.id, item.width, item.height
+            )));
+        }
+        let frame = match pos(item) {
+            Some((px, py)) => {
+                // Ajustar al interior y registrar la posición real usada.
+                let fx = px.max(0).min(iw - w);
+                let fy = py.max(0).min(ih - h);
+                let frame = Rect::new(bp + fx, bp + fy, w, h);
+                let page = &mut pages[page_idx];
+                page.placed.push(frame);
+                page.placements.push(Placement {
+                    id: item.id.clone(),
+                    frame,
+                    rotated: false,
+                    page: page_idx,
+                });
+                continue;
+            }
+            None => {
+                // Sin posición manual: flujo Basic (filas) tras los fijados.
+                if x + w > bp + iw {
+                    x = bp;
+                    y += row_h;
+                    row_h = 0;
+                }
+                if y + h > bp + ih {
+                    page_idx += 1;
+                    pages.push(PageState::new(page_idx, cw, ch, bp));
+                    x = bp;
+                    y = bp;
+                    row_h = 0;
+                }
+                Rect::new(x, y, w, h)
+            }
+        };
+        let page = &mut pages[page_idx];
+        page.placed.push(frame);
+        page.placements.push(Placement {
+            id: item.id.clone(),
+            frame,
+            rotated: false,
+            page: page_idx,
+        });
+        x += w;
+        row_h = row_h.max(h);
     }
     Ok(pages)
 }
@@ -1327,6 +1428,52 @@ mod tests {
                 assert!(!frames[i].intersects(&frames[j]));
             }
         }
+    }
+
+    #[test]
+    fn manual_algorithm_places_where_told() {
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, 128, 1, 2, false);
+        opts.algorithm = PackingAlgorithm::Manual;
+        opts.pack_mode = PackMode::Fast;
+        opts.manual_positions.insert("a".into(), (10, 5));
+        opts.manual_positions.insert("b".into(), (30, 40));
+        // "c" sin posición: cae en el flujo Basic.
+        let out = pack(&[item("a", 8, 8), item("b", 6, 6), item("c", 5, 5)], &opts).unwrap();
+        assert_eq!(out.pages.len(), 1);
+        let p = |id: &str| {
+            out.pages[0]
+                .placements
+                .iter()
+                .find(|pl| pl.id == id)
+                .unwrap()
+                .frame
+        };
+        // manual (10,5) → frame (border 2 + 10, border 2 + 5) con padding ya
+        // influido: frame = pos + border, tamaño + 2*padding.
+        let fa = p("a");
+        assert_eq!((fa.x, fa.y), (12, 7));
+        assert_eq!((fa.width, fa.height), (10, 10));
+        let fb = p("b");
+        assert_eq!((fb.x, fb.y), (32, 42));
+        assert_eq!((fb.width, fb.height), (8, 8));
+        // "c" fluye: dentro del interior y sin solaparse con "a" ni "b".
+        let fc = p("c");
+        assert!(fc.x >= 2 && fc.y >= 2);
+        assert!(!fa.intersects(&fc) && !fb.intersects(&fc));
+    }
+
+    #[test]
+    fn manual_positions_are_clamped_inside_the_interior() {
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, 32, 0, 4, false);
+        opts.algorithm = PackingAlgorithm::Manual;
+        opts.pack_mode = PackMode::Fast;
+        opts.manual_positions.insert("x".into(), (-10, 999));
+        let out = pack(&[item("x", 8, 8)], &opts).unwrap();
+        let f = out.pages[0].placements[0].frame;
+        // x=-10 satura a 0; y=999 satura al máximo (24-8=16). +borde 4.
+        assert_eq!((f.x, f.y), (4, 20));
+        assert_eq!((f.x + f.width, f.y + f.height), (12, 28));
+        assert!(f.x + f.width <= 32 - 4 && f.y + f.height <= 32 - 4);
     }
 
     #[test]
