@@ -5,9 +5,6 @@
 # Plantilla local de mensajes de commit (configurada vía commit.template)
 .gitmessage
 
-# Freebuff desktop app internal state (SQLite db), not part of the project
-/.freebuff
-
 # Capturas de trabajo de la raíz del repo (zq*.png, zz_*.png)
 /zq*.png
 /zz_*.png
