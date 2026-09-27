@@ -72,6 +72,11 @@ cargo test --workspace
 
 ## Uso rápido (GUI)
 
+El espacio de trabajo es **dinámico**: añadir o quitar sprites y cambiar
+ajustes reempaqueta el atlas al instante (vista en memoria, sin escribir
+ficheros), con autovigilancia del directorio de sprites — editar un PNG en
+disco actualiza la vista. «Publicar» exporta las imágenes y los metadatos.
+
 La ventana organiza el flujo de trabajo en cuatro zonas:
 
 | Zona | Contenido |
@@ -142,6 +147,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 | MaxRects BSSF / BAF / BLSF                     | ✅     | Seleccionable |
 | Guillotine                                     | ✅     | Seleccionable |
 | Grid / Basic                                   | ✅     | Rejilla (celda = mayor sprite inflado) y filas de izquierda a derecha con `basic_sort_by`/`basic_order` |
+| Manual (GUI)                                   | ✅     | Arrastra los sprites en la vista previa para fijar su posición (`manual_positions`); los sueltos caen en filas Basic |
 | Heurísticas Best / BottomLeft / ContactPoint   | ✅     | `Best` prueba las 5 heurísticas y se queda con el empaquetado más ajustado |
 | Pack mode Fast / Good / Best                   | ✅     | Búsqueda binaria del atlas mínimo (presupuesto de 400 ms / 3 s); Fast solo recorta |
 | Size constraints (AnySize/POT/Múltiplo4/Palabra) | ✅  | El recorte y la búsqueda respetan la restricción sin superar `max_texture_size`; WordAligned usa el ancho de palabra de `color_depth` |
@@ -318,7 +324,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 169 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 173 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones

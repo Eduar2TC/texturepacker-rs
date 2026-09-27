@@ -118,12 +118,28 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     // Banda 9-patch que se está arrastrando (None = nada).
     let mut drag: Option<(Edge, i32)> = None;
     let mut border_released = false;
+    // Arrastre manual (algoritmo Manual): (id, x, y) destino del sprite.
+    let mut manual_moved: Option<(String, i32, i32)> = None;
+    let mut manual_stopped = false;
+    // Geometría compartida para mapear posiciones manuales ↔ atlas.
+    let (bp, pad) = (app.config.border_padding.max(0), app.config.padding.max(0));
+    let canvas_w = if app.config.fixed_width > 0 {
+        app.config.fixed_width
+    } else {
+        app.config.max_texture_size
+    };
+    let canvas_h = if app.config.fixed_height > 0 {
+        app.config.fixed_height
+    } else {
+        app.config.max_texture_size
+    };
+    let manual_mode = app.config.effective_algorithm() == tp_core::config::PackingAlgorithm::Manual;
 
     egui::ScrollArea::both()
         .id_salt("preview_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click());
+            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
             let painter = ui.painter();
             painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
             painter.image(
@@ -273,6 +289,45 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
 
+            // Algoritmo Manual: arrastrar el sprite seleccionado fija su
+            // posición en el atlas (config.manual_positions).
+            if manual_mode && drag.is_none() {
+                if let Some(id) = app.selected_sprite.clone() {
+                    if let Some(sprite) =
+                        sprites.iter().find(|s| s.id == id).filter(|s| !s.is_alias)
+                    {
+                        let f = sprite.visible_frame;
+                        let r = egui::Rect::from_min_max(
+                            to_screen(f.x, f.y),
+                            to_screen(f.x + f.width, f.y + f.height),
+                        );
+                        let dresp = ui
+                            .interact(
+                                r,
+                                egui::Id::new(("manual_drag", sprite.id.as_str())),
+                                egui::Sense::drag(),
+                            )
+                            .on_hover_cursor(egui::CursorIcon::Grab);
+                        if dresp.dragged() {
+                            if let Some(pos) = dresp.interact_pointer_pos() {
+                                let px = ((pos.x - rect.min.x) / zoom) as i32 - bp - pad;
+                                let py = ((pos.y - rect.min.y) / zoom) as i32 - bp - pad;
+                                let max_x = (canvas_w - 2 * bp - (f.width + 2 * pad)).max(0);
+                                let max_y = (canvas_h - 2 * bp - (f.height + 2 * pad)).max(0);
+                                manual_moved = Some((
+                                    sprite.id.clone(),
+                                    px.clamp(0, max_x),
+                                    py.clamp(0, max_y),
+                                ));
+                            }
+                        }
+                        if dresp.drag_stopped() {
+                            manual_stopped = true;
+                        }
+                    }
+                }
+            }
+
             // Un click que completa un arrastre de banda no selecciona sprites.
             if response.clicked() && drag.is_none() {
                 let pos = ui.input(|i| i.pointer.latest_pos());
@@ -299,6 +354,44 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         // Al soltar la banda, persistir borders.json (si hay directorio).
         if border_released {
             app.auto_save_borders();
+        }
+    }
+    if let Some((id, nx, ny)) = manual_moved {
+        let delta: (i32, i32) = match app.config.manual_positions.get(&id).copied() {
+            Some((ox, oy)) => (nx - ox, ny - oy),
+            None => app
+                .result
+                .as_ref()
+                .and_then(|o| o.result.sprites.iter().find(|s| s.id == id))
+                .map(|s| {
+                    (
+                        nx + bp + pad - s.visible_frame.x,
+                        ny + bp + pad - s.visible_frame.y,
+                    )
+                })
+                .unwrap_or((0, 0)),
+        };
+        let moved = delta != (0, 0);
+        app.config.manual_positions.insert(id.clone(), (nx, ny));
+        if moved {
+            // Feedback inmediato: desplazar el frame del resultado actual;
+            // la vista previa en memoria confirmará la posición final.
+            if let Some(out) = &mut app.result {
+                if let Some(s) = out.result.sprites.iter_mut().find(|s| s.id == id) {
+                    s.visible_frame.x += delta.0;
+                    s.visible_frame.y += delta.1;
+                    s.allocated_frame.x += delta.0;
+                    s.allocated_frame.y += delta.1;
+                }
+            }
+            app.change_seq += 1;
+            app.request_preview(false);
+        }
+        if manual_stopped {
+            app.log(
+                super::LogKind::Info,
+                "Posición manual fijada (se guarda con el proyecto).".into(),
+            );
         }
     }
     if let Some(id) = picked {
