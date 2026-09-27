@@ -1,6 +1,6 @@
 //! Center preview panel (sprite sheet) plus the bottom zoom bar.
 
-use super::App;
+use super::{App, PreviewState};
 use eframe::egui;
 
 const ZOOM_STEPS: [f32; 7] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
@@ -15,6 +15,31 @@ pub(super) fn preview_ui(app: &mut App, ui: &mut egui::Ui) {
 
 fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
+        // Indicador de frescura de la vista previa.
+        match app.preview_state() {
+            PreviewState::Publishing => {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new("Publicando…")
+                        .color(egui::Color32::from_rgb(120, 170, 255)),
+                );
+            }
+            PreviewState::Updating => {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new("Actualizando…")
+                        .color(egui::Color32::from_rgb(120, 170, 255)),
+                );
+            }
+            PreviewState::Stale => {
+                ui.label(
+                    egui::RichText::new("● Desactualizado")
+                        .color(egui::Color32::from_rgb(230, 180, 60)),
+                );
+            }
+            PreviewState::Ok => {}
+        }
+        ui.separator();
         let pages = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
         if pages > 1 {
             if ui.button("◀").clicked() && app.selected_page > 0 {

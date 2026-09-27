@@ -5,6 +5,7 @@ use eframe::egui;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tp_core::ingest::{is_image_file, normalize_path};
+use tp_core::types::SpriteAsset;
 use tp_core::ProjectConfig;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,6 +29,8 @@ enum TreeAction {
     Remove(PathBuf),
     /// Drop a smart folder from the project.
     RemoveSmart(PathBuf),
+    /// Assign every sprite under `path` to the group with that name.
+    AssignToGroup(PathBuf, String),
     CopyPath(PathBuf),
 }
 
@@ -77,6 +80,8 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     app.tree_filter_focused = filter_response.has_focus();
     ui.separator();
 
+    groups_ui(app, ui);
+
     // Delete removes the selected sprites (unless the filter is being edited).
     if panel_hovered && !filter_focused && !app.selected_paths.is_empty() {
         let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
@@ -98,11 +103,12 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
 
     let force = app.tree_force_open.take();
     let mut action: Option<TreeAction> = None;
+    let mut drop_target: Option<String> = None;
     egui::ScrollArea::vertical()
         .id_salt("sprites_tree")
         .show(ui, |ui| {
             for node in &tree {
-                render_node(app, ui, node, true, &mut action, force);
+                render_node(app, ui, node, true, &mut action, force, &mut drop_target);
             }
         });
 
@@ -115,12 +121,108 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             app.after_workspace_change();
         }
         Some(TreeAction::RemoveSmart(dir)) => app.remove_smart_folder(&dir),
+        Some(TreeAction::AssignToGroup(path, group)) => {
+            let ids: Vec<String> = collect_sprite_ids(app, &path);
+            let Some(index) = app
+                .config
+                .folder_groups
+                .iter()
+                .position(|g| g.name == group)
+            else {
+                return;
+            };
+            let mut moved = 0usize;
+            for id in ids {
+                for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
+                    let before = g.sprites.len();
+                    g.sprites.retain(|s| s != &id);
+                    moved += before - g.sprites.len();
+                    if i == index && before == g.sprites.len() {
+                        g.sprites.push(id.clone());
+                        moved += 1;
+                    }
+                }
+            }
+            if moved > 0 {
+                app.log(
+                    LogKind::Info,
+                    format!("{moved} sprite(s) movidos al grupo «{group}»."),
+                );
+                app.after_workspace_change();
+            }
+        }
         Some(TreeAction::CopyPath(path)) => {
             ui.ctx().copy_text(path.display().to_string());
             app.log(LogKind::Info, format!("Ruta copiada: {}", path.display()));
         }
         None => {}
     }
+
+    // Soltar un sprite arrastrado (payload SpriteAsset) sobre una carpeta
+    // reasigna sus sprites al grupo con el nombre de la carpeta. El payload
+    // solo se consume en el frame en que se suelta el botón.
+    let released = ui.input(|i| i.pointer.any_released());
+    if released && drop_target.is_some() {
+        if let Some(sprite) = egui::DragAndDrop::take_payload::<SpriteAsset>(ui.ctx()) {
+            let target = drop_target.take().unwrap();
+            if let Some(index) = app
+                .config
+                .folder_groups
+                .iter()
+                .position(|g| g.name == target)
+            {
+                let id = sprite.id.clone();
+                let mut moved = 0usize;
+                for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
+                    let before = g.sprites.len();
+                    g.sprites.retain(|s| s != &id);
+                    moved += before - g.sprites.len();
+                    if i == index && before == g.sprites.len() {
+                        g.sprites.push(id.clone());
+                        moved += 1;
+                    }
+                }
+                if moved > 0 {
+                    app.log(
+                        LogKind::Info,
+                        format!("«{}» movido al grupo «{target}».", sprite.id),
+                    );
+                    app.after_workspace_change();
+                }
+            }
+        }
+    }
+}
+
+/// Every image file under `path` (itself included), as ingested sprite ids.
+fn collect_sprite_ids(app: &App, path: &Path) -> Vec<String> {
+    let Some(out) = &app.result else {
+        return Vec::new();
+    };
+    let by_norm: std::collections::HashMap<PathBuf, &str> = out
+        .result
+        .sprites
+        .iter()
+        .map(|s| (normalize_path(Path::new(&s.source_path)), s.id.as_str()))
+        .collect();
+    let mut ids = Vec::new();
+    let mut stack = vec![path.to_path_buf()];
+    while let Some(p) = stack.pop() {
+        if p.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&p) {
+                for e in entries.flatten() {
+                    stack.push(e.path());
+                }
+            }
+        } else if is_image_file(&p) {
+            if let Some(id) = by_norm.get(&normalize_path(&p)) {
+                ids.push((*id).to_string());
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 fn render_node(
@@ -130,6 +232,7 @@ fn render_node(
     root: bool,
     action: &mut Option<TreeAction>,
     force: Option<bool>,
+    drop_target: &mut Option<String>,
 ) {
     if node.is_dir {
         let name = match node.origin {
@@ -160,12 +263,19 @@ fn render_node(
             .default_open(root || !app.tree_filter.is_empty())
             .show(ui, |ui| {
                 for child in &node.children {
-                    render_node(app, ui, child, false, action, force);
+                    render_node(app, ui, child, false, action, force, drop_target);
                 }
             });
         inner.header_response.context_menu(|ui| {
-            dir_menu(ui, node, action);
+            dir_menu(ui, node, action, &app.config.folder_groups);
         });
+        // Soltar un sprite arrastrado sobre una carpeta reasigna al grupo
+        // con el mismo nombre que la carpeta.
+        if egui::DragAndDrop::has_payload_of_type::<SpriteAsset>(ui.ctx())
+            && inner.header_response.contains_pointer()
+        {
+            *drop_target = Some(node.name.clone());
+        }
     } else {
         let name =
             match node.origin {
@@ -191,11 +301,52 @@ fn render_node(
                 ui.close();
             }
         });
-        response.on_hover_text(node.path.display().to_string());
+        response
+            .clone()
+            .on_hover_text(node.path.display().to_string());
+        // Arrastrar un sprite: carga un payload con su id (pack por grupos).
+        if app.groups_active() {
+            let drag = response.clone().interact(egui::Sense::drag());
+            if drag.dragged() {
+                let sprite = app
+                    .result
+                    .as_ref()
+                    .and_then(|out| {
+                        out.result
+                            .sprites
+                            .iter()
+                            .find(|s| Path::new(&s.source_path) == node.path.as_path())
+                    })
+                    .cloned();
+                if let Some(sprite) = sprite {
+                    egui::DragAndDrop::set_payload(ui.ctx(), sprite);
+                }
+            }
+        }
     }
 }
 
-fn dir_menu(ui: &mut egui::Ui, node: &TreeNode, action: &mut Option<TreeAction>) {
+fn dir_menu(
+    ui: &mut egui::Ui,
+    node: &TreeNode,
+    action: &mut Option<TreeAction>,
+    groups: &[tp_core::config::FolderGroup],
+) {
+    let has_groups = groups.iter().any(|g| !g.name.is_empty());
+    if has_groups {
+        ui.menu_button("Mover a grupo…", |ui| {
+            for g in groups {
+                if g.name.is_empty() {
+                    continue;
+                }
+                if ui.button(g.name.clone()).clicked() {
+                    *action = Some(TreeAction::AssignToGroup(node.path.clone(), g.name.clone()));
+                    ui.close();
+                }
+            }
+        });
+        ui.separator();
+    }
     if node.origin == Origin::Smart && ui.button("Quitar carpeta inteligente").clicked() {
         *action = Some(TreeAction::RemoveSmart(node.path.clone()));
         ui.close();
@@ -393,4 +544,124 @@ fn count_files(nodes: &[TreeNode]) -> usize {
             }
         })
         .sum()
+}
+
+/// Sección «Grupos de salida»: crear, renombrar, quitar y asignar sprites a
+/// grupos. Cada grupo con nombre empaqueta en `<salida>/<nombre>/`; los
+/// sprites sin asignar van a la hoja principal (raíz de la salida).
+fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
+    egui::CollapsingHeader::new("Grupos de salida")
+        .id_salt("output_groups")
+        .default_open(false)
+        .show(ui, |ui| {
+            let mut remove: Option<usize> = None;
+            let mut assign: Option<usize> = None;
+            let mut clear: Option<usize> = None;
+            let mut new_name = String::new();
+
+            for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    if g.name.is_empty() {
+                        ui.strong("(hoja principal)");
+                    } else {
+                        if ui
+                            .small_button("✕")
+                            .on_hover_text(
+                                "Quitar este grupo (sus sprites vuelven a la hoja principal)",
+                            )
+                            .clicked()
+                        {
+                            remove = Some(i);
+                        }
+                        ui.add(
+                            egui::TextEdit::singleline(&mut g.name)
+                                .desired_width(120.0)
+                                .hint_text("subcarpeta de salida"),
+                        );
+                    }
+                    ui.label(format!("({})", g.sprites.len()))
+                        .on_hover_text("Sprites asignados a este grupo");
+                    if !g.name.is_empty()
+                        && !app.selected_paths.is_empty()
+                        && ui
+                            .small_button("← Selección")
+                            .on_hover_text("Mover los sprites seleccionados a este grupo")
+                            .clicked()
+                    {
+                        assign = Some(i);
+                    }
+                    if !g.name.is_empty()
+                        && !g.sprites.is_empty()
+                        && ui
+                            .small_button("Vaciar")
+                            .on_hover_text("Devolver todos sus sprites a la hoja principal")
+                            .clicked()
+                    {
+                        clear = Some(i);
+                    }
+                });
+            }
+            if let Some(i) = remove {
+                let name = app.config.folder_groups[i].name.clone();
+                app.config.folder_groups.remove(i);
+                app.log(LogKind::Info, format!("Grupo «{name}» eliminado."));
+                app.after_workspace_change();
+            }
+            if let Some(i) = clear {
+                app.config.folder_groups[i].sprites.clear();
+                app.after_workspace_change();
+            }
+            if let Some(i) = assign {
+                let moved = app.assign_selected_to_group(i);
+                if moved > 0 {
+                    let name = app.config.folder_groups[i].name.clone();
+                    app.log(
+                        LogKind::Info,
+                        format!("{moved} sprite(s) movidos al grupo «{name}»."),
+                    );
+                }
+            }
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut new_name)
+                        .desired_width(120.0)
+                        .hint_text("nuevo grupo…"),
+                );
+                if ui.button("+ Crear").clicked() && !new_name.trim().is_empty() {
+                    let name = new_name.trim().to_string();
+                    if app.config.folder_groups.iter().any(|g| g.name == name) {
+                        app.log(LogKind::Warning, format!("Ya existe un grupo «{name}»."));
+                    } else {
+                        app.config.folder_groups.push(tp_core::config::FolderGroup {
+                            name: name.clone(),
+                            sprites: Vec::new(),
+                        });
+                        app.log(LogKind::Info, format!("Grupo «{name}» creado."));
+                    }
+                }
+            });
+            if !app.selected_paths.is_empty()
+                && ui.button("Quitar selección de los grupos").clicked()
+            {
+                let ids: Vec<String> = app
+                    .selected_paths
+                    .iter()
+                    .filter_map(|p| app.sprite_id_for_path(p))
+                    .collect();
+                if !ids.is_empty() {
+                    for id in &ids {
+                        for g in &mut app.config.folder_groups {
+                            g.sprites.retain(|s| s != id);
+                        }
+                    }
+                    app.after_workspace_change();
+                }
+            }
+            ui.weak(
+                "Cada grupo empaqueta en su subcarpeta; arrastra un sprite del \
+                 árbol sobre una carpeta cuyo nombre coincida con un grupo.",
+            );
+        });
 }

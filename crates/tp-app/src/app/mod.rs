@@ -26,6 +26,19 @@ use tp_core::config::ProjectConfig;
 use tp_core::pipeline::PipelineOutput;
 use tp_core::types::Point2D;
 
+/// Estado de frescura de la vista previa (indicador de la barra de zoom).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PreviewState {
+    /// Publicando (export a disco en marcha).
+    Publishing,
+    /// Recalculando la vista previa (en memoria).
+    Updating,
+    /// La vista no refleja el workspace actual.
+    Stale,
+    /// Al día.
+    Ok,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum BottomTab {
     Log,
@@ -112,6 +125,9 @@ pub struct App {
     egui_ctx: egui::Context,
     /// Throttle for the (mtime-based) workspace snapshot poll.
     last_snapshot_poll: std::time::Instant,
+    /// Cached result of the last snapshot freshness check (for the zoom-bar
+    /// indicator between polls).
+    preview_stale: bool,
     /// One automatic preview retry per successful cycle (mid-write reads).
     preview_retry_used: bool,
 }
@@ -155,6 +171,7 @@ impl App {
             watcher: None,
             egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),
+            preview_stale: false,
             preview_retry_used: false,
         };
         app.log(
@@ -243,8 +260,13 @@ impl App {
         let (tx, rx) = std::sync::mpsc::channel();
         let cfg = self.config.clone();
         let started = std::time::Instant::now();
+        let grouped = self.groups_active();
         std::thread::spawn(move || {
-            let result = tp_core::pipeline::run_preview(&cfg);
+            let result = if grouped {
+                tp_core::pipeline::run_grouped_preview(&cfg)
+            } else {
+                tp_core::pipeline::run_preview(&cfg)
+            };
             let _ = tx.send(RunMessage {
                 elapsed_ms: started.elapsed().as_millis(),
                 result,
@@ -252,6 +274,65 @@ impl App {
         });
         self.pending = Some(rx);
         self.packed_snapshot = Some(snapshot);
+    }
+
+    /// ¿Hay grupos con nombre y algún sprite asignado? En ese caso el pack
+    /// se divide por carpetas de salida y la vista fusiona todas las hojas.
+    pub fn groups_active(&self) -> bool {
+        self.config
+            .folder_groups
+            .iter()
+            .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
+    }
+
+    /// Reasigna los sprites seleccionados (por ruta) a un grupo del proyecto.
+    /// Asignar a un sprite ya asignado lo mueve (un sprite solo vive en un
+    /// grupo); devuelve cuántos sprites cambiaron de grupo.
+    pub fn assign_selected_to_group(&mut self, group_index: usize) -> usize {
+        let mut moved = 0usize;
+        for path in self.selected_paths.clone() {
+            let Some(id) = self.sprite_id_for_path(&path) else {
+                continue;
+            };
+            for (i, g) in self.config.folder_groups.iter_mut().enumerate() {
+                let before = g.sprites.len();
+                g.sprites.retain(|s| s != &id);
+                moved += before - g.sprites.len();
+                if i == group_index && before == g.sprites.len() {
+                    g.sprites.push(id.clone());
+                    moved += 1;
+                }
+            }
+        }
+        if moved > 0 {
+            self.after_workspace_change();
+        }
+        moved
+    }
+
+    /// Estado de la vista previa para el indicador de la barra de zoom:
+    /// reempaquetando, actualizando, desactualizada o al día.
+    pub fn preview_state(&self) -> PreviewState {
+        if self.running.is_some() {
+            PreviewState::Publishing
+        } else if self.pending.is_some() {
+            PreviewState::Updating
+        } else if self.preview_stale {
+            PreviewState::Stale
+        } else {
+            PreviewState::Ok
+        }
+    }
+
+    /// Map a source path to its ingested sprite id via the current result.
+    fn sprite_id_for_path(&self, path: &Path) -> Option<String> {
+        self.result
+            .as_ref()?
+            .result
+            .sprites
+            .iter()
+            .find(|s| Path::new(&s.source_path) == path || s.source_path == path.to_string_lossy())
+            .map(|s| s.id.clone())
     }
 
     /// Poll the pending preview job and apply its result.
@@ -499,7 +580,8 @@ impl App {
         // El snapshot (mtimes incluidos) se recalcula como mucho cada 250 ms.
         if self.last_snapshot_poll.elapsed() >= std::time::Duration::from_millis(250) {
             self.last_snapshot_poll = std::time::Instant::now();
-            if self.snapshot_changed() {
+            self.preview_stale = self.snapshot_changed();
+            if self.preview_stale {
                 self.request_preview(true);
             }
         }
@@ -542,8 +624,13 @@ impl App {
         let snapshot = self.workspace_snapshot();
         let (tx, rx) = std::sync::mpsc::channel();
         let cfg = self.config.clone();
+        let grouped = self.groups_active();
         std::thread::spawn(move || {
-            let result = tp_core::pipeline::run(&cfg);
+            let result = if grouped {
+                tp_core::pipeline::run_grouped(&cfg)
+            } else {
+                tp_core::pipeline::run(&cfg)
+            };
             let _ = tx.send(RunMessage {
                 elapsed_ms: 0,
                 result,
