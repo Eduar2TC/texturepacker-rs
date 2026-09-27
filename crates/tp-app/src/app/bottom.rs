@@ -5,10 +5,24 @@ use eframe::egui;
 
 pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
+        // Plegar/desplegar el panel (chevron como en cualquier herramienta).
+        let chevron = if app.bottom_collapsed { "▸" } else { "▾" };
+        if ui
+            .small_button(chevron)
+            .on_hover_text(if app.bottom_collapsed {
+                "Mostrar el panel"
+            } else {
+                "Plegar el panel y dejar la vista del atlas en pantalla completa"
+            })
+            .clicked()
+        {
+            app.bottom_collapsed = !app.bottom_collapsed;
+        }
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Log, "Log");
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Output, "Salida");
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Sprites, "Sprites");
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Mesh, "Malla");
+        // Estado resumido siempre visible, incluso con el panel plegado.
         if let Some(out) = &app.result {
             ui.separator();
             ui.label(
@@ -21,9 +35,29 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
                 .weak(),
             );
         }
+        // Punto de error visible aunque el Log esté plegado o en otra pestaña.
+        let has_errors = app.logs.iter().any(|e| matches!(e.kind, LogKind::Error));
+        if has_errors {
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .small_button(
+                        egui::RichText::new("● Error")
+                            .color(egui::Color32::from_rgb(255, 110, 110)),
+                    )
+                    .on_hover_text("Ir al Log")
+                    .clicked()
+                {
+                    app.bottom_tab = BottomTab::Log;
+                    app.bottom_collapsed = false;
+                }
+            });
+        }
     });
     ui.separator();
 
+    if app.bottom_collapsed {
+        return; // solo la tira de pestañas + estado
+    }
     match app.bottom_tab {
         BottomTab::Log => log_view(app, ui),
         BottomTab::Output => output_view(app, ui),

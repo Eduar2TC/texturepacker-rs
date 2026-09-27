@@ -128,6 +128,10 @@ pub struct App {
     /// Cached result of the last snapshot freshness check (for the zoom-bar
     /// indicator between polls).
     preview_stale: bool,
+    /// Panel inferior plegado (gana espacio para la vista del atlas).
+    bottom_collapsed: bool,
+    /// Último título de ventana aplicado (evita comandos repetidos).
+    last_title: String,
     /// One automatic preview retry per successful cycle (mid-write reads).
     preview_retry_used: bool,
 }
@@ -172,6 +176,8 @@ impl App {
             egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),
             preview_stale: false,
+            bottom_collapsed: false,
+            last_title: String::new(),
             preview_retry_used: false,
         };
         app.log(
@@ -197,6 +203,10 @@ impl App {
                 LogKind::Error => "E",
             };
             eprintln!("[{tag}] {text}");
+        }
+        // Un error salta al Log: que no pase desapercibido en otra pestaña.
+        if matches!(kind, LogKind::Error) {
+            self.bottom_tab = BottomTab::Log;
         }
         self.logs.push(LogEntry { kind, text });
         if self.logs.len() > 2000 {
@@ -1202,13 +1212,20 @@ impl eframe::App for App {
 
         self.poll_pending(ctx);
         self.poll_changes(ctx);
+        handle_shortcuts(self, ctx);
 
         toolbar::toolbar(self, ctx);
 
+        // Panel inferior plegable: colapsado deja el atlas como protagonista.
         egui::TopBottomPanel::bottom("bottom_panel")
-            .resizable(true)
+            .resizable(!self.bottom_collapsed)
             .default_height(180.0)
             .min_height(64.0)
+            .height_range(if self.bottom_collapsed {
+                28.0..=28.0
+            } else {
+                28.0..=f32::INFINITY
+            })
             .show(ctx, |ui| bottom::bottom_ui(self, ui));
 
         egui::SidePanel::left("sprites_panel")
@@ -1228,7 +1245,39 @@ impl eframe::App for App {
         sprite_settings::sprite_settings_window(self, ctx);
         animation::animation_window(self, ctx);
         split_sheet::split_window(self, ctx);
+
+        // La ruta del proyecto vive en el título de la ventana, no en la
+        // barra de herramientas (evita truncamientos y ruido visual).
+        let title = match &self.project_path {
+            Some(p) => format!("{} — TexturePacker-RS", p.display()),
+            None => "TexturePacker-RS".to_string(),
+        };
+        if self.last_title != title {
+            self.last_title = title.clone();
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
+        }
     }
+}
+
+/// Atajos de teclado globales (estilo estándar de herramientas de escritorio):
+/// Ctrl+O abrir, Ctrl+S guardar, Ctrl+P publicar, Supr quitar selección.
+fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
+    let consume = |ctx: &egui::Context, key: egui::Key| {
+        ctx.input(|i| {
+            let mods = i.modifiers;
+            i.key_pressed(key) && (mods.ctrl || mods.command)
+        })
+    };
+    if consume(ctx, egui::Key::O) {
+        app.load_project();
+    }
+    if consume(ctx, egui::Key::S) {
+        app.save_project();
+    }
+    if consume(ctx, egui::Key::P) && app.running.is_none() {
+        app.start_pack();
+    }
+    // Supr lo gestiona el panel de sprites (con guardia de foco y hover).
 }
 
 fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) {

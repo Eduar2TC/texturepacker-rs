@@ -1,4 +1,7 @@
 //! Top tool bar: project actions, sprite set actions and publishing.
+//!
+//! Convenciones UX: iconos con texto (descubribles sin hover), acción
+//! principal destacada a la derecha, atajos mostrados en los tooltips.
 
 use super::{App, LogKind};
 use eframe::egui;
@@ -6,38 +9,41 @@ use eframe::egui;
 pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            ui.strong("TexturePacker-RS");
-            ui.separator();
-
+            // --- Proyecto ---
             if ui
-                .button("Abrir")
-                .on_hover_text("Abrir proyecto (.tpproj)")
+                .button("📂 Abrir")
+                .on_hover_text("Abrir proyecto (.tpproj) — Ctrl+O")
                 .clicked()
             {
                 app.load_project();
             }
             if ui
-                .button("Guardar")
-                .on_hover_text("Guardar proyecto (.tpproj)")
+                .button("💾 Guardar")
+                .on_hover_text("Guardar proyecto (.tpproj) — Ctrl+S")
                 .clicked()
             {
                 app.save_project();
             }
             if ui
                 .button("↺")
-                .on_hover_text("Restablecer la configuración")
+                .on_hover_text("Restablecer la configuración por defecto")
                 .clicked()
             {
                 app.reset_defaults();
             }
             ui.separator();
 
-            if ui.button("➕").on_hover_text("Añadir sprites").clicked() {
+            // --- Sprites ---
+            if ui
+                .button("➕ Añadir")
+                .on_hover_text("Añadir sprites al workspace")
+                .clicked()
+            {
                 add_sprites_dialog(app);
             }
             let can_remove = !app.selected_paths.is_empty();
             if ui
-                .add_enabled(can_remove, egui::Button::new("➖"))
+                .add_enabled(can_remove, egui::Button::new("➖ Quitar"))
                 .on_hover_text("Quitar los sprites seleccionados")
                 .on_disabled_hover_text("Selecciona sprites en el panel izquierdo")
                 .clicked()
@@ -45,41 +51,27 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 app.remove_selected();
             }
             if ui
-                .button("Carpeta")
-                .on_hover_text("Añadir carpeta inteligente")
+                .button("📁 Carpeta")
+                .on_hover_text("Añadir carpeta inteligente (se sincroniza con el disco)")
                 .clicked()
             {
                 add_smart_folder_dialog(app);
             }
             ui.separator();
 
-            let sprite_settings = egui::Button::new("⚙").selected(app.show_sprite_settings);
+            // --- Herramientas ---
+            let sprite_settings = egui::Button::new("⚙ Sprite").selected(app.show_sprite_settings);
             if ui
                 .add(sprite_settings)
-                .on_hover_text("Ajustes de sprite (pivots)")
+                .on_hover_text("Ajustes de sprite (pivots y bordes 9-patch)")
                 .clicked()
             {
                 app.show_sprite_settings = !app.show_sprite_settings;
             }
-            ui.separator();
-
-            if ui
-                .add_enabled(app.running.is_none(), egui::Button::new("Publicar"))
-                .on_hover_text("Empaquetar y exportar el sprite sheet")
-                .clicked()
-            {
-                app.start_pack();
-            }
-            if app.running.is_some() {
-                ui.spinner();
-                ui.label("Publicando…");
-            }
-
-            ui.separator();
-            let split = egui::Button::new("✂").selected(app.show_split);
+            let split = egui::Button::new("✂ Dividir").selected(app.show_split);
             if ui
                 .add(split)
-                .on_hover_text("Dividir hoja (sprite sheet) en sprites individuales")
+                .on_hover_text("Dividir una hoja (sprite sheet) en sprites individuales")
                 .clicked()
             {
                 app.show_split = !app.show_split;
@@ -90,23 +82,41 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 .map(|o| !o.result.sprites.is_empty())
                 .unwrap_or(false);
             if ui
-                .add_enabled(has_sprites, egui::Button::new("▶"))
-                .on_hover_text("Vista previa de animación")
+                .add_enabled(has_sprites, egui::Button::new("▶ Animación"))
+                .on_hover_text("Vista previa de animación de los sprites seleccionados")
                 .on_disabled_hover_text("Publica el sprite sheet para ver la animación")
                 .clicked()
             {
                 app.show_animation = true;
             }
 
-            if let Some(path) = &app.project_path {
-                ui.separator();
-                ui.label(egui::RichText::new(path.display().to_string()).weak());
-            }
+            // --- Acción principal, destacada a la derecha ---
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let publishing = app.running.is_some();
+                let publish = egui::Button::new(
+                    egui::RichText::new(if publishing {
+                        "… Publicando"
+                    } else {
+                        "⏏ Publicar"
+                    })
+                    .strong(),
+                );
+                if ui
+                    .add_enabled(!publishing, publish)
+                    .on_hover_text("Empaquetar y exportar el sprite sheet — Ctrl+P")
+                    .clicked()
+                {
+                    app.start_pack();
+                }
+                if publishing {
+                    ui.spinner();
+                }
+            });
         });
     });
 }
 
-fn add_sprites_dialog(app: &mut App) {
+pub(super) fn add_sprites_dialog(app: &mut App) {
     let Some(files) = rfd::FileDialog::new()
         .add_filter(
             "Imágenes",
@@ -132,16 +142,16 @@ fn add_sprites_dialog(app: &mut App) {
     }
 }
 
-fn add_smart_folder_dialog(app: &mut App) {
+pub(super) fn add_smart_folder_dialog(app: &mut App) {
     let Some(dir) = rfd::FileDialog::new().pick_folder() else {
         return;
     };
-    if app.add_input(dir.clone()) {
-        app.log(
-            LogKind::Info,
-            format!("Carpeta inteligente añadida: {}", dir.display()),
-        );
+    if app.add_input(dir) {
+        app.log(LogKind::Info, "Carpeta inteligente añadida.".into());
     } else {
-        app.log(LogKind::Warning, "La carpeta ya estaba añadida.".into());
+        app.log(
+            LogKind::Warning,
+            "La carpeta ya está en el proyecto.".into(),
+        );
     }
 }

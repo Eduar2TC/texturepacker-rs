@@ -18,7 +18,6 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.separator();
-
     egui::ScrollArea::vertical()
         .id_salt("settings_scroll")
         .show(ui, |ui| {
@@ -26,14 +25,6 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
             layout_section(app, ui);
             processing_section(app, ui);
             warnings_section(app, ui);
-
-            ui.add_space(8.0);
-            if ui
-                .add_enabled(app.running.is_none(), egui::Button::new("Publicar ahora"))
-                .clicked()
-            {
-                app.start_pack();
-            }
         });
 }
 

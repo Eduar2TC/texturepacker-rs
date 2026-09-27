@@ -81,55 +81,64 @@ fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.checkbox(&mut app.show_borders, "Bordes 9-patch")
             .on_hover_text("Barras verdes de los bordes 9-patch de cada sprite");
 
-        // Controles del algoritmo Manual: imán de rejilla y limpiar todo.
+        // Controles del algoritmo Manual, en un menú para no saturar la barra.
         if app.config.effective_algorithm() == tp_core::config::PackingAlgorithm::Manual {
             ui.separator();
-            let mut grid_changed = false;
-            let mut grid_on = app.config.manual_grid.is_some();
-            if ui
-                .checkbox(&mut grid_on, "Rejilla")
-                .on_hover_text("Imanta el arrastre a una rejilla fija; con «Rejilla en filas» también ordena los sprites sueltos")
-                .changed()
-            {
-                app.config.manual_grid = if grid_on {
-                    Some(tp_core::config::ManualGrid::new(16, true))
-                } else {
-                    None
-                };
-                grid_changed = true;
-            }
-            if let Some(g) = &mut app.config.manual_grid {
-                grid_changed |= ui
-                    .add(
-                        egui::Slider::new(&mut g.step, 2..=256)
-                            .logarithmic(true)
-                            .text("Paso"),
-                    )
-                    .on_hover_text("Separación de la rejilla en píxeles del atlas")
-                    .changed();
-                grid_changed |= ui
-                    .checkbox(&mut g.snap_flow, "Rejilla en filas")
-                    .on_hover_text("Los sprites sin posición fija también se alinean a la rejilla")
-                    .changed();
-            }
-            if grid_changed {
-                app.after_workspace_change();
-            }
-            if ui
-                .button("Limpiar posiciones")
-                .on_hover_text("Borra todas las posiciones manuales: los sprites vuelven al flujo automático")
-                .clicked()
-            {
-                let cleared = app.config.manual_positions.len();
-                app.config.manual_positions.clear();
-                if cleared > 0 {
-                    app.log(
-                        super::LogKind::Info,
-                        format!("{cleared} posición(es) manual(es) eliminada(s)."),
-                    );
+            let grid_label = if let Some(g) = &app.config.manual_grid {
+                format!("Rejilla: {} px", g.step)
+            } else {
+                "Rejilla: no".to_string()
+            };
+            ui.menu_button(grid_label, |ui| {
+                let mut grid_changed = false;
+                let mut grid_on = app.config.manual_grid.is_some();
+                if ui
+                    .checkbox(&mut grid_on, "Imán de rejilla")
+                    .on_hover_text("Imanta el arrastre a una rejilla fija; con «Rejilla en filas» también ordena los sprites sueltos")
+                    .changed()
+                {
+                    app.config.manual_grid = if grid_on {
+                        Some(tp_core::config::ManualGrid::new(16, true))
+                    } else {
+                        None
+                    };
+                    grid_changed = true;
+                }
+                if let Some(g) = &mut app.config.manual_grid {
+                    grid_changed |= ui
+                        .add(
+                            egui::Slider::new(&mut g.step, 2..=256)
+                                .logarithmic(true)
+                                .text("Paso"),
+                        )
+                        .on_hover_text("Separación de la rejilla en píxeles del atlas")
+                        .changed();
+                    grid_changed |= ui
+                        .checkbox(&mut g.snap_flow, "Rejilla en filas")
+                        .on_hover_text("Los sprites sin posición fija también se alinean a la rejilla")
+                        .changed();
+                }
+                if grid_changed {
                     app.after_workspace_change();
                 }
-            }
+                ui.separator();
+                if ui
+                    .button("Limpiar posiciones manuales")
+                    .on_hover_text("Borra todas las posiciones manuales: los sprites vuelven al flujo automático")
+                    .clicked()
+                {
+                    let cleared = app.config.manual_positions.len();
+                    app.config.manual_positions.clear();
+                    if cleared > 0 {
+                        app.log(
+                            super::LogKind::Info,
+                            format!("{cleared} posición(es) manual(es) eliminada(s)."),
+                        );
+                        app.after_workspace_change();
+                    }
+                    ui.close();
+                }
+            });
         }
 
         if let Some(name) = &app.selected_sprite {
@@ -163,11 +172,22 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     app.preview_size = ui.available_size();
 
     let Some(out) = &app.result else {
+        // Primera experiencia: el vacío es accionable, no solo texto.
         ui.centered_and_justified(|ui| {
-            ui.label(
-                egui::RichText::new("Aún no hay sprite sheet.\nAñade sprites y pulsa «Publicar».")
-                    .weak(),
-            );
+            ui.vertical_centered(|ui| {
+                ui.add_space(40.0);
+                ui.heading("Aún no hay sprite sheet");
+                ui.label("Añade sprites y la vista previa se calculará al momento.");
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("➕ Añadir sprites…").clicked() {
+                        super::toolbar::add_sprites_dialog(app);
+                    }
+                    if ui.button("📁 Añadir carpeta…").clicked() {
+                        super::toolbar::add_smart_folder_dialog(app);
+                    }
+                });
+            });
         });
         return;
     };
