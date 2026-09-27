@@ -187,6 +187,17 @@ impl App {
     }
 
     fn log(&mut self, kind: LogKind, text: String) {
+        // Espejo opcional del Log a stderr (TP_LOG_STDERR=1): permite seguir
+        // la sesión desde un terminal o en CI sin depender de la GUI.
+        static MIRROR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *MIRROR.get_or_init(|| std::env::var_os("TP_LOG_STDERR").is_some()) {
+            let tag = match kind {
+                LogKind::Info => "I",
+                LogKind::Warning => "W",
+                LogKind::Error => "E",
+            };
+            eprintln!("[{tag}] {text}");
+        }
         self.logs.push(LogEntry { kind, text });
         if self.logs.len() > 2000 {
             self.logs.drain(0..self.logs.len() - 2000);
