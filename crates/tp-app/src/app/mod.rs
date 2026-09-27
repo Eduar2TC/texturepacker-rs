@@ -296,6 +296,27 @@ impl App {
             .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
     }
 
+    /// Mueve unos sprites (por id) a la hoja indicada: los quita de todas
+    /// las hojas y los asigna a la de destino. Devuelve cuántos cambiaron.
+    pub fn move_sprites_to_group(&mut self, ids: &[String], group_index: usize) -> usize {
+        let mut moved = 0usize;
+        for id in ids {
+            for (i, g) in self.config.folder_groups.iter_mut().enumerate() {
+                let before = g.sprites.len();
+                g.sprites.retain(|s| s != id);
+                moved += before - g.sprites.len();
+                if i == group_index && before == g.sprites.len() {
+                    g.sprites.push(id.clone());
+                    moved += 1;
+                }
+            }
+        }
+        if moved > 0 {
+            self.after_workspace_change();
+        }
+        moved
+    }
+
     /// Reasigna los sprites seleccionados (por ruta) a un grupo del proyecto.
     /// Asignar a un sprite ya asignado lo mueve (un sprite solo vive en un
     /// grupo); devuelve cuántos sprites cambiaron de grupo.

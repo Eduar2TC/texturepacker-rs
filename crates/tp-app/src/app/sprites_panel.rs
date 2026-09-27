@@ -31,6 +31,8 @@ enum TreeAction {
     RemoveSmart(PathBuf),
     /// Assign every sprite under `path` to the group with that name.
     AssignToGroup(PathBuf, String),
+    /// Assign concrete sprite ids to the sheet at that index (drag & drop).
+    AssignIds(Vec<String>, usize),
     CopyPath(PathBuf),
 }
 
@@ -107,6 +109,14 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("sprites_tree")
         .show(ui, |ui| {
+            // Modelo TexturePacker: hojas (sheets) como nodos del panel, con
+            // sus sprites anidados; el arrastre entre hojas reasigna.
+            if !app.groups_active() && app.config.folder_groups.len() > 1 {
+                for (gi, g) in app.config.folder_groups.iter().enumerate() {
+                    render_sheet(app, ui, gi, g, force, &mut action);
+                }
+                ui.separator();
+            }
             for node in &tree {
                 render_node(app, ui, node, true, &mut action, force, &mut drop_target);
             }
@@ -121,6 +131,26 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             app.after_workspace_change();
         }
         Some(TreeAction::RemoveSmart(dir)) => app.remove_smart_folder(&dir),
+        Some(TreeAction::AssignIds(ids, sheet_index)) => {
+            let name = app
+                .config
+                .folder_groups
+                .get(sheet_index)
+                .map(|g| g.name.clone())
+                .unwrap_or_default();
+            let moved = app.move_sprites_to_group(&ids, sheet_index);
+            if moved > 0 {
+                let shown = if name.is_empty() {
+                    "hoja principal".to_string()
+                } else {
+                    name
+                };
+                app.log(
+                    LogKind::Info,
+                    format!("{moved} sprite(s) movidos a «{shown}»."),
+                );
+            }
+        }
         Some(TreeAction::AssignToGroup(path, group)) => {
             let ids: Vec<String> = collect_sprite_ids(app, &path);
             let Some(index) = app
@@ -223,6 +253,119 @@ fn collect_sprite_ids(app: &App, path: &Path) -> Vec<String> {
     ids.sort();
     ids.dedup();
     ids
+}
+
+/// Nodo hoja (sheet) al estilo TexturePacker: contiene sus sprites como
+/// hijos, acepta sprites arrastrados desde el árbol o de otras hojas y se
+/// puede renombrar/quitar por menú contextual.
+fn render_sheet(
+    app: &App,
+    ui: &mut egui::Ui,
+    index: usize,
+    group: &tp_core::config::FolderGroup,
+    force: Option<bool>,
+    action: &mut Option<TreeAction>,
+) {
+    let id = egui::Id::new(("tree_sheet", group.name.clone()));
+    let title = if group.name.is_empty() {
+        "(hoja principal)".to_string()
+    } else {
+        group.name.clone()
+    };
+    let mut open = group.name.is_empty();
+    let header = egui::CollapsingHeader::new(
+        egui::RichText::new(format!("🗂 {title} ({})", group.sprites.len())).strong(),
+    )
+    .id_salt(id)
+    .default_open(group.name.is_empty());
+    if let Some(f) = force {
+        open = f;
+    }
+    let header = header.open(Some(open));
+
+    let body = header.show(ui, |ui| {
+        // Children: sprites de la hoja (por id, resueltos a su ruta).
+        let paths: Vec<PathBuf> = group
+            .sprites
+            .iter()
+            .filter_map(|sid| {
+                app.result
+                    .as_ref()?
+                    .result
+                    .sprites
+                    .iter()
+                    .find(|s| &s.id == sid)
+                    .map(|s| PathBuf::from(&s.source_path))
+            })
+            .collect();
+        for p in &paths {
+            let name = name_of(p);
+            let selected = app.selected_paths.contains(p);
+            let resp = ui.selectable_label(selected, name);
+            if resp.clicked() {
+                let toggle =
+                    ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift);
+                *action = Some(TreeAction::Select(p.clone(), toggle));
+            }
+            resp.context_menu(|ui| {
+                if ui.button("Quitar sprite").clicked() {
+                    *action = Some(TreeAction::Remove(p.clone()));
+                    ui.close();
+                }
+            });
+            resp.clone().on_hover_text(p.display().to_string());
+            // Drag source: el propio sprite (en modo manual, siempre).
+            if !app.config.auto_folder_groups {
+                let drag = resp.clone().interact(egui::Sense::drag());
+                if drag.dragged() {
+                    if let Some(s) = app
+                        .result
+                        .as_ref()
+                        .and_then(|o| {
+                            o.result
+                                .sprites
+                                .iter()
+                                .find(|s| Path::new(&s.source_path) == p.as_path())
+                        })
+                        .cloned()
+                    {
+                        egui::DragAndDrop::set_payload(ui.ctx(), s);
+                    }
+                }
+            }
+        }
+        if paths.len() != group.sprites.len() {
+            ui.weak("(algunos sprites aún no están cargados)");
+        }
+        if paths.is_empty() {
+            ui.weak("Suelta sprites aquí");
+        }
+    });
+
+    // Drop zone: cualquier payload de SpriteAsset soltado sobre la hoja.
+    let body_hover = body
+        .body_response
+        .as_ref()
+        .is_some_and(|r| r.contains_pointer());
+    let over = body.header_response.contains_pointer() || body_hover;
+    if egui::DragAndDrop::has_payload_of_type::<SpriteAsset>(ui.ctx()) && over {
+        // Marca visual del destino.
+        let rect = match body.body_response.as_ref() {
+            Some(r) => body.header_response.rect.union(r.rect),
+            None => body.header_response.rect,
+        };
+        ui.painter().rect_filled(
+            rect,
+            2.0,
+            egui::Color32::from_rgba_unmultiplied(120, 200, 120, 40),
+        );
+    }
+    // Al soltar sobre esta hoja: consumir el payload y reasignar a ella.
+    if over && ui.input(|i| i.pointer.any_released()) {
+        if let Some(sprite) = egui::DragAndDrop::take_payload::<SpriteAsset>(ui.ctx()) {
+            *action = Some(TreeAction::AssignIds(vec![sprite.id.clone()], index));
+        }
+    }
 }
 
 fn render_node(
@@ -546,11 +689,11 @@ fn count_files(nodes: &[TreeNode]) -> usize {
         .sum()
 }
 
-/// Sección «Grupos de salida»: crear, renombrar, quitar y asignar sprites a
-/// grupos. Cada grupo con nombre empaqueta en `<salida>/<nombre>/`; los
-/// sprites sin asignar van a la hoja principal (raíz de la salida).
+/// Sección «Hojas» (multipack manual al estilo TexturePacker): añadir hoja,
+/// renombrar, vaciar y quitar. Los sprites se asignan arrastrándolos a los
+/// nodos de hoja del árbol de arriba.
 fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new("Grupos de salida")
+    egui::CollapsingHeader::new("Hojas (pack por carpetas)")
         .id_salt("output_groups")
         .default_open(false)
         .show(ui, |ui| {
@@ -576,7 +719,6 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
             let mut remove: Option<usize> = None;
             let mut assign: Option<usize> = None;
             let mut clear: Option<usize> = None;
-            let mut new_name = String::new();
 
             for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
@@ -642,45 +784,31 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
             }
 
             ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::TextEdit::singleline(&mut new_name)
-                        .desired_width(120.0)
-                        .hint_text("nuevo grupo…"),
-                );
-                if ui.button("+ Crear").clicked() && !new_name.trim().is_empty() {
-                    let name = new_name.trim().to_string();
-                    if app.config.folder_groups.iter().any(|g| g.name == name) {
-                        app.log(LogKind::Warning, format!("Ya existe un grupo «{name}»."));
-                    } else {
-                        app.config.folder_groups.push(tp_core::config::FolderGroup {
-                            name: name.clone(),
-                            sprites: Vec::new(),
-                        });
-                        app.log(LogKind::Info, format!("Grupo «{name}» creado."));
-                    }
-                }
-            });
-            if !app.selected_paths.is_empty()
-                && ui.button("Quitar selección de los grupos").clicked()
+            if ui
+                .button("+ Añadir hoja")
+                .on_hover_text(
+                    "Crea otra hoja: se escribirá en su subcarpeta de salida. \
+                     Arrastra sprites al nodo de la hoja para llenarla",
+                )
+                .clicked()
             {
-                let ids: Vec<String> = app
-                    .selected_paths
-                    .iter()
-                    .filter_map(|p| app.sprite_id_for_path(p))
-                    .collect();
-                if !ids.is_empty() {
-                    for id in &ids {
-                        for g in &mut app.config.folder_groups {
-                            g.sprites.retain(|s| s != id);
-                        }
+                let mut n = 1;
+                let name = loop {
+                    let candidate = format!("hoja{n}");
+                    if !app.config.folder_groups.iter().any(|g| g.name == candidate) {
+                        break candidate;
                     }
-                    app.after_workspace_change();
-                }
+                    n += 1;
+                };
+                app.config.folder_groups.push(tp_core::config::FolderGroup {
+                    name: name.clone(),
+                    sprites: Vec::new(),
+                });
+                app.log(LogKind::Info, format!("Hoja «{name}» creada."));
             }
             ui.weak(
-                "Cada grupo empaqueta en su subcarpeta; arrastra un sprite del \
-                 árbol sobre una carpeta cuyo nombre coincida con un grupo.",
+                "Arrastra sprites del árbol (o entre hojas) para moverlos; cada \
+                 hoja se escribe en su subcarpeta de salida.",
             );
         });
 }
