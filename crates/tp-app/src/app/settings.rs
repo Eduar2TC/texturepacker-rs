@@ -207,6 +207,14 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                         ui.selectable_value(v, PackingAlgorithm::Guillotine, "Guillotine");
                         ui.selectable_value(v, PackingAlgorithm::Grid, "Rejilla (Grid)");
                         ui.selectable_value(v, PackingAlgorithm::Basic, "Básico (Basic)");
+                        ui.selectable_value(
+                            v,
+                            PackingAlgorithm::Manual,
+                            "Manual (arrastrar en la vista)",
+                        )
+                        .on_hover_text(
+                            "Arrastra los sprites en la vista previa para fijar su posición",
+                        );
                     },
                     &mut app.config.algorithm,
                 );

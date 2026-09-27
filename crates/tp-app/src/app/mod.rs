@@ -56,6 +56,8 @@ struct RunMessage {
 struct WorkspaceSnapshot {
     sprites: Vec<String>,
     config_toml: String,
+    /// `(ruta, mtime_ms)` de cada sprite en disco (autowatch).
+    files: Vec<(String, u128)>,
 }
 
 pub struct App {
@@ -104,6 +106,13 @@ pub struct App {
     /// Pivots/borders edited in the GUI, reapplied on every repack.
     pivot_edits: HashMap<String, Point2D>,
     border_edits: HashMap<String, [i32; 4]>,
+    /// Filesystem watcher (autowatch): edits on disk refresh the preview.
+    watcher: Option<notify::RecommendedWatcher>,
+    watcher_events: Receiver<notify::Event>,
+    /// Time of the first unprocessed filesystem event (debounce).
+    fs_event_at: Option<std::time::Instant>,
+    /// Throttle for the (mtime-based) workspace snapshot poll.
+    last_snapshot_poll: std::time::Instant,
 }
 
 impl App {
@@ -142,12 +151,17 @@ impl App {
             packed_snapshot: None,
             pivot_edits: HashMap::new(),
             border_edits: HashMap::new(),
+            watcher: None,
+            watcher_events: std::sync::mpsc::channel().1,
+            fs_event_at: None,
+            last_snapshot_poll: std::time::Instant::now(),
         };
         app.log(
             LogKind::Info,
             "Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».".into(),
         );
         app.sync_paths();
+        app.start_watcher();
         if let Some(path) = initial_project {
             app.open_project(path);
         }
@@ -275,8 +289,8 @@ impl App {
         }
     }
 
-    /// Snapshot of the workspace inputs: sprite set + every packing setting.
-    /// Used to decide whether the preview is stale.
+    /// Snapshot of the workspace inputs: sprite set, every packing setting
+    /// and the mtime of every sprite file on disk (autowatch).
     fn workspace_snapshot(&self) -> WorkspaceSnapshot {
         let mut sprites: Vec<String> = self
             .config
@@ -295,7 +309,100 @@ impl App {
         WorkspaceSnapshot {
             sprites,
             config_toml: self.config.to_toml().unwrap_or_default(),
+            files: self.collect_input_files(),
         }
+    }
+
+    /// Every sprite file on disk with its mtime (ms), sorted: detects sprites
+    /// edited, added or removed on the input directories.
+    fn collect_input_files(&self) -> Vec<(String, u128)> {
+        let mut files: Vec<PathBuf> = Vec::new();
+        if !self.config.input_directory.as_os_str().is_empty() {
+            collect_images(&self.config.input_directory, &mut files);
+        }
+        for p in &self.config.extra_inputs {
+            if p.is_dir() {
+                collect_images(p, &mut files);
+            } else if p.is_file() {
+                files.push(p.clone());
+            }
+        }
+        files.sort();
+        files.dedup();
+        files
+            .into_iter()
+            .map(|p| {
+                let mtime = std::fs::metadata(&p)
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0);
+                (p.display().to_string(), mtime)
+            })
+            .collect()
+    }
+
+    /// Watch the input directory and every smart folder (recursive) so sprite
+    /// edits on disk refresh the preview automatically.
+    fn start_watcher(&mut self) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher = match notify::recommended_watcher(move |res| {
+            if let Ok(event) = res {
+                let _ = tx.send(event);
+            }
+        }) {
+            Ok(w) => w,
+            Err(_) => {
+                self.watcher = None;
+                return;
+            }
+        };
+        use notify::Watcher;
+        let mut roots: Vec<PathBuf> = Vec::new();
+        if !self.config.input_directory.as_os_str().is_empty() {
+            roots.push(self.config.input_directory.clone());
+        }
+        for p in &self.config.extra_inputs {
+            if p.is_dir() {
+                roots.push(p.clone());
+            } else if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() {
+                    roots.push(parent.to_path_buf());
+                }
+            }
+        }
+        roots.sort();
+        roots.dedup();
+        for root in roots {
+            if root.exists() {
+                let _ = watcher.watch(&root, notify::RecursiveMode::Recursive);
+            }
+        }
+        self.watcher = Some(watcher);
+        self.watcher_events = rx;
+    }
+
+    /// Drain filesystem events and refresh the preview when the sprite files
+    /// change on disk (autowatch, with its own debounce).
+    fn poll_watch(&mut self, ctx: &egui::Context) {
+        let mut event = false;
+        while self.watcher_events.try_recv().is_ok() {
+            event = true; // el filtrado real lo hace el snapshot (mtimes)
+        }
+        if event {
+            self.fs_event_at.get_or_insert_with(std::time::Instant::now);
+        }
+        if let Some(at) = self.fs_event_at {
+            if at.elapsed() >= std::time::Duration::from_millis(500) {
+                self.fs_event_at = None;
+                if self.snapshot_changed() {
+                    self.change_seq += 1;
+                    self.request_preview(false);
+                }
+            }
+        }
+        let _ = ctx;
     }
 
     fn snapshot_changed(&self) -> bool {
@@ -335,9 +442,11 @@ impl App {
         }
     }
 
-    /// Repaint soon while there is a pending preview job or debounce.
+    /// Repaint soon while there is a pending preview job, debounce or a
+    /// filesystem event being debounced.
     fn auto_repaint(&self, ctx: &egui::Context) {
         let needs = self.pending.is_some()
+            || self.fs_event_at.is_some()
             || self
                 .pending_seq
                 .map(|(s, at)| {
@@ -361,8 +470,8 @@ impl App {
         self.after_workspace_change();
     }
 
-    /// Per-frame detection of passive edits: directory fields, variants and
-    /// any config change (sliders, combos, checkboxes) refresh the preview.
+    /// Per-frame detection of passive edits: directory fields, variants,
+    /// config changes and on-disk sprite edits refresh the preview.
     fn poll_changes(&mut self, ctx: &egui::Context) {
         if self.input_dir_text.trim() != self.config.input_directory.display().to_string()
             || self.output_dir_text.trim() != self.config.output_directory.display().to_string()
@@ -380,8 +489,12 @@ impl App {
             self.parse_variants();
             self.after_workspace_change();
         }
-        if self.snapshot_changed() {
-            self.request_preview(true);
+        // El snapshot (mtimes incluidos) se recalcula como mucho cada 250 ms.
+        if self.last_snapshot_poll.elapsed() >= std::time::Duration::from_millis(250) {
+            self.last_snapshot_poll = std::time::Instant::now();
+            if self.snapshot_changed() {
+                self.request_preview(true);
+            }
         }
         self.auto_repaint(ctx);
     }
@@ -542,6 +655,7 @@ impl App {
             }
         }
         self.config.extra_inputs.push(path);
+        self.start_watcher();
         self.change_seq += 1;
         self.request_preview(true);
         true
@@ -605,6 +719,7 @@ impl App {
             LogKind::Info,
             format!("Carpeta inteligente quitada: {}", dir.display()),
         );
+        self.start_watcher();
         self.change_seq += 1;
         self.request_preview(true);
     }
@@ -914,6 +1029,7 @@ impl App {
                     self.selected_sprite = None;
                     self.pivot_edits.clear();
                     self.border_edits.clear();
+                    self.start_watcher();
                     self.project_path = Some(path.clone());
                     self.log(
                         LogKind::Info,
@@ -934,6 +1050,7 @@ impl App {
         self.selected_sprite = None;
         self.pivot_edits.clear();
         self.border_edits.clear();
+        self.start_watcher();
         self.after_workspace_change();
     }
 }
@@ -957,6 +1074,7 @@ impl eframe::App for App {
         }
 
         self.poll_pending(ctx);
+        self.poll_watch(ctx);
         self.poll_changes(ctx);
 
         toolbar::toolbar(self, ctx);
