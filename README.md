@@ -40,6 +40,24 @@ la página de [Releases](https://github.com/Eduar2TC/texturepacker-rs/releases)
 binarios de `tp-cli` para Linux x64/arm64, Windows x64 y macOS (Apple Silicon
 e Intel), y de `tp-app` para Linux x64, Windows y macOS.
 
+### Novedades v0.2.0
+
+- **Espacio de trabajo dinámico**: vista previa en memoria sin escribir en
+  disco, con autorefresco (debounce) y «Publicar» como paso explícito de
+  exportación.
+- **Autowatch**: editar, crear o borrar PNGs del directorio de entrada (o de
+  las carpetas inteligentes) refresca la vista previa automáticamente,
+  también con la ventana en segundo plano.
+- **Algoritmo Manual**: arrastra los sprites en la vista previa para fijar
+  su posición (`manual_positions`), con rejilla de imán opcional, «Limpiar
+  posiciones» y persistencia en el proyecto.
+- **Pack por carpetas**: grupos manuales con arrastre a subcarpetas de
+  salida o modo automático (`--auto-folders`) que espeja el árbol de
+  entrada.
+- **Indicador de frescura** en la barra de zoom (Publicando… /
+  Actualizando… / Desactualizado) y espejo del Log a stderr
+  (`TP_LOG_STDERR=1`).
+
 ```bash
 # Ejemplo: usar la CLI de la última release (Linux x64)
 curl -LO https://github.com/Eduar2TC/texturepacker-rs/releases/latest/download/tp-cli-x86_64-unknown-linux-gnu.tar.gz
