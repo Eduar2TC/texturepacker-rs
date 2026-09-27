@@ -196,6 +196,14 @@ impl App {
             self.pending_seq = Some((self.change_seq, std::time::Instant::now()));
             return;
         }
+        // Workspace vacío: vaciar también la vista (sin trabajo ni errores).
+        if self.config.input_directory.as_os_str().is_empty() && self.config.extra_inputs.is_empty()
+        {
+            if self.result.is_some() {
+                self.result = None;
+            }
+            return;
+        }
         let seq = self.change_seq;
         if !self.snapshot_changed() {
             return;
