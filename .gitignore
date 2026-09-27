@@ -2,6 +2,9 @@
 /target/
 **/*.rs.bk
 
+# Plantilla local de mensajes de commit (configurada vía commit.template)
+.gitmessage
+
 # Freebuff desktop app internal state (SQLite db), not part of the project
 /.freebuff
 
