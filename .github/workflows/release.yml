@@ -1,0 +1,149 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Instalar toolchain Rust estable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # tp-app usa rfd con backend GTK3: en Linux necesita las dev-libs para
+      # enlazar glib/gtk en el build script de *-sys.
+      - name: Instalar dependencias de sistema (GTK3 dev, Linux x64)
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libglib2.0-dev libgtk-3-dev
+
+      - name: Instalar enlazador cruzado y GTK3 cross (aarch64 Linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu pkg-config
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Caché de cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # Binario CLI sin dependencias de sistema y con estrellas para reducir
+      # el tamaño (lto thin del workspace + strip por binario).
+      - name: Compilar tp-cli (${{ matrix.target }})
+        run: cargo build --release --locked -p tp-cli --target ${{ matrix.target }}
+
+      # La app solo se compila donde tiene soporte nativo de GTK3 / rfd
+      # (Linux x64 nativo con GTK3, Windows y macOS).
+      - name: Compilar tp-app (${{ matrix.target }})
+        if: matrix.os == 'ubuntu-24.04' && matrix.target == 'x86_64-unknown-linux-gnu' || matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
+        run: cargo build --release --locked -p tp-app --target ${{ matrix.target }}
+
+      - name: Preparar artefactos (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/tp-cli dist/
+          tar -czf tp-cli-${{ matrix.target }}.tar.gz -C dist tp-cli
+          if [ -f target/${{ matrix.target }}/release/tp-app ]; then
+            cp target/${{ matrix.target }}/release/tp-app dist/
+            tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
+          fi
+
+      - name: Preparar artefactos (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/tp-cli.exe dist/
+          Compress-Archive -Path dist/tp-cli.exe -DestinationPath tp-cli-${{ matrix.target }}.zip
+          Copy-Item target/${{ matrix.target }}/release/tp-app.exe dist/
+          Compress-Archive -Path dist/tp-app.exe -DestinationPath tp-app-${{ matrix.target }}.zip
+
+      - name: Preparar artefactos (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/tp-cli dist/
+          tar -czf tp-cli-${{ matrix.target }}.tar.gz -C dist tp-cli
+          cp target/${{ matrix.target }}/release/tp-app dist/
+          tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
+
+      - name: Subir artefactos del job
+        uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.target }}
+          path: |
+            tp-cli-*.tar.gz
+            tp-cli-*.zip
+            tp-app-*.tar.gz
+            tp-app-*.zip
+          if-no-files-found: error
+
+  release:
+    name: publicar release
+    needs: build
+    runs-on: ubuntu-24.04
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publicar release con los binarios
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tp-cli-*.tar.gz
+            dist/tp-cli-*.zip
+            dist/tp-app-*.tar.gz
+            dist/tp-app-*.zip
+          body: |
+            Primera versión pública de TexturePacker-RS 🧩
+
+            - **tp-cli**: empaquetado headless y descifrado (`tp-cli pack`, `tp-cli decrypt`)
+            - **tp-app**: aplicación de escritorio (egui/eframe)
+
+            | Plataforma | Binarios |
+            |---|---|
+            | Linux x64 | `tp-cli-x86_64-unknown-linux-gnu.tar.gz`, `tp-app-x86_64-unknown-linux-gnu.tar.gz` |
+            | Linux arm64 (solo CLI) | `tp-cli-aarch64-unknown-linux-gnu.tar.gz` |
+            | Windows x64 | `tp-cli-x86_64-pc-windows-msvc.zip`, `tp-app-x86_64-pc-windows-msvc.zip` |
+            | macOS Apple Silicon | `tp-cli-aarch64-apple-darwin.tar.gz`, `tp-app-aarch64-apple-darwin.tar.gz` |
+            | macOS Intel | `tp-cli-x86_64-apple-darwin.tar.gz`, `tp-app-x86_64-apple-darwin.tar.gz` |
+
+            La app de escritorio en Linux requiere las librerías GTK3 del sistema
+            (`libgtk-3`); los binarios no las empaquetan.
+          generate_release_notes: true

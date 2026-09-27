@@ -33,6 +33,22 @@ Capa de Entrada (CLI / GUI / .tpproj)
 | `tp-app`     | App de escritorio (egui/eframe): árbol de sprites, preview del atlas con zoom, ajustes (básicos/avanzados), pestañas Log/Salida/Sprites/Malla, pivots. |
 | `tp-cli`     | Interfaz de línea de comandos para headless/CI.                          |
 
+## Descargas
+
+Al publicar una versión (tag `v*`), el workflow de release compila y adjunta a
+la página de [Releases](https://github.com/Eduar2TC/texturepacker-rs/releases)
+binarios de `tp-cli` para Linux x64/arm64, Windows x64 y macOS (Apple Silicon
+e Intel), y de `tp-app` para Linux x64, Windows y macOS.
+
+```bash
+# Ejemplo: usar la CLI de la última release (Linux x64)
+curl -LO https://github.com/Eduar2TC/texturepacker-rs/releases/latest/download/tp-cli-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf tp-cli-x86_64-unknown-linux-gnu.tar.gz && ./tp-cli --help
+```
+
+La app de escritorio en Linux necesita las librerías GTK3 del sistema
+(`libgtk-3` en Debian/Ubuntu); los binarios no las empaquetan.
+
 ## Compilar y ejecutar
 
 Requiere Rust ≥ 1.93 y un compilador C/C++ solo si se habilita ASTC.
