@@ -56,8 +56,8 @@ struct RunMessage {
 struct WorkspaceSnapshot {
     sprites: Vec<String>,
     config_toml: String,
-    /// `(ruta, mtime_ms)` de cada sprite en disco (autowatch).
-    files: Vec<(String, u128)>,
+    /// `(ruta, mtime_ms, tamaño)` de cada sprite en disco (autowatch).
+    files: Vec<(String, u128, u64)>,
 }
 
 pub struct App {
@@ -108,15 +108,16 @@ pub struct App {
     border_edits: HashMap<String, [i32; 4]>,
     /// Filesystem watcher (autowatch): edits on disk refresh the preview.
     watcher: Option<notify::RecommendedWatcher>,
-    watcher_events: Receiver<notify::Event>,
-    /// Time of the first unprocessed filesystem event (debounce).
-    fs_event_at: Option<std::time::Instant>,
+    /// Clonable handle to wake the UI from the watcher thread.
+    egui_ctx: egui::Context,
     /// Throttle for the (mtime-based) workspace snapshot poll.
     last_snapshot_poll: std::time::Instant,
+    /// One automatic preview retry per successful cycle (mid-write reads).
+    preview_retry_used: bool,
 }
 
 impl App {
-    pub fn new(_cc: &eframe::CreationContext<'_>, initial_project: Option<PathBuf>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>, initial_project: Option<PathBuf>) -> Self {
         let mut app = Self {
             config: ProjectConfig::default(),
             input_dir_text: String::new(),
@@ -152,9 +153,9 @@ impl App {
             pivot_edits: HashMap::new(),
             border_edits: HashMap::new(),
             watcher: None,
-            watcher_events: std::sync::mpsc::channel().1,
-            fs_event_at: None,
+            egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),
+            preview_retry_used: false,
         };
         app.log(
             LogKind::Info,
@@ -273,6 +274,13 @@ impl App {
                     }
                     Err(e) => {
                         self.log(LogKind::Error, format!("Vista previa: {e}"));
+                        // Un único reintento: con autowatch el fichero pudo
+                        // leerse a medio escribir; si vuelve a fallar, se
+                        // espera una acción o un cambio nuevo en disco.
+                        if !self.preview_retry_used {
+                            self.preview_retry_used = true;
+                            self.packed_snapshot = None;
+                        }
                     }
                 }
             }
@@ -313,9 +321,9 @@ impl App {
         }
     }
 
-    /// Every sprite file on disk with its mtime (ms), sorted: detects sprites
-    /// edited, added or removed on the input directories.
-    fn collect_input_files(&self) -> Vec<(String, u128)> {
+    /// Every sprite file on disk with its mtime (ms) and size, sorted:
+    /// detects sprites edited, added or removed on the input directories.
+    fn collect_input_files(&self) -> Vec<(String, u128, u64)> {
         let mut files: Vec<PathBuf> = Vec::new();
         if !self.config.input_directory.as_os_str().is_empty() {
             collect_images(&self.config.input_directory, &mut files);
@@ -332,19 +340,23 @@ impl App {
         files
             .into_iter()
             .map(|p| {
-                let mtime = std::fs::metadata(&p)
-                    .and_then(|m| m.modified())
-                    .ok()
+                let meta = std::fs::metadata(&p).ok();
+                let mtime = meta
+                    .as_ref()
+                    .and_then(|m| m.modified().ok())
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_millis())
                     .unwrap_or(0);
-                (p.display().to_string(), mtime)
+                let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                (p.display().to_string(), mtime, size)
             })
             .collect()
     }
 
     /// Watch the input directory and every smart folder (recursive) so sprite
-    /// edits on disk refresh the preview automatically.
+    /// edits on disk refresh the preview automatically. A dedicated thread
+    /// wakes the UI on every event (even with the window idle); the UI side
+    /// detects the real change via the mtime snapshot in `poll_changes`.
     fn start_watcher(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher = match notify::recommended_watcher(move |res| {
@@ -379,30 +391,24 @@ impl App {
                 let _ = watcher.watch(&root, notify::RecursiveMode::Recursive);
             }
         }
-        self.watcher = Some(watcher);
-        self.watcher_events = rx;
-    }
+        self.watcher = Some(watcher); // al soltarlo muere el hilo anterior
 
-    /// Drain filesystem events and refresh the preview when the sprite files
-    /// change on disk (autowatch, with its own debounce).
-    fn poll_watch(&mut self, ctx: &egui::Context) {
-        let mut event = false;
-        while self.watcher_events.try_recv().is_ok() {
-            event = true; // el filtrado real lo hace el snapshot (mtimes)
-        }
-        if event {
-            self.fs_event_at.get_or_insert_with(std::time::Instant::now);
-        }
-        if let Some(at) = self.fs_event_at {
-            if at.elapsed() >= std::time::Duration::from_millis(500) {
-                self.fs_event_at = None;
-                if self.snapshot_changed() {
-                    self.change_seq += 1;
-                    self.request_preview(false);
+        // Hilo que despierta la UI con cada evento del disco. El hilo es el
+        // único consumidor del canal: drena hasta 500 ms de calma y devuelve
+        // el control; el cambio real lo detecta el snapshot de mtimes.
+        let ctx = self.egui_ctx.clone();
+        std::thread::spawn(move || {
+            while let Ok(_event) = rx.recv() {
+                ctx.request_repaint();
+                loop {
+                    match rx.recv_timeout(std::time::Duration::from_millis(500)) {
+                        Ok(_) => ctx.request_repaint(),
+                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => break,
+                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
                 }
             }
-        }
-        let _ = ctx;
+        });
     }
 
     fn snapshot_changed(&self) -> bool {
@@ -410,7 +416,9 @@ impl App {
             None => true,
             Some(old) => {
                 let new = self.workspace_snapshot();
-                new.sprites != old.sprites || new.config_toml != old.config_toml
+                new.sprites != old.sprites
+                    || new.config_toml != old.config_toml
+                    || new.files != old.files
             }
         }
     }
@@ -428,6 +436,7 @@ impl App {
         }
         self.selected_page = self.selected_page.min(out.pages.len().saturating_sub(1));
         self.result = Some(out);
+        self.preview_retry_used = false;
         self.rebuild_textures(ctx);
     }
 
@@ -442,11 +451,9 @@ impl App {
         }
     }
 
-    /// Repaint soon while there is a pending preview job, debounce or a
-    /// filesystem event being debounced.
+    /// Repaint soon while there is a pending preview job or debounce.
     fn auto_repaint(&self, ctx: &egui::Context) {
         let needs = self.pending.is_some()
-            || self.fs_event_at.is_some()
             || self
                 .pending_seq
                 .map(|(s, at)| {
@@ -530,6 +537,7 @@ impl App {
         // Cancel any pending preview: the export replaces it.
         self.pending = None;
         self.pending_seq = None;
+        self.preview_retry_used = false;
         self.snapshot_edits();
         let snapshot = self.workspace_snapshot();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1074,7 +1082,6 @@ impl eframe::App for App {
         }
 
         self.poll_pending(ctx);
-        self.poll_watch(ctx);
         self.poll_changes(ctx);
 
         toolbar::toolbar(self, ctx);
