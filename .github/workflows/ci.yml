@@ -10,10 +10,14 @@ env:
 
 jobs:
   checks:
-    name: fmt + clippy + tests (stable)
-    runs-on: ubuntu-latest
+    name: fmt + clippy + tests (stable, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-26.04]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # tp-app usa rfd (diálogos nativos) con backend GTK3: necesita las
       # dev-libs para enlazar glib/gtk en el build script de *-sys.
@@ -41,9 +45,9 @@ jobs:
 
   msrv:
     name: MSRV 1.93.0 (cargo check + tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Instalar dependencias de sistema (GTK3 dev)
         run: |
@@ -68,11 +72,11 @@ jobs:
 
   gpu-formats:
     name: build con ASTC (gpu-formats)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # El encoder ASTC compila C++ de ARM astcenc (el runner trae toolchain
     # C/C++ de serie).
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Instalar Rust stable
         uses: dtolnay/rust-toolchain@stable
