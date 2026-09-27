@@ -50,6 +50,14 @@ struct RunMessage {
     result: Result<PipelineOutput, tp_core::TpError>,
 }
 
+/// Snapshot of the workspace inputs (sprite set + packing settings) used to
+/// decide whether the in-memory preview is stale.
+#[derive(PartialEq)]
+struct WorkspaceSnapshot {
+    sprites: Vec<String>,
+    config_toml: String,
+}
+
 pub struct App {
     config: ProjectConfig,
     input_dir_text: String,
@@ -85,6 +93,17 @@ pub struct App {
     tree_filter_focused: bool,
     /// `Some(true)` opens every folder, `Some(false)` closes them (one frame).
     tree_force_open: Option<bool>,
+    /// Pending preview job (dynamic workspace): packed in memory, no files.
+    pending: Option<Receiver<RunMessage>>,
+    /// Counter used to dedupe pending preview jobs.
+    change_seq: u64,
+    /// Trigger for the debounce: last observed change + timestamp.
+    pending_seq: Option<(u64, std::time::Instant)>,
+    /// Snapshot of the inputs of the last packed run (dynamic workspace).
+    packed_snapshot: Option<WorkspaceSnapshot>,
+    /// Pivots/borders edited in the GUI, reapplied on every repack.
+    pivot_edits: HashMap<String, Point2D>,
+    border_edits: HashMap<String, [i32; 4]>,
 }
 
 impl App {
@@ -117,6 +136,12 @@ impl App {
             tree_filter: String::new(),
             tree_filter_focused: false,
             tree_force_open: None,
+            pending: None,
+            change_seq: 0,
+            pending_seq: None,
+            packed_snapshot: None,
+            pivot_edits: HashMap::new(),
+            border_edits: HashMap::new(),
         };
         app.log(
             LogKind::Info,
@@ -157,6 +182,202 @@ impl App {
         self.config.output_directory = PathBuf::from(self.output_dir_text.trim());
     }
 
+    /// Request a (debounced) in-memory repack so the workspace reacts
+    /// immediately to added/removed sprites or changed settings. Files are
+    /// only written by the explicit «Publicar» action.
+    fn request_preview(&mut self, debounce: bool) {
+        // Un trabajo pendiente de exportación tiene prioridad.
+        if self.running.is_some() {
+            return;
+        }
+        if self.pending.is_some() {
+            // Ya hay una vista previa en marcha: reprogramar en vez de
+            // saturar de trabajos (el snapshot se recalculará al terminar).
+            self.pending_seq = Some((self.change_seq, std::time::Instant::now()));
+            return;
+        }
+        let seq = self.change_seq;
+        if !self.snapshot_changed() {
+            return;
+        }
+        if debounce {
+            match self.pending_seq {
+                Some((s, at)) if s == seq => {
+                    if at.elapsed() < std::time::Duration::from_millis(400) {
+                        return;
+                    }
+                }
+                _ => {
+                    self.pending_seq = Some((seq, std::time::Instant::now()));
+                    return;
+                }
+            }
+        }
+        self.pending_seq = None;
+        self.commit_paths();
+        self.parse_variants();
+        let snapshot = self.workspace_snapshot();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let cfg = self.config.clone();
+        let started = std::time::Instant::now();
+        std::thread::spawn(move || {
+            let result = tp_core::pipeline::run_preview(&cfg);
+            let _ = tx.send(RunMessage {
+                elapsed_ms: started.elapsed().as_millis(),
+                result,
+            });
+        });
+        self.pending = Some(rx);
+        self.packed_snapshot = Some(snapshot);
+    }
+
+    /// Poll the pending preview job and apply its result.
+    fn poll_pending(&mut self, ctx: &egui::Context) {
+        let Some(rx) = &self.pending else { return };
+        match rx.try_recv() {
+            Ok(msg) => {
+                self.pending = None;
+                match msg.result {
+                    Ok(out) => {
+                        self.apply_output(ctx, out);
+                        self.log(
+                            LogKind::Info,
+                            format!("Vista previa actualizada en {} ms.", msg.elapsed_ms),
+                        );
+                        // ¿Cambió algo mientras empaquetaba? Reprogramar.
+                        if self.snapshot_changed() {
+                            self.request_preview(false);
+                        }
+                    }
+                    Err(e) => {
+                        self.log(LogKind::Error, format!("Vista previa: {e}"));
+                    }
+                }
+            }
+            Err(TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            Err(TryRecvError::Disconnected) => {
+                self.pending = None;
+                self.log(
+                    LogKind::Error,
+                    "El hilo de vista previa terminó inesperadamente.".into(),
+                );
+            }
+        }
+    }
+
+    /// Snapshot of the workspace inputs: sprite set + every packing setting.
+    /// Used to decide whether the preview is stale.
+    fn workspace_snapshot(&self) -> WorkspaceSnapshot {
+        let mut sprites: Vec<String> = self
+            .config
+            .extra_inputs
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        sprites.push(self.config.input_directory.display().to_string());
+        sprites.extend(
+            self.config
+                .excluded_inputs
+                .iter()
+                .map(|p| p.display().to_string()),
+        );
+        sprites.sort();
+        WorkspaceSnapshot {
+            sprites,
+            config_toml: self.config.to_toml().unwrap_or_default(),
+        }
+    }
+
+    fn snapshot_changed(&self) -> bool {
+        match &self.packed_snapshot {
+            None => true,
+            Some(old) => {
+                let new = self.workspace_snapshot();
+                new.sprites != old.sprites || new.config_toml != old.config_toml
+            }
+        }
+    }
+
+    /// Apply a pipeline result: reapply GUI edits (pivots / 9-patch borders
+    /// lost by the repack), refresh textures and keep the selection stable.
+    fn apply_output(&mut self, ctx: &egui::Context, mut out: PipelineOutput) {
+        for sprite in &mut out.result.sprites {
+            if let Some(p) = self.pivot_edits.get(&sprite.id) {
+                sprite.pivot = *p;
+            }
+            if let Some(b) = self.border_edits.get(&sprite.id) {
+                sprite.border = Some(*b);
+            }
+        }
+        self.selected_page = self.selected_page.min(out.pages.len().saturating_sub(1));
+        self.result = Some(out);
+        self.rebuild_textures(ctx);
+    }
+
+    /// Remember the current pivots/borders as GUI edits before a repack.
+    fn snapshot_edits(&mut self) {
+        let Some(out) = &self.result else { return };
+        for s in &out.result.sprites {
+            self.pivot_edits.insert(s.id.clone(), s.pivot);
+            if let Some(b) = s.border {
+                self.border_edits.insert(s.id.clone(), b);
+            }
+        }
+    }
+
+    /// Repaint soon while there is a pending preview job or debounce.
+    fn auto_repaint(&self, ctx: &egui::Context) {
+        let needs = self.pending.is_some()
+            || self
+                .pending_seq
+                .map(|(s, at)| {
+                    s == self.change_seq && at.elapsed() < std::time::Duration::from_millis(400)
+                })
+                .unwrap_or(false);
+        if needs {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
+    }
+
+    /// Workspace changed by user action: bump the sequence and repack.
+    pub(super) fn after_workspace_change(&mut self) {
+        self.change_seq += 1;
+        self.request_preview(true);
+    }
+
+    /// Input fields of the Settings panel changed → commit and repack.
+    fn on_paths_edited(&mut self) {
+        self.commit_paths();
+        self.after_workspace_change();
+    }
+
+    /// Per-frame detection of passive edits: directory fields, variants and
+    /// any config change (sliders, combos, checkboxes) refresh the preview.
+    fn poll_changes(&mut self, ctx: &egui::Context) {
+        if self.input_dir_text.trim() != self.config.input_directory.display().to_string()
+            || self.output_dir_text.trim() != self.config.output_directory.display().to_string()
+        {
+            self.on_paths_edited();
+        }
+        let variants_joined = self
+            .config
+            .scale_variants
+            .iter()
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        if self.variants_text.trim() != variants_joined {
+            self.parse_variants();
+            self.after_workspace_change();
+        }
+        if self.snapshot_changed() {
+            self.request_preview(true);
+        }
+        self.auto_repaint(ctx);
+    }
+
     fn parse_variants(&mut self) {
         let parsed: Vec<f32> = self
             .variants_text
@@ -185,23 +406,49 @@ impl App {
             );
             return;
         }
+        // Cancel any pending preview: the export replaces it.
+        self.pending = None;
+        self.pending_seq = None;
+        self.snapshot_edits();
+        let snapshot = self.workspace_snapshot();
         let (tx, rx) = std::sync::mpsc::channel();
         let cfg = self.config.clone();
-        let started = std::time::Instant::now();
         std::thread::spawn(move || {
             let result = tp_core::pipeline::run(&cfg);
             let _ = tx.send(RunMessage {
-                elapsed_ms: started.elapsed().as_millis(),
+                elapsed_ms: 0,
                 result,
             });
         });
         self.running = Some(rx);
+        self.packed_snapshot = Some(snapshot);
+        self.change_seq += 1;
         let origin = if self.config.input_directory.as_os_str().is_empty() {
             "sprites añadidos".to_string()
         } else {
             self.config.input_directory.display().to_string()
         };
         self.log(LogKind::Info, format!("Publicando desde {origin} ..."));
+    }
+
+    /// Directory that receives the 9-patch/pivot sidecar files (the smart
+    /// folder of the first sprite when there is no main input directory).
+    fn sidecar_dir(&self) -> Option<PathBuf> {
+        if !self.config.input_directory.as_os_str().is_empty() {
+            return Some(self.config.input_directory.clone());
+        }
+        self.config
+            .extra_inputs
+            .iter()
+            .find(|p| p.is_file())
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| {
+                self.config
+                    .extra_inputs
+                    .iter()
+                    .find(|p| p.is_dir())
+                    .cloned()
+            })
     }
 
     fn rebuild_textures(&mut self, ctx: &egui::Context) {
@@ -230,8 +477,7 @@ impl App {
                 self.log(
                     LogKind::Info,
                     format!(
-                        "Empaquetado completo en {} ms: {total} sprites ({aliases} aliases), {pages} página(s).",
-                        msg.elapsed_ms
+                        "Publicación completa: {total} sprites ({aliases} aliases), {pages} página(s)."
                     ),
                 );
                 for w in &out.result.warnings {
@@ -243,9 +489,7 @@ impl App {
                 for f in &out.result.output_files {
                     self.log(LogKind::Info, format!("  → {f}"));
                 }
-                self.selected_page = 0;
-                self.result = Some(out);
-                self.rebuild_textures(ctx);
+                self.apply_output(ctx, out);
                 self.fit_zoom();
             }
             Err(e) => {
@@ -255,6 +499,7 @@ impl App {
     }
 
     /// Add a dropped/picked file or folder to the sprite set.
+    /// Returns `true` when the workspace changed and a repack is scheduled.
     fn add_input(&mut self, path: PathBuf) -> bool {
         if path.as_os_str().is_empty() {
             return false;
@@ -289,6 +534,8 @@ impl App {
             }
         }
         self.config.extra_inputs.push(path);
+        self.change_seq += 1;
+        self.request_preview(true);
         true
     }
 
@@ -305,6 +552,8 @@ impl App {
         self.selected_paths.clear();
         self.selected_sprite = None;
         self.log(LogKind::Info, format!("{removed} sprite(s) quitado(s)."));
+        self.change_seq += 1;
+        self.request_preview(true);
     }
 
     /// Exclude a single file, or every image inside a directory.
@@ -348,6 +597,8 @@ impl App {
             LogKind::Info,
             format!("Carpeta inteligente quitada: {}", dir.display()),
         );
+        self.change_seq += 1;
+        self.request_preview(true);
     }
 
     fn exclude(&mut self, path: &Path) {
@@ -365,10 +616,13 @@ impl App {
 
     fn restore_excluded(&mut self) {
         let count = self.config.excluded_inputs.len();
-        self.config.excluded_inputs.clear();
-        if count > 0 {
-            self.log(LogKind::Info, format!("{count} sprite(s) restaurado(s)."));
+        if count == 0 {
+            return;
         }
+        self.config.excluded_inputs.clear();
+        self.log(LogKind::Info, format!("{count} sprite(s) restaurado(s)."));
+        self.change_seq += 1;
+        self.request_preview(true);
     }
 
     fn hidden_count(&self) -> usize {
@@ -482,9 +736,11 @@ impl App {
             match border {
                 Some(b) => {
                     detected += 1;
+                    self.border_edits.insert(id.clone(), b);
                     self.log(LogKind::Info, format!("{id}: bordes detectados {b:?}"));
                 }
                 None => {
+                    self.border_edits.remove(&id);
                     self.log(
                         LogKind::Warning,
                         format!("{id}: sin barras sólidas, se quita el 9-patch"),
@@ -503,13 +759,13 @@ impl App {
     }
 
     fn save_pivots(&mut self) {
-        if self.config.input_directory.as_os_str().is_empty() {
+        let Some(dir) = self.sidecar_dir() else {
             self.log(
                 LogKind::Error,
-                "Define el directorio de entrada para guardar pivots.json/borders.json.".into(),
+                "Añade sprites primero: los archivos se guardan junto a ellos.".into(),
             );
             return;
-        }
+        };
         let Some(out) = &self.result else {
             self.log(
                 LogKind::Error,
@@ -529,7 +785,7 @@ impl App {
             .iter()
             .filter_map(|s| s.border.map(|b| (s.id.clone(), b)))
             .collect();
-        let path = self.config.input_directory.join("pivots.json");
+        let path = dir.join("pivots.json");
         match serde_json::to_string_pretty(&map) {
             Ok(text) => match std::fs::write(&path, text) {
                 Ok(_) => self.log(
@@ -541,12 +797,12 @@ impl App {
             Err(e) => self.log(LogKind::Error, format!("No se pudo serializar: {e}")),
         }
         // Bordes 9-patch a un archivo propio (solo sprites con bordes).
-        self.write_borders_file(&borders);
+        self.write_borders_file(&dir, &borders);
     }
 
     /// Write `borders.json` next to the input sprites and log the result.
-    fn write_borders_file(&mut self, borders: &HashMap<String, [i32; 4]>) {
-        let bpath = self.config.input_directory.join("borders.json");
+    fn write_borders_file(&mut self, dir: &Path, borders: &HashMap<String, [i32; 4]>) {
+        let bpath = dir.join("borders.json");
         match serde_json::to_string_pretty(borders) {
             Ok(text) => match std::fs::write(&bpath, text) {
                 Ok(_) => {
@@ -574,11 +830,11 @@ impl App {
     }
 
     /// Persist `borders.json` without user action (drag release / Detect).
-    /// Silent when there is no input directory or nothing to save.
+    /// Silent when there is no sprite directory or nothing to save.
     fn auto_save_borders(&mut self) {
-        if self.config.input_directory.as_os_str().is_empty() {
+        let Some(dir) = self.sidecar_dir() else {
             return;
-        }
+        };
         let Some(out) = &self.result else {
             return;
         };
@@ -591,7 +847,7 @@ impl App {
         if borders.is_empty() {
             return; // nada que guardar: no crear archivos vacíos ni avisar
         }
-        let path = self.config.input_directory.join("borders.json");
+        let path = dir.join("borders.json");
         if let Ok(text) = serde_json::to_string_pretty(&borders) {
             if std::fs::write(&path, text).is_ok() {
                 self.log(
@@ -648,6 +904,8 @@ impl App {
                     self.sync_paths();
                     self.selected_paths.clear();
                     self.selected_sprite = None;
+                    self.pivot_edits.clear();
+                    self.border_edits.clear();
                     self.project_path = Some(path.clone());
                     self.log(
                         LogKind::Info,
@@ -666,6 +924,9 @@ impl App {
         self.sync_paths();
         self.selected_paths.clear();
         self.selected_sprite = None;
+        self.pivot_edits.clear();
+        self.border_edits.clear();
+        self.after_workspace_change();
     }
 }
 
@@ -686,6 +947,9 @@ impl eframe::App for App {
                 }
             }
         }
+
+        self.poll_pending(ctx);
+        self.poll_changes(ctx);
 
         toolbar::toolbar(self, ctx);
 

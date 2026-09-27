@@ -49,6 +49,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         app.input_dir_text = dir.display().to_string();
                         app.config.input_directory = dir;
+                        app.on_paths_edited();
                     }
                 }
             });

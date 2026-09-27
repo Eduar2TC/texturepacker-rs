@@ -112,6 +112,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             let removed = app.remove_path(&path);
             app.selected_paths.remove(&path);
             app.log(LogKind::Info, format!("{removed} sprite(s) quitado(s)."));
+            app.after_workspace_change();
         }
         Some(TreeAction::RemoveSmart(dir)) => app.remove_smart_folder(&dir),
         Some(TreeAction::CopyPath(path)) => {

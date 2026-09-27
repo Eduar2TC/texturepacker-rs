@@ -171,6 +171,7 @@ fn apply_pivot(app: &mut App, indices: &[usize], x: f32, y: f32) {
         for &i in indices {
             if let Some(sprite) = out.result.sprites.get_mut(i) {
                 sprite.pivot = pivot;
+                app.pivot_edits.insert(sprite.id.clone(), pivot);
             }
         }
     } else {
@@ -188,6 +189,14 @@ fn apply_border(app: &mut App, indices: &[usize], border: [i32; 4]) {
         for &i in indices {
             if let Some(sprite) = out.result.sprites.get_mut(i) {
                 sprite.border = border;
+                match border {
+                    Some(b) => {
+                        app.border_edits.insert(sprite.id.clone(), b);
+                    }
+                    None => {
+                        app.border_edits.remove(sprite.id.as_str());
+                    }
+                }
             }
         }
     } else {

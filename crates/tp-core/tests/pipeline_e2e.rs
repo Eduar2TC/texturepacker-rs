@@ -1236,3 +1236,34 @@ fn lote10_pixel_formats_rgba5551_and_bgra8888() {
         px[3]
     );
 }
+
+#[test]
+fn run_preview_does_not_write_any_file() {
+    let fx = Fixture::new("preview");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    write_png(&input.join("a.png"), 24, 24, [200, 30, 30, 255]);
+    write_png(&input.join("b.png"), 30, 18, [30, 200, 30, 255]);
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        ..ProjectConfig::default()
+    };
+
+    // Vista previa: resultado válido en memoria y salida intacta.
+    let preview = tp_core::pipeline::run_preview(&cfg).unwrap();
+    assert_eq!(preview.result.total_sprites, 2);
+    assert!(!preview.pages.is_empty());
+    assert!(
+        !output.exists(),
+        "run_preview no debe crear el directorio de salida"
+    );
+
+    // El mismo config, publicado, sí escribe los ficheros.
+    let published = tp_core::pipeline::run(&cfg).unwrap();
+    assert_eq!(published.result.total_sprites, 2);
+    assert!(output.join("atlas.png").is_file());
+    assert!(output.join("atlas.json").is_file());
+}

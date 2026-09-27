@@ -37,8 +37,20 @@ pub struct PipelineOutput {
     pub pages: Vec<AtlasPage>,
 }
 
-/// Run the whole packing pipeline for a project configuration.
+/// Run the whole packing pipeline for a project configuration and write
+/// the exported image/metadata files to the output directory.
 pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
+    execute(config, true)
+}
+
+/// Run the pipeline without touching the disk: pack in memory only, so the
+/// GUI can show a live preview of the workspace. No directory is created and
+/// no image or metadata file is rendered or written.
+pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
+    execute(config, false)
+}
+
+fn execute(config: &ProjectConfig, write_to_disk: bool) -> Result<PipelineOutput> {
     config.validate()?;
     let mut stage_times: Vec<(String, u64)> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -472,8 +484,11 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     // ------------------------------------------------------------------
     let t = Instant::now();
     let output_dir = &config.output_directory;
-    std::fs::create_dir_all(output_dir)
-        .map_err(|e| TpError::Other(format!("No se pudo crear {}: {e}", output_dir.display())))?;
+    if write_to_disk {
+        std::fs::create_dir_all(output_dir).map_err(|e| {
+            TpError::Other(format!("No se pudo crear {}: {e}", output_dir.display()))
+        })?;
+    }
 
     let mut output_files: Vec<String> = Vec::new();
     let mut base_page_infos: Vec<PageInfo> = Vec::new();
@@ -511,78 +526,95 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
             };
 
             let file_name = page_file_name(config, page.index, &variant);
-            let bytes = {
-                let (mut scaled, _w, _h) = if is_base {
-                    (page.pixels.clone(), sw, sh)
-                } else {
-                    export::scale_rgba(
-                        &page.pixels,
-                        page.width as usize,
-                        page.height as usize,
-                        *scale,
-                        config.scale_mode,
-                    )
-                };
-                if flip_active {
-                    export::flip_vertical_rgba(&mut scaled, _w, _h);
-                }
-                export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?
-            };
-
-            let (final_name, final_bytes) = match &config.encryption_key {
-                Some(key) => (
-                    format!("{file_name}.tpenc"),
-                    export::encrypt_bytes(&bytes, key)?,
-                ),
-                None => (file_name, bytes),
-            };
-
-            write_file(&output_dir.join(&final_name), &final_bytes)?;
-            output_files.push(final_name.clone());
-
-            // Normal-map page.
             let mut normal_name = None;
-            if let Some(npix) = &page.normal_pixels {
-                let nfile = normal_page_file_name(config, page.index, &variant);
-                let (mut nscaled, nw2, nh2) = if is_base {
-                    (npix.clone(), sw, sh)
-                } else {
-                    export::scale_rgba(
-                        npix,
-                        page.width as usize,
-                        page.height as usize,
-                        *scale,
-                        config.scale_mode,
-                    )
+            if write_to_disk {
+                let bytes = {
+                    let (mut scaled, _w, _h) = if is_base {
+                        (page.pixels.clone(), sw, sh)
+                    } else {
+                        export::scale_rgba(
+                            &page.pixels,
+                            page.width as usize,
+                            page.height as usize,
+                            *scale,
+                            config.scale_mode,
+                        )
+                    };
+                    if flip_active {
+                        export::flip_vertical_rgba(&mut scaled, _w, _h);
+                    }
+                    export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?
                 };
-                if flip_active {
-                    export::flip_vertical_rgba(&mut nscaled, nw2, nh2);
-                }
-                let nbytes = export::encode_to_bytes(&nscaled, nw2, nh2, &enc_opts)?;
-                let (nfinal_name, nfinal_bytes) = match &config.encryption_key {
-                    Some(key) => (
-                        format!("{nfile}.tpenc"),
-                        export::encrypt_bytes(&nbytes, key)?,
-                    ),
-                    None => (nfile, nbytes),
-                };
-                write_file(&output_dir.join(&nfinal_name), &nfinal_bytes)?;
-                output_files.push(nfinal_name.clone());
-                normal_name = Some(nfinal_name);
-            }
 
-            variant_image_files.push(final_name.clone());
-            variant_page_infos.push(PageInfo {
-                index: page.index,
-                width: sw as i32,
-                height: sh as i32,
-                file_name: final_name,
-                format: config.gpu_format.as_str().to_string(),
-                has_normals: page.has_normals,
-                normal_file_name: normal_name,
-                encrypted: config.encryption_key.is_some(),
-                fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
-            });
+                let (final_name, final_bytes) = match &config.encryption_key {
+                    Some(key) => (
+                        format!("{file_name}.tpenc"),
+                        export::encrypt_bytes(&bytes, key)?,
+                    ),
+                    None => (file_name, bytes),
+                };
+
+                write_file(&output_dir.join(&final_name), &final_bytes)?;
+                output_files.push(final_name.clone());
+
+                // Normal-map page.
+                if let Some(npix) = &page.normal_pixels {
+                    let nfile = normal_page_file_name(config, page.index, &variant);
+                    let (mut nscaled, nw2, nh2) = if is_base {
+                        (npix.clone(), sw, sh)
+                    } else {
+                        export::scale_rgba(
+                            npix,
+                            page.width as usize,
+                            page.height as usize,
+                            *scale,
+                            config.scale_mode,
+                        )
+                    };
+                    if flip_active {
+                        export::flip_vertical_rgba(&mut nscaled, nw2, nh2);
+                    }
+                    let nbytes = export::encode_to_bytes(&nscaled, nw2, nh2, &enc_opts)?;
+                    let (nfinal_name, nfinal_bytes) = match &config.encryption_key {
+                        Some(key) => (
+                            format!("{nfile}.tpenc"),
+                            export::encrypt_bytes(&nbytes, key)?,
+                        ),
+                        None => (nfile, nbytes),
+                    };
+                    write_file(&output_dir.join(&nfinal_name), &nfinal_bytes)?;
+                    output_files.push(nfinal_name.clone());
+                    normal_name = Some(nfinal_name);
+                }
+
+                variant_image_files.push(final_name.clone());
+                variant_page_infos.push(PageInfo {
+                    index: page.index,
+                    width: sw as i32,
+                    height: sh as i32,
+                    file_name: final_name,
+                    format: config.gpu_format.as_str().to_string(),
+                    has_normals: page.has_normals,
+                    normal_file_name: normal_name,
+                    encrypted: config.encryption_key.is_some(),
+                    fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                });
+            } else {
+                // Vista previa: sin codificar ni escribir; solo el nombre que
+                // tendría la hoja.
+                variant_image_files.push(file_name.clone());
+                variant_page_infos.push(PageInfo {
+                    index: page.index,
+                    width: sw as i32,
+                    height: sh as i32,
+                    file_name,
+                    format: config.gpu_format.as_str().to_string(),
+                    has_normals: page.has_normals,
+                    normal_file_name: None,
+                    encrypted: config.encryption_key.is_some(),
+                    fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                });
+            }
         }
 
         if is_base {
@@ -603,42 +635,46 @@ pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
                     .collect();
                 let page_infos = [pinfo.clone()];
                 let meta_name = metadata_file_name(config, &variant, pinfo.index, per_page);
-                let content = templates::render(
-                    &pending_result(
-                        config,
-                        &page_sprites,
-                        &warnings,
-                        &stage_times,
-                        output_files.clone(),
-                        alias_count,
+                if write_to_disk {
+                    let content = templates::render(
+                        &pending_result(
+                            config,
+                            &page_sprites,
+                            &warnings,
+                            &stage_times,
+                            output_files.clone(),
+                            alias_count,
+                            &page_infos,
+                        ),
                         &page_infos,
-                    ),
-                    &page_infos,
-                    std::slice::from_ref(image),
-                    *scale,
-                    config,
-                )?;
-                write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+                        std::slice::from_ref(image),
+                        *scale,
+                        config,
+                    )?;
+                    write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+                }
                 output_files.push(meta_name);
             }
         } else {
             let meta_name = metadata_file_name(config, &variant, 0, per_page);
-            let content = templates::render(
-                &pending_result(
+            if write_to_disk {
+                let content = templates::render(
+                    &pending_result(
+                        config,
+                        &sprite_assets,
+                        &warnings,
+                        &stage_times,
+                        output_files.clone(),
+                        alias_count,
+                        &base_page_infos,
+                    ),
+                    &variant_page_infos,
+                    &variant_image_files,
+                    *scale,
                     config,
-                    &sprite_assets,
-                    &warnings,
-                    &stage_times,
-                    output_files.clone(),
-                    alias_count,
-                    &base_page_infos,
-                ),
-                &variant_page_infos,
-                &variant_image_files,
-                *scale,
-                config,
-            )?;
-            write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+                )?;
+                write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+            }
             output_files.push(meta_name);
         }
     }

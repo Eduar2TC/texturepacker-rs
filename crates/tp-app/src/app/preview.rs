@@ -112,6 +112,9 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     let show_pivots = app.show_pivots;
     let show_borders = app.show_borders;
     let mut picked: Option<String> = None;
+    // Sprite bajo el cursor (resaltado + tooltip) y zoom con Ctrl+rueda.
+    let mut hovered: Option<String> = None;
+    let mut zoom_delta: Option<f32> = None;
     // Banda 9-patch que se está arrastrando (None = nada).
     let mut drag: Option<(Edge, i32)> = None;
     let mut border_released = false;
@@ -140,6 +143,56 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 .iter()
                 .filter(|s| s.atlas_page_index as usize == selected_page)
                 .collect();
+
+            // Interactividad: sprite bajo el cursor (tooltip + resalte) y
+            // zoom con Ctrl+rueda sobre la vista.
+            if response.hovered() {
+                let (with_ctrl, scroll_y) = ui.input(|i| {
+                    let ctrl = i.modifiers.ctrl || i.modifiers.command;
+                    (ctrl, i.raw_scroll_delta.y)
+                });
+                if with_ctrl && scroll_y != 0.0 {
+                    zoom_delta = Some((1.0 - scroll_y * 0.0015).clamp(0.5, 2.0));
+                }
+                if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
+                    let px = ((pos.x - rect.min.x) / zoom) as i32;
+                    let py = ((pos.y - rect.min.y) / zoom) as i32;
+                    let probe = tp_core::types::Rect::new(px, py, 1, 1);
+                    hovered = sprites
+                        .iter()
+                        .find(|s| s.visible_frame.contains(&probe))
+                        .map(|s| s.id.clone());
+                }
+                if let Some(id) = &hovered {
+                    if let Some(s) = sprites.iter().find(|s| s.id == *id) {
+                        let f = s.visible_frame;
+                        response.clone().on_hover_ui(|ui| {
+                            ui.strong(&s.id);
+                            ui.label(format!(
+                                "{}x{} px{}",
+                                s.raw_width,
+                                s.raw_height,
+                                if s.is_rotated { " · rotado 90°" } else { "" }
+                            ));
+                            ui.label(format!(
+                                "frame ({}, {}) {}x{} · página {}",
+                                f.x,
+                                f.y,
+                                f.width,
+                                f.height,
+                                s.atlas_page_index + 1
+                            ));
+                            if s.is_alias {
+                                ui.label(format!(
+                                    "alias → {}",
+                                    s.alias_target_id.as_deref().unwrap_or("?")
+                                ));
+                            }
+                            ui.label(egui::RichText::new("Ctrl+rueda: zoom").weak());
+                        });
+                    }
+                }
+            }
 
             if show_outlines {
                 for sprite in &sprites {
@@ -171,6 +224,26 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         );
                     }
                     draw_mesh(painter, sprite, rect, zoom, page.width, page.height);
+                }
+                // Resaltar el sprite bajo el cursor (sin llegar a seleccionar).
+                if let Some(id) = &hovered {
+                    if let Some(sprite) = sprites
+                        .iter()
+                        .find(|s| s.id == *id)
+                        .filter(|s| app.selected_sprite.as_deref() != Some(s.id.as_str()))
+                    {
+                        let f = sprite.visible_frame;
+                        let r = egui::Rect::from_min_max(
+                            to_screen(f.x, f.y),
+                            to_screen(f.x + f.width, f.y + f.height),
+                        );
+                        painter.rect_stroke(
+                            r,
+                            0.0,
+                            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 255, 255)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
                 }
             }
 
@@ -218,6 +291,9 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             }
         });
 
+    if let Some(factor) = zoom_delta {
+        app.zoom = (app.zoom * factor).clamp(0.05, 8.0);
+    }
     if let Some((edge, value)) = drag {
         set_selected_border_edge(app, edge, value);
         // Al soltar la banda, persistir borders.json (si hay directorio).
@@ -257,6 +333,15 @@ fn set_selected_border_edge(app: &mut App, edge: Edge, value: i32) {
         Edge::Bottom => b[3] = v,
     }
     sprite.border = if b == [0; 4] { None } else { Some(b) };
+    // Recordar la edición para sobrevivir a los reempaquetados automáticos.
+    match sprite.border {
+        Some(b) => {
+            app.border_edits.insert(sprite.id.clone(), b);
+        }
+        None => {
+            app.border_edits.remove(sprite.id.as_str());
+        }
+    }
 }
 
 fn draw_mesh(
