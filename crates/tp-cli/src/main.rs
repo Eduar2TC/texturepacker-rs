@@ -406,8 +406,18 @@ fn cmd_pack(args: &[String]) {
     }
 
     let started = std::time::Instant::now();
-    let out =
-        tp_core::pipeline::run(&cfg).unwrap_or_else(|e| fail(format!("Empaquetado fallido: {e}")));
+    // Pack por carpetas: si hay grupos con nombre y sprites, cada grupo
+    // escribe su hoja en `<output>/<grupo>/`.
+    let grouped = cfg
+        .folder_groups
+        .iter()
+        .any(|g| !g.name.is_empty() && !g.sprites.is_empty());
+    let out = if grouped {
+        tp_core::pipeline::run_grouped(&cfg)
+    } else {
+        tp_core::pipeline::run(&cfg)
+    }
+    .unwrap_or_else(|e| fail(format!("Empaquetado fallido: {e}")));
     let result = &out.result;
 
     println!(

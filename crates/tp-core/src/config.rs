@@ -636,6 +636,30 @@ pub enum TemplateFormat {
     PlainText,
 }
 
+/// Manual pack-by-folder group: sprites assigned to `name` are packed in
+/// their own sheet(s) inside `<output_directory>/<name>/`, separate from the
+/// main sheet. The default group (empty `name`) holds every sprite not
+/// assigned elsewhere — its sheet stays in the output root. Sprite ids not
+/// present in any group go to the default group as well.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct FolderGroup {
+    /// Sheet name and output subfolder. Empty = main sheet (output root).
+    pub name: String,
+    /// Sprite ids (normalized paths as in the pipeline) in this group.
+    pub sprites: Vec<String>,
+}
+
+impl FolderGroup {
+    /// Display name of the group in the GUI.
+    pub fn display_name(&self) -> &str {
+        if self.name.is_empty() {
+            "(hoja principal)"
+        } else {
+            &self.name
+        }
+    }
+}
+
 /// The project configuration. Mirrors the spec's `ProjectConfig` plus a few
 /// sensible extensions (packing strategy, variants, template format, pivots).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -732,6 +756,11 @@ pub struct ProjectConfig {
     /// without an entry fall back to the Basic row layout.
     #[serde(default)]
     pub manual_positions: HashMap<String, (i32, i32)>,
+    /// Pack-by-folder groups: one sheet per group inside its own output
+    /// subfolder. The first entry is always the default/main group (empty
+    /// name, output root); it also receives every unassigned sprite.
+    #[serde(default = "default_folder_groups")]
+    pub folder_groups: Vec<FolderGroup>,
     /// Scale variants to emit, e.g. `[1.0, 0.5]` produces `atlas.png` and
     /// `atlas-hd.png` (sufijos de variante tipo `-hd`, `@2x`...).
     pub scale_variants: Vec<f32>,
@@ -848,6 +877,10 @@ fn lcm(a: i32, b: i32) -> i32 {
     (a / gcd(a, b)).saturating_mul(b)
 }
 
+fn default_folder_groups() -> Vec<FolderGroup> {
+    vec![FolderGroup::default()]
+}
+
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
@@ -886,6 +919,7 @@ impl Default for ProjectConfig {
             basic_sort_by: BasicSortBy::default(),
             basic_order: SortOrder::default(),
             manual_positions: HashMap::new(),
+            folder_groups: default_folder_groups(),
             scale_variants: vec![1.0],
             variant_names: Vec::new(),
             enable_normal_maps: true,
@@ -939,7 +973,16 @@ impl ProjectConfig {
     /// to the same behavior, and a legacy `packing_strategy = "Guillotine"`
     /// still selects the Guillotine algorithm.
     pub fn effective_algorithm(&self) -> PackingAlgorithm {
-        if self.enable_polygon || self.effective_trim_mode() == TrimMode::Polygon {
+        // Las mallas explícitas ganan a todo.
+        if self.enable_polygon {
+            return PackingAlgorithm::Polygon;
+        }
+        // Manual es una elección explícita del usuario: gana al «auto» del
+        // trim mode Polygon (legacy), que solo aplica a los otros algoritmos.
+        if self.algorithm == PackingAlgorithm::Manual {
+            return PackingAlgorithm::Manual;
+        }
+        if self.effective_trim_mode() == TrimMode::Polygon {
             return PackingAlgorithm::Polygon;
         }
         if self.packing_strategy == PackingStrategy::Guillotine {

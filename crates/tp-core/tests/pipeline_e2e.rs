@@ -1310,3 +1310,129 @@ fn manual_algorithm_keeps_gui_positions() {
     assert_eq!((b.x, b.y), (40 + 2, 30 + 2));
     assert!(!a.intersects(&b));
 }
+
+#[test]
+fn grouped_packing_writes_subfolder_sheets() {
+    use tp_core::config::FolderGroup;
+
+    let fx = Fixture::new("grouped");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    write_png(&input.join("hero.png"), 16, 16, [255, 0, 0, 255]);
+    write_png(&input.join("bg.png"), 24, 24, [0, 0, 255, 255]);
+    write_png(&input.join("btn_ok.png"), 12, 10, [0, 255, 0, 255]);
+    write_png(&input.join("btn_ko.png"), 12, 10, [255, 255, 0, 255]);
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        folder_groups: vec![
+            FolderGroup::default(), // hoja principal: los no asignados
+            FolderGroup {
+                name: "ui".into(),
+                sprites: vec!["btn_ok".into(), "btn_ko".into()],
+            },
+        ],
+        ..ProjectConfig::default()
+    };
+
+    let out = tp_core::pipeline::run_grouped(&cfg).unwrap();
+
+    // Cada grupo escribe su hoja en su carpeta.
+    assert!(
+        output.join("atlas.png").is_file(),
+        "hoja principal en la raíz"
+    );
+    assert!(
+        output.join("ui/atlas.png").is_file(),
+        "hoja ui en la subcarpeta"
+    );
+
+    // Dos hojas fusionadas con índices únicos y correlativos.
+    assert_eq!(out.pages.len(), 2);
+    let mut indexes: Vec<usize> = out.pages.iter().map(|p| p.index).collect();
+    indexes.sort_unstable();
+    assert_eq!(indexes, vec![0, 1]);
+
+    // Los sprites del grupo ui comparten página, distinta de la principal.
+    let page_of = |id: &str| {
+        out.result
+            .sprites
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .atlas_page_index
+    };
+    assert_eq!(page_of("btn_ok"), page_of("btn_ko"), "ui en una sola hoja");
+    assert_eq!(page_of("btn_ok"), 1, "la hoja ui queda tras la principal");
+    assert_eq!(page_of("hero"), 0);
+    for s in &out.result.sprites {
+        assert!(s.visible_frame.x >= 0 && s.visible_frame.y >= 0);
+    }
+
+    // El listado de archivos lleva el prefijo del grupo.
+    let files = out.result.output_files.join("\n");
+    assert!(files.contains("ui/"), "faltan rutas prefijadas: {files}");
+}
+
+#[test]
+fn manual_positions_survive_project_roundtrip() {
+    let fx = Fixture::new("manual_roundtrip");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    write_png(&input.join("a.png"), 20, 12, [255, 0, 0, 255]);
+    write_png(&input.join("b.png"), 10, 10, [0, 255, 0, 255]);
+    write_png(&input.join("c.png"), 8, 8, [0, 0, 255, 255]);
+
+    let mut positions = std::collections::HashMap::new();
+    positions.insert("a".to_string(), (5, 2));
+    positions.insert("b".to_string(), (30, 11));
+    // "c" sin posición: fluye por filas.
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        algorithm: PackingAlgorithm::Manual,
+        manual_positions: positions,
+        ..ProjectConfig::default()
+    };
+
+    // 1) Primera ejecución y frames de referencia.
+    let first = tp_core::pipeline::run(&cfg).unwrap();
+    let frame_of = |out: &tp_core::pipeline::PipelineOutput, id: &str| {
+        out.result
+            .sprites
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .visible_frame
+    };
+    let (a0, b0, c0) = (
+        frame_of(&first, "a"),
+        frame_of(&first, "b"),
+        frame_of(&first, "c"),
+    );
+    // border_padding = 0 y padding = 2 (default): visible = pos + 2.
+    assert_eq!((a0.x, a0.y), (5 + 2, 2 + 2), "posición manual inicial");
+
+    // 2) Guardar el proyecto (.tpproj) y volver a abrirlo.
+    let text = cfg.to_toml().unwrap();
+    let project = fx.dir.join("manual.tpproj");
+    std::fs::write(&project, &text).unwrap();
+    let reloaded_text = std::fs::read_to_string(&project).unwrap();
+    assert!(
+        reloaded_text.contains("Manual"),
+        "el algoritmo debe persistir en el .tpproj"
+    );
+    let reloaded = ProjectConfig::from_toml(&reloaded_text).unwrap();
+    assert_eq!(reloaded.algorithm, PackingAlgorithm::Manual);
+    assert_eq!(reloaded.manual_positions, cfg.manual_positions);
+
+    // 3) Re-empaquetar con el proyecto cargado: mismas posiciones exactas.
+    let second = tp_core::pipeline::run(&reloaded).unwrap();
+    assert_eq!(frame_of(&second, "a"), a0, "frame de «a» tras el roundtrip");
+    assert_eq!(frame_of(&second, "b"), b0);
+    assert_eq!(frame_of(&second, "c"), c0);
+    assert_eq!(second.result.sprites.len(), first.result.sprites.len());
+}

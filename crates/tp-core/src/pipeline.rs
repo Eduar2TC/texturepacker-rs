@@ -12,7 +12,7 @@
 //! 10. Cifrar si hay clave.
 //! 11. Guardar imágenes + renderizar plantilla de metadatos.
 
-use crate::config::{AlphaHandling, ProjectConfig};
+use crate::config::{AlphaHandling, FolderGroup, ProjectConfig};
 use crate::error::{Result, TpError};
 use crate::export;
 use crate::ingest::{self, IngestedSprite};
@@ -40,17 +40,36 @@ pub struct PipelineOutput {
 /// Run the whole packing pipeline for a project configuration and write
 /// the exported image/metadata files to the output directory.
 pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, true)
+    execute(config, true, None)
 }
 
 /// Run the pipeline without touching the disk: pack in memory only, so the
 /// GUI can show a live preview of the workspace. No directory is created and
 /// no image or metadata file is rendered or written.
 pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, false)
+    execute(config, false, None)
 }
 
-fn execute(config: &ProjectConfig, write_to_disk: bool) -> Result<PipelineOutput> {
+/// Pack by manual folder groups (`folder_groups`): one pipeline run per
+/// group, each writing its sheet(s) into `<output_directory>/<grupo>/` (the
+/// default group writes into the output root). Sprites not assigned to any
+/// group land in the default group. Activates when any explicit group has
+/// members; the merged result keeps every group's sprites and pages for the
+/// GUI preview.
+pub fn run_grouped(config: &ProjectConfig) -> Result<PipelineOutput> {
+    execute(config, true, Some(&config.folder_groups))
+}
+
+/// In-memory version of [`run_grouped`] for the live preview.
+pub fn run_grouped_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
+    execute(config, false, Some(&config.folder_groups))
+}
+
+fn execute(
+    config: &ProjectConfig,
+    write_to_disk: bool,
+    groups: Option<&[FolderGroup]>,
+) -> Result<PipelineOutput> {
     config.validate()?;
     let mut stage_times: Vec<(String, u64)> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
@@ -125,6 +144,18 @@ fn execute(config: &ProjectConfig, write_to_disk: bool) -> Result<PipelineOutput
     }
     let sprites = ingested.sprites;
     stage_times.push(("ingest".into(), t.elapsed().as_millis() as u64));
+
+    // Empaquetado por carpetas manuales: una ejecución por grupo con los
+    // sprites de los demás grupos excluidos (se re-ingestan filtrados).
+    if let Some(groups) = groups {
+        // Activo en cuanto hay un grupo con nombre y algún sprite asignado.
+        if groups
+            .iter()
+            .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
+        {
+            return run_groups(config, &sprites, groups, write_to_disk);
+        }
+    }
 
     // ------------------------------------------------------------------
     // PASO 3: alias resolution
@@ -698,6 +729,121 @@ fn execute(config: &ProjectConfig, write_to_disk: bool) -> Result<PipelineOutput
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Pack-by-folder: one pipeline run per group, with every other group's
+/// sprites excluded so each group packs independently. The default group
+/// (empty name) takes unassigned sprites and writes into the output root;
+/// named groups write into `<output>/<name>/`. Page indices from each sub-run
+/// are offset in order, so the merged result keeps sprites, pages, page infos
+/// and the output file list coherent for the GUI preview.
+fn run_groups(
+    config: &ProjectConfig,
+    all_sprites: &[IngestedSprite],
+    groups: &[FolderGroup],
+    write_to_disk: bool,
+) -> Result<PipelineOutput> {
+    use std::collections::HashSet;
+    use std::path::PathBuf;
+
+    // El grupo por defecto (sin nombre) recoge todo lo no asignado; si el
+    // proyecto no lo trae y quedan sprites sueltos, se añade al final.
+    let mut groups: Vec<FolderGroup> = groups.to_vec();
+    let assigned: HashSet<String> = groups
+        .iter()
+        .flat_map(|g| g.sprites.iter().cloned())
+        .collect();
+    let has_unassigned = all_sprites.iter().any(|s| !assigned.contains(&s.id));
+    if !groups.iter().any(|g| g.name.is_empty()) && has_unassigned {
+        groups.push(FolderGroup::default());
+    }
+    let owns = |s: &IngestedSprite, g: &FolderGroup| {
+        if g.name.is_empty() {
+            !assigned.contains(&s.id)
+        } else {
+            g.sprites.iter().any(|id| assigned.contains(id))
+        }
+    };
+
+    let t0 = Instant::now();
+    let mut merged_sprites: Vec<SpriteAsset> = Vec::new();
+    let mut merged_pages: Vec<AtlasPage> = Vec::new();
+    let mut merged_page_infos: Vec<PageInfo> = Vec::new();
+    let mut output_files: Vec<String> = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
+    let mut stage_times: Vec<(String, u64)> = Vec::new();
+    let mut alias_count = 0usize;
+    let mut page_offset = 0usize;
+
+    for g in &groups {
+        let members: Vec<&IngestedSprite> = all_sprites.iter().filter(|s| owns(s, g)).collect();
+        if members.is_empty() {
+            continue;
+        }
+
+        let mut gcfg = config.clone();
+        if !g.name.is_empty() {
+            gcfg.output_directory = config.output_directory.join(&g.name);
+        }
+        // Aislar el sub-run: los sprites de los demás grupos se excluyen por
+        // ruta (la ingesta normaliza las rutas antes de comparar).
+        let others: Vec<PathBuf> = all_sprites
+            .iter()
+            .filter(|s| !owns(s, g))
+            .map(|s| s.source_path.clone())
+            .collect();
+        let mut excluded = gcfg.excluded_inputs.clone();
+        excluded.extend(others);
+        gcfg.excluded_inputs = excluded;
+        gcfg.folder_groups = Vec::new(); // no recursión
+
+        let mut out = execute(&gcfg, write_to_disk, None)?;
+        warnings.append(&mut out.result.warnings);
+        alias_count += out.result.alias_count;
+        let group_prefix = if g.name.is_empty() {
+            None
+        } else {
+            Some(g.name.as_str())
+        };
+        for f in out.result.output_files.iter_mut() {
+            if let Some(prefix) = group_prefix {
+                *f = format!("{prefix}/{f}");
+            }
+        }
+        output_files.append(&mut out.result.output_files);
+        for s in out.result.sprites.iter_mut() {
+            if s.atlas_page_index >= 0 {
+                s.atlas_page_index += page_offset as i32;
+            }
+        }
+        merged_sprites.append(&mut out.result.sprites);
+        let added = out.pages.len();
+        for page in out.pages.iter_mut() {
+            page.index += page_offset;
+        }
+        merged_pages.append(&mut out.pages);
+        for info in out.result.pages.iter_mut() {
+            info.index += page_offset;
+        }
+        merged_page_infos.append(&mut out.result.pages);
+        page_offset += added;
+    }
+    stage_times.push(("grouped export".into(), t0.elapsed().as_millis() as u64));
+
+    let result = PackResult {
+        config: config.clone(),
+        sprites: merged_sprites,
+        pages: merged_page_infos,
+        warnings,
+        stage_times_ms: stage_times,
+        total_sprites: all_sprites.len(),
+        alias_count,
+        output_files,
+    };
+    Ok(PipelineOutput {
+        result,
+        pages: merged_pages,
+    })
+}
 
 /// Sample the normal-map pixels that correspond to the diffuse's trimmed
 /// bounds, then blit them into the frame with the same rotation/extrude.

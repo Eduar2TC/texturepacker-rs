@@ -451,7 +451,28 @@ fn search_min(
             return false;
         }
         match place_all(items, opts, w, h) {
-            Ok(pages) => pages.len() == 1,
+            Ok(pages) => {
+                if pages.len() != 1 {
+                    return false;
+                }
+                // Manual: el lienzo solo sirve si ninguna posición fijada
+                // por el usuario quedó recortada al encogerlo.
+                if opts.algorithm == PackingAlgorithm::Manual {
+                    let (iw, ih) = (w - 2 * bp, h - 2 * bp);
+                    for it in items {
+                        if let Some((px, py)) = opts.manual_positions.get(&it.id).copied() {
+                            let fw = it.width + 2 * pad;
+                            let fh = it.height + 2 * pad;
+                            let fx = px.max(0).min(iw - fw);
+                            let fy = py.max(0).min(ih - fh);
+                            if bp + fx != px || bp + fy != py {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                true
+            }
             Err(_) => false,
         }
     };
@@ -684,9 +705,15 @@ fn pack_manual(
 
     let mut pages: Vec<PageState> = vec![PageState::new(0, cw, ch, bp)];
     let mut page_idx = 0usize;
-    let (mut x, mut y, mut row_h) = (bp, bp, 0);
 
+    // Pasada 1: sprites con posición manual (van exactamente ahí).
+    // El flujo de los libres empezará por debajo del más bajo de estos
+    // frames para no solaparlos.
+    let mut flow_y = bp;
     for item in &sorted {
+        let Some((px, py)) = pos(item) else {
+            continue;
+        };
         let w = item.width + 2 * pad;
         let h = item.height + 2 * pad;
         if w > iw || h > ih {
@@ -696,39 +723,49 @@ fn pack_manual(
                 item.id, item.width, item.height
             )));
         }
-        let frame = match pos(item) {
-            Some((px, py)) => {
-                // Ajustar al interior y registrar la posición real usada.
-                let fx = px.max(0).min(iw - w);
-                let fy = py.max(0).min(ih - h);
-                let frame = Rect::new(bp + fx, bp + fy, w, h);
-                let page = &mut pages[page_idx];
-                page.placed.push(frame);
-                page.placements.push(Placement {
-                    id: item.id.clone(),
-                    frame,
-                    rotated: false,
-                    page: page_idx,
-                });
-                continue;
-            }
-            None => {
-                // Sin posición manual: flujo Basic (filas) tras los fijados.
-                if x + w > bp + iw {
-                    x = bp;
-                    y += row_h;
-                    row_h = 0;
-                }
-                if y + h > bp + ih {
-                    page_idx += 1;
-                    pages.push(PageState::new(page_idx, cw, ch, bp));
-                    x = bp;
-                    y = bp;
-                    row_h = 0;
-                }
-                Rect::new(x, y, w, h)
-            }
-        };
+        // Ajustar al interior.
+        let fx = px.max(0).min(iw - w);
+        let fy = py.max(0).min(ih - h);
+        let frame = Rect::new(bp + fx, bp + fy, w, h);
+        let page = &mut pages[page_idx];
+        page.placed.push(frame);
+        page.placements.push(Placement {
+            id: item.id.clone(),
+            frame,
+            rotated: false,
+            page: page_idx,
+        });
+        flow_y = flow_y.max(frame.y + frame.height);
+    }
+
+    // Pasada 2: sprites sin posición manual → flujo Basic (filas).
+    let (mut x, mut y, mut row_h) = (bp, flow_y, 0);
+    for item in &sorted {
+        if pos(item).is_some() {
+            continue;
+        }
+        let w = item.width + 2 * pad;
+        let h = item.height + 2 * pad;
+        if w > iw || h > ih {
+            return Err(TpError::Pack(format!(
+                "El sprite '{}' ({}x{}) no cabe en un atlas de {cw}x{ch} \
+                 (padding {pad} + borde {bp})",
+                item.id, item.width, item.height
+            )));
+        }
+        if x + w > bp + iw {
+            x = bp;
+            y += row_h;
+            row_h = 0;
+        }
+        if y + h > bp + ih {
+            page_idx += 1;
+            pages.push(PageState::new(page_idx, cw, ch, bp));
+            x = bp;
+            y = bp;
+            row_h = 0;
+        }
+        let frame = Rect::new(x, y, w, h);
         let page = &mut pages[page_idx];
         page.placed.push(frame);
         page.placements.push(Placement {
