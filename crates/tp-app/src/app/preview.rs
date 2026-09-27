@@ -81,6 +81,57 @@ fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
         ui.checkbox(&mut app.show_borders, "Bordes 9-patch")
             .on_hover_text("Barras verdes de los bordes 9-patch de cada sprite");
 
+        // Controles del algoritmo Manual: imán de rejilla y limpiar todo.
+        if app.config.effective_algorithm() == tp_core::config::PackingAlgorithm::Manual {
+            ui.separator();
+            let mut grid_changed = false;
+            let mut grid_on = app.config.manual_grid.is_some();
+            if ui
+                .checkbox(&mut grid_on, "Rejilla")
+                .on_hover_text("Imanta el arrastre a una rejilla fija; con «Rejilla en filas» también ordena los sprites sueltos")
+                .changed()
+            {
+                app.config.manual_grid = if grid_on {
+                    Some(tp_core::config::ManualGrid::new(16, true))
+                } else {
+                    None
+                };
+                grid_changed = true;
+            }
+            if let Some(g) = &mut app.config.manual_grid {
+                grid_changed |= ui
+                    .add(
+                        egui::Slider::new(&mut g.step, 2..=256)
+                            .logarithmic(true)
+                            .text("Paso"),
+                    )
+                    .on_hover_text("Separación de la rejilla en píxeles del atlas")
+                    .changed();
+                grid_changed |= ui
+                    .checkbox(&mut g.snap_flow, "Rejilla en filas")
+                    .on_hover_text("Los sprites sin posición fija también se alinean a la rejilla")
+                    .changed();
+            }
+            if grid_changed {
+                app.after_workspace_change();
+            }
+            if ui
+                .button("Limpiar posiciones")
+                .on_hover_text("Borra todas las posiciones manuales: los sprites vuelven al flujo automático")
+                .clicked()
+            {
+                let cleared = app.config.manual_positions.len();
+                app.config.manual_positions.clear();
+                if cleared > 0 {
+                    app.log(
+                        super::LogKind::Info,
+                        format!("{cleared} posición(es) manual(es) eliminada(s)."),
+                    );
+                    app.after_workspace_change();
+                }
+            }
+        }
+
         if let Some(name) = &app.selected_sprite {
             ui.separator();
             ui.add(
@@ -177,6 +228,39 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             let to_screen = |x: i32, y: i32| {
                 egui::pos2(rect.min.x + x as f32 * zoom, rect.min.y + y as f32 * zoom)
             };
+
+            // Rejilla visual del modo Manual (bajo los sprites): líneas en
+            // cada múltiplo del paso dentro del lienzo.
+            if manual_mode {
+                if let Some(g) = app.config.manual_grid {
+                    if g.step > 1 {
+                        let step = g.step as f32 * zoom;
+                        if step >= 4.0 {
+                            let color = egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22);
+                            let mut gx = rect.min.x;
+                            let mut i = 0.0;
+                            while gx <= rect.max.x + 0.5 {
+                                painter.line_segment(
+                                    [egui::pos2(gx, rect.min.y), egui::pos2(gx, rect.max.y)],
+                                    (1.0, color),
+                                );
+                                i += 1.0;
+                                gx = rect.min.x + i * step;
+                            }
+                            let mut gy = rect.min.y;
+                            let mut j = 0.0;
+                            while gy <= rect.max.y + 0.5 {
+                                painter.line_segment(
+                                    [egui::pos2(rect.min.x, gy), egui::pos2(rect.max.x, gy)],
+                                    (1.0, color),
+                                );
+                                j += 1.0;
+                                gy = rect.min.y + j * step;
+                            }
+                        }
+                    }
+                }
+            }
 
             let sprites: Vec<_> = out
                 .result
@@ -337,6 +421,12 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                             if let Some(pos) = dresp.interact_pointer_pos() {
                                 let px = ((pos.x - rect.min.x) / zoom) as i32 - bp - pad;
                                 let py = ((pos.y - rect.min.y) / zoom) as i32 - bp - pad;
+                                // Rejilla opcional: vista viva imantada mientras
+                                // se arrastra; el motor confita el mismo snap.
+                                let (px, py) = match &app.config.manual_grid {
+                                    Some(g) => g.snap_pos((px, py)),
+                                    None => (px, py),
+                                };
                                 let max_x = (canvas_w - 2 * bp - (f.width + 2 * pad)).max(0);
                                 let max_y = (canvas_h - 2 * bp - (f.height + 2 * pad)).max(0);
                                 manual_moved = Some((
@@ -413,9 +503,13 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             app.request_preview(false);
         }
         if manual_stopped {
+            let grid_note = match app.config.manual_grid {
+                Some(g) => format!(" (rejilla: {} px)", g.step),
+                None => String::new(),
+            };
             app.log(
                 super::LogKind::Info,
-                "Posición manual fijada (se guarda con el proyecto).".into(),
+                format!("Posición manual fijada{grid_note} (se guarda con el proyecto)."),
             );
         }
     }

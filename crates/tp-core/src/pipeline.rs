@@ -229,6 +229,7 @@ fn execute(
         basic_sort_by: config.basic_sort_by,
         basic_order: config.basic_order,
         manual_positions: config.manual_positions.clone(),
+        manual_grid: config.manual_grid,
         word_align_mod: config.word_align_mod(),
         ..PackerOptions::new(
             config.packing_strategy,

@@ -91,6 +91,8 @@ pub struct PackerOptions {
     pub word_align_mod: i32,
     /// Manual algorithm: hand-set position per sprite id (trimmed coords).
     pub manual_positions: ManualPositions,
+    /// Manual algorithm: optional snap grid (also snaps the free row-flow).
+    pub manual_grid: Option<crate::config::ManualGrid>,
 }
 
 impl PackerOptions {
@@ -119,6 +121,7 @@ impl PackerOptions {
             basic_order: SortOrder::default(),
             word_align_mod: 1,
             manual_positions: ManualPositions::new(),
+            manual_grid: None,
         }
     }
 }
@@ -705,6 +708,9 @@ fn pack_manual(
 
     let mut pages: Vec<PageState> = vec![PageState::new(0, cw, ch, bp)];
     let mut page_idx = 0usize;
+    // Rejilla opcional: además de imantar el arrastre en la GUI, el flujo
+    // de los libres respeta la rejilla (origen y alturas de fila).
+    let flow = opts.manual_grid.filter(|g| g.snap_flow && g.step > 0);
 
     // Pasada 1: sprites con posición manual (van exactamente ahí).
     // El flujo de los libres empezará por debajo del más bajo de estos
@@ -739,6 +745,12 @@ fn pack_manual(
     }
 
     // Pasada 2: sprites sin posición manual → flujo Basic (filas).
+    // Con rejilla (snap_flow), origen, avance e inicios de fila se imantan
+    // a múltiplos del paso; sin ella, flujo Basic exacto.
+    let snapv = |v: i32| match flow {
+        Some(g) => g.snap(v),
+        None => v,
+    };
     let (mut x, mut y, mut row_h) = (bp, flow_y, 0);
     for item in &sorted {
         if pos(item).is_some() {
@@ -753,19 +765,25 @@ fn pack_manual(
                 item.id, item.width, item.height
             )));
         }
-        if x + w > bp + iw {
-            x = bp;
-            y += row_h;
+        let mut sx = snapv(x);
+        let mut sy = snapv(y);
+        if sx + w > bp + iw {
+            y = snapv(y) + snapv(row_h);
             row_h = 0;
+            x = bp;
+            sx = snapv(x);
+            sy = snapv(y);
         }
-        if y + h > bp + ih {
+        if sy + h > bp + ih {
             page_idx += 1;
             pages.push(PageState::new(page_idx, cw, ch, bp));
             x = bp;
-            y = bp;
+            y = snapv(bp);
+            sx = snapv(x);
+            sy = y;
             row_h = 0;
         }
-        let frame = Rect::new(x, y, w, h);
+        let frame = Rect::new(sx, sy, w, h);
         let page = &mut pages[page_idx];
         page.placed.push(frame);
         page.placements.push(Placement {
@@ -774,7 +792,7 @@ fn pack_manual(
             rotated: false,
             page: page_idx,
         });
-        x += w;
+        x = sx + w;
         row_h = row_h.max(h);
     }
     Ok(pages)
@@ -1511,6 +1529,43 @@ mod tests {
         assert_eq!((f.x, f.y), (4, 20));
         assert_eq!((f.x + f.width, f.y + f.height), (12, 28));
         assert!(f.x + f.width <= 32 - 4 && f.y + f.height <= 32 - 4);
+    }
+
+    #[test]
+    fn manual_snap_grid_aligns_free_flow() {
+        // snap_flow: el flujo de los libres también imanta a la rejilla.
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, 128, 0, 0, false);
+        opts.algorithm = PackingAlgorithm::Manual;
+        opts.pack_mode = PackMode::Fast;
+        opts.manual_grid = Some(crate::config::ManualGrid::new(16, true));
+        opts.manual_positions.insert("a".into(), (32, 48));
+        // "b" y "c" sin posición: el flujo imanta a múltiplos de 16.
+        let out = pack(
+            &[item("a", 8, 8), item("b", 10, 10), item("c", 12, 12)],
+            &opts,
+        )
+        .unwrap();
+        assert_eq!(out.pages.len(), 1);
+        let p = |id: &str| {
+            out.pages[0]
+                .placements
+                .iter()
+                .find(|pl| pl.id == id)
+                .unwrap()
+                .frame
+        };
+        // Fijado: exactamente donde se pidió.
+        assert_eq!((p("a").x, p("a").y), (32, 48));
+        // Libres: origen y avance en múltiplos de 16.
+        let fb = p("b");
+        let fc = p("c");
+        assert_eq!(fb.x % 16, 0, "x de b fuera de rejilla: {}", fb.x);
+        assert_eq!(fb.y % 16, 0, "y de b fuera de rejilla: {}", fb.y);
+        assert_eq!(fc.x % 16, 0, "x de c fuera de rejilla: {}", fc.x);
+        assert_eq!(fc.y % 16, 0, "y de c fuera de rejilla: {}", fc.y);
+        assert!(!fb.intersects(&fc) && !p("a").intersects(&fb) && !p("a").intersects(&fc));
+        // La primera fila arranca por debajo del fijado (48+8=56 → snap 64).
+        assert!(fb.y >= 64, "b debería empezar en y>=64, fue {}", fb.y);
     }
 
     #[test]

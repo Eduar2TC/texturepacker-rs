@@ -147,7 +147,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 | MaxRects BSSF / BAF / BLSF                     | ✅     | Seleccionable |
 | Guillotine                                     | ✅     | Seleccionable |
 | Grid / Basic                                   | ✅     | Rejilla (celda = mayor sprite inflado) y filas de izquierda a derecha con `basic_sort_by`/`basic_order` |
-| Manual (GUI)                                   | ✅     | Arrastra los sprites en la vista previa para fijar su posición (`manual_positions`); los sueltos caen en filas Basic debajo de los fijados |
+| Manual (GUI)                                   | ✅     | Arrastra los sprites en la vista previa para fijar su posición (`manual_positions`); los sueltos caen en filas Basic debajo de los fijados. Rejilla opcional que imanta el arrastre (y, si quieres, el flujo de los sueltos) y botón «Limpiar posiciones» (`manual_grid`) |
 | Pack por carpetas (grupos)                     | ✅     | Asigna sprites a grupos en el panel de sprites (arrastre o menú contextual); cada grupo empaqueta en `<salida>/<grupo>/`, la hoja principal queda en la raíz |
 | Heurísticas Best / BottomLeft / ContactPoint   | ✅     | `Best` prueba las 5 heurísticas y se queda con el empaquetado más ajustado |
 | Pack mode Fast / Good / Best                   | ✅     | Búsqueda binaria del atlas mínimo (presupuesto de 400 ms / 3 s); Fast solo recorta |
@@ -325,7 +325,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 175 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 178 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
