@@ -81,8 +81,9 @@ jobs:
             mkdir -p tp-app-linux
             cp dist/tp-app packaging/linux/LEEME-GTK3.txt tp-app-linux/
             cp packaging/icon.png tp-app-linux/icon.png
-            sed -e "s|@INSTALL_DIR@|$PWD/tp-app-linux|" \
-              packaging/linux/tp-app.desktop > tp-app-linux/tp-app.desktop
+            # El .desktop lleva @INSTALL_DIR@ sin sustituir: el zip es
+            # portable y el LEEME explica cómo completarlo tras descomprimir.
+            cp packaging/linux/tp-app.desktop tp-app-linux/
             zip -j tp-app-${{ matrix.target }}.zip tp-app-linux/*
             tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
           fi

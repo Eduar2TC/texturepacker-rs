@@ -29,3 +29,14 @@ Uso rápido:
   ./tp-app                      # abre la app sin proyecto
   ./tp-app proyecto.tpproj      # abre un proyecto
   ./tp-cli pack proyecto.tpproj # empaqueta desde la terminal
+
+Lanzador de escritorio (opcional):
+
+  El fichero tp-app.desktop usa @INSTALL_DIR@ como marcador. Cópialo a
+  ~/.local/share/applications/ sustituyendo la ruta absoluta de esta
+  carpeta:
+
+      sed "s|@INSTALL_DIR@|$PWD|" tp-app.desktop \
+        > ~/.local/share/applications/texturepacker-rs.desktop
+
+  (el icon.png debe quedar junto al binario, tal como está en el zip).
