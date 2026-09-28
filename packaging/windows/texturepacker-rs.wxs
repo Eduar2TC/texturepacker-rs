@@ -12,7 +12,6 @@
            Name="TexturePacker-RS"
            Language="3082"
            Codepage="65001"
-           SummaryCodepage="65001"
            Version="@VERSION@"
            Manufacturer="Eduar2TC"
            UpgradeCode="7C9B4E42-1F3A-4B8D-9C55-2A6E8D1F0B31">
@@ -20,6 +19,7 @@
     <Package InstallerVersion="200"
              Compressed="yes"
              InstallScope="perMachine"
+             SummaryCodepage="65001"
              Description="TexturePacker-RS — empaquetador de atlas de sprites" />
     <MajorUpgrade DowngradeErrorMessage="Ya hay una versión más reciente de [ProductName] instalada." />
     <MediaTemplate EmbedCab="yes" />
