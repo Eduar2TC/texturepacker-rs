@@ -1,0 +1,31 @@
+LEEME — TexturePacker-RS (tp-app Linux)
+=======================================
+
+El binario tp-app de Linux se enlaza dinámicamente contra las librerías
+GTK3 del sistema (necesarias para los diálogos de abrir/guardar fichero).
+Si al ejecutarlo ves un error tipo:
+
+    error while loading shared libraries: libgtk-3.so.0
+
+instala las librerías de GTK3 con el gestor de paquetes de tu
+distribución:
+
+  Debian / Ubuntu
+      sudo apt install libgtk-3-0
+
+  Fedora
+      sudo dnf install gtk3
+
+  Arch Linux
+      sudo pacman -S gtk3
+
+  openSUSE
+      sudo zypper install gtk3
+
+La herramienta de línea de órdenes (tp-cli) no necesita GTK3.
+
+Uso rápido:
+
+  ./tp-app                      # abre la app sin proyecto
+  ./tp-app proyecto.tpproj      # abre un proyecto
+  ./tp-cli pack proyecto.tpproj # empaqueta desde la terminal

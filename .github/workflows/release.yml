@@ -76,7 +76,11 @@ jobs:
           cp target/${{ matrix.target }}/release/tp-cli dist/
           tar -czf tp-cli-${{ matrix.target }}.tar.gz -C dist tp-cli
           if [ -f target/${{ matrix.target }}/release/tp-app ]; then
+            # Zip con LEEME de GTK3: la app se enlaza a libgtk-3 del sistema.
             cp target/${{ matrix.target }}/release/tp-app dist/
+            mkdir -p tp-app-linux
+            cp dist/tp-app packaging/linux/LEEME-GTK3.txt tp-app-linux/
+            zip -j tp-app-${{ matrix.target }}.zip tp-app-linux/*
             tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
           fi
 
@@ -88,6 +92,34 @@ jobs:
           Copy-Item target/${{ matrix.target }}/release/tp-cli.exe dist/
           Compress-Archive -Path dist/tp-cli.exe -DestinationPath tp-cli-${{ matrix.target }}.zip
           Copy-Item target/${{ matrix.target }}/release/tp-app.exe dist/
+
+          # ---- Instalador .msi (WiX v3 vía dotnet tool) ----
+          dotnet tool install --global wix
+          wix extension add -g WixToolset.UI.wixext
+
+          $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq 'tp-app' } | Select-Object -ExpandProperty version
+
+          $wxs = Get-Content packaging/windows/texturepacker-rs.wxs -Raw
+          $wxs = $wxs.Replace('@VERSION@', $version)
+          $wxs = $wxs.Replace('@EXE_APP@', "$PWD/target/${{ matrix.target }}/release/tp-app.exe")
+          $wxs = $wxs.Replace('@EXE_CLI@', "$PWD/target/${{ matrix.target }}/release/tp-cli.exe")
+          # Icono y licencia son opcionales: sin ellos, se recortan del manifiesto.
+          if (-not (Test-Path 'packaging/windows/icon.ico')) {
+            $wxs = $wxs -replace '<Property Id="ARPPRODUCTICON"[^>]*/>', ''
+            $wxs = $wxs -replace '<Icon [^>]*/>', ''
+            $wxs = $wxs -replace '\s*Icon="AppIcon"', ''
+          }
+          if (-not (Test-Path 'packaging/windows/licencia.rtf')) {
+            $wxs = $wxs -replace '<WixVariable [^>]*/>', ''
+          }
+          Set-Content -Path "$env:RUNNER_TEMP/texturepacker-rs.wxs" -Value $wxs
+
+          $uiExt = (wix extension list -g | Select-String 'WixToolset.UI.wixext').ToString()
+          wix build "$env:RUNNER_TEMP/texturepacker-rs.wxs" `
+            -ext "$($uiExt -replace '.*\s', '')" `
+            -o "texturepacker-rs-${{ matrix.target }}.msi"
+
           Compress-Archive -Path dist/tp-app.exe -DestinationPath tp-app-${{ matrix.target }}.zip
 
       - name: Preparar artefactos (macOS)
@@ -96,7 +128,25 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/tp-cli dist/
           tar -czf tp-cli-${{ matrix.target }}.tar.gz -C dist tp-cli
-          cp target/${{ matrix.target }}/release/tp-app dist/
+
+          # ---- Bundle .app + .dmg con firma ad-hoc ----
+          # Sin firma, los binarios arm64 no arrancan en Gatekeeper.
+          APP="TexturePacker-RS.app"
+          mkdir -p "$APP/Contents/MacOS"
+          cp target/${{ matrix.target }}/release/tp-app "$APP/Contents/MacOS/"
+          VERSION=$(cargo metadata --no-deps --format-version 1 | python3 -c \
+            "import json,sys; print(next(p['version'] for p in json.load(sys.stdin)['packages'] if p['name']=='tp-app'))")
+          sed -e "s/@VERSION@/$VERSION/" packaging/macos/Info.plist > "$APP/Contents/Info.plist"
+          codesign --force --deep --sign - "$APP"
+
+          # El dmg se crea desde una carpeta temporal con el bundle.
+          DMG_DIR=$(mktemp -d)
+          cp -R "$APP" "$DMG_DIR/"
+          hdiutil create -volname "TexturePacker-RS" \
+            -srcfolder "$DMG_DIR" -ov -format UDZO \
+            "tp-app-${{ matrix.target }}.dmg"
+          rm -rf "$APP" "$DMG_DIR"
+
           tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
 
       - name: Subir artefactos del job
@@ -108,6 +158,8 @@ jobs:
             tp-cli-*.zip
             tp-app-*.tar.gz
             tp-app-*.zip
+            tp-app-*.dmg
+            *.msi
           if-no-files-found: error
 
   release:
@@ -130,6 +182,8 @@ jobs:
             dist/tp-cli-*.zip
             dist/tp-app-*.tar.gz
             dist/tp-app-*.zip
+            dist/tp-app-*.dmg
+            dist/*.msi
           body: |
             Primera versión pública de TexturePacker-RS 🧩
 
