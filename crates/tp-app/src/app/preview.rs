@@ -253,7 +253,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 ui.painter().rect_stroke(
                     rect,
                     8.0,
-                    egui::Stroke::new(1.5, tint),
+                    egui::Stroke::new(1.5_f32, tint),
                     egui::StrokeKind::Inside,
                 );
                 ui.painter().text(
@@ -346,7 +346,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     rect,
                     0.0,
                     egui::Stroke::new(
-                        2.0,
+                        2.0_f32,
                         egui::Color32::from_rgba_unmultiplied(120, 200, 255, 160),
                     ),
                     egui::StrokeKind::Inside,
@@ -391,7 +391,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                             g,
                             0.0,
                             egui::Stroke::new(
-                                1.5,
+                                1.5_f32,
                                 egui::Color32::from_rgba_unmultiplied(160, 220, 255, 220),
                             ),
                             egui::StrokeKind::Inside,
@@ -666,7 +666,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         r,
                         0.0,
                         egui::Stroke::new(
-                            1.0,
+                            1.0_f32,
                             egui::Color32::from_rgba_unmultiplied(120, 200, 255, 170),
                         ),
                         egui::StrokeKind::Inside,
@@ -710,7 +710,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     g,
                     0.0,
                     egui::Stroke::new(
-                        1.5,
+                        1.5_f32,
                         egui::Color32::from_rgba_unmultiplied(255, 255, 255, 110),
                     ),
                     egui::StrokeKind::Inside,

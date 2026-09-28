@@ -1760,7 +1760,7 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
             screen.shrink(4.0),
             6.0,
             egui::Stroke::new(
-                2.0,
+                2.0_f32,
                 egui::Color32::from_rgba_unmultiplied(120, 200, 255, 200),
             ),
             egui::StrokeKind::Outside,
