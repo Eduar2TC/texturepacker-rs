@@ -3843,6 +3843,7 @@ name = "tp-app"
 version = "0.2.0"
 dependencies = [
  "eframe",
+ "image",
  "notify",
  "rfd",
  "serde_json",

@@ -12,6 +12,8 @@ eframe.workspace = true
 rfd.workspace = true
 serde_json.workspace = true
 notify = "8"
+# Decodificar el icono de ventana embebido (packaging/icon.png).
+image.workspace = true
 
 [lints]
 workspace = true

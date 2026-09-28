@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=TexturePacker-RS
+GenericName=Sprite atlas packer
+Comment=Empaquetador de atlas de sprites compatible con TexturePacker
+Exec=@INSTALL_DIR@/tp-app
+Icon=@INSTALL_DIR@/icon.png
+Terminal=false
+Categories=Development;Graphics;
+Keywords=sprite;atlas;texturepacker;game;gamedev;

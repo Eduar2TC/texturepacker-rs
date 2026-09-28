@@ -10,6 +10,8 @@
 	<string>com.eduar2tc.texturepacker-rs</string>
 	<key>CFBundleExecutable</key>
 	<string>tp-app</string>
+	<key>CFBundleIconFile</key>
+	<string>icon</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
