@@ -65,15 +65,27 @@ jobs:
           key: release-${{ matrix.target }}
 
       # Mismos gates que el CI: una release no puede salir de un árbol que
-      # no pasa fmt/clippy/tests.
+      # no pasa fmt/clippy/tests. En el cross aarch64 solo se comprueba
+      # tp-core/tp-cli (tp-app requiere GTK3 cruzado que no está montado);
+      # el árbol ya pasó los gates completos en el CI sobre los commits.
       - name: Formato (cargo fmt --check)
         run: cargo fmt --all -- --check
 
       - name: Lints (cargo clippy -D warnings)
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
+      - name: Lints (cargo clippy -D warnings, cross aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo clippy -p tp-core -p tp-cli --all-targets --locked -- -D warnings
+
       - name: Tests del workspace
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: cargo test --workspace --locked
+
+      - name: Tests (core+cli, cross aarch64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: cargo test -p tp-core -p tp-cli --locked
 
       # Binario CLI sin dependencias de sistema y con estrellas para reducir
       # el tamaño (lto thin del workspace + strip por binario).

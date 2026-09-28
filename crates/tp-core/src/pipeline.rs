@@ -163,7 +163,16 @@ fn execute(
                     .strip_prefix(&config.input_directory)
                     .ok()
                     .and_then(|rel| rel.parent())
-                    .map(|p| p.to_string_lossy().into_owned())
+                    .map(|p| {
+                        // Nombre de grupo = ruta relativa con separador
+                        // '/' SIEMPRE: el nombre cruza plataformas (pasa a
+                        // output_directory.join y a los metadatos) y en
+                        // Windows to_string_lossy daría '\'.
+                        p.components()
+                            .map(|c| c.as_os_str().to_string_lossy())
+                            .collect::<Vec<_>>()
+                            .join("/")
+                    })
                     .unwrap_or_default();
                 if sub.is_empty() {
                     continue;
