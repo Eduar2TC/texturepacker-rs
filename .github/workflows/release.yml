@@ -93,32 +93,30 @@ jobs:
           Compress-Archive -Path dist/tp-cli.exe -DestinationPath tp-cli-${{ matrix.target }}.zip
           Copy-Item target/${{ matrix.target }}/release/tp-app.exe dist/
 
-          # ---- Instalador .msi (WiX v3 vía dotnet tool) ----
-          dotnet tool install --global wix
-          wix extension add -g WixToolset.UI.wixext
+          # ---- Instalador .msi (WiX v3 clásico candle/light; el tool v7
+          # de dotnet exige aceptar la EULA OSMF, así que usamos choco) ----
+          choco install wixtoolset -y --no-progress
+          $wixBin = "C:\Program Files (x86)\WiX Toolset v3.14\bin"
 
           $version = (cargo metadata --no-deps --format-version 1 | ConvertFrom-Json).packages |
             Where-Object { $_.name -eq 'tp-app' } | Select-Object -ExpandProperty version
 
           $wxs = Get-Content packaging/windows/texturepacker-rs.wxs -Raw
           $wxs = $wxs.Replace('@VERSION@', $version)
-          $wxs = $wxs.Replace('@EXE_APP@', "$PWD/target/${{ matrix.target }}/release/tp-app.exe")
-          $wxs = $wxs.Replace('@EXE_CLI@', "$PWD/target/${{ matrix.target }}/release/tp-cli.exe")
-          # Icono y licencia son opcionales: sin ellos, se recortan del manifiesto.
-          if (-not (Test-Path 'packaging/windows/icon.ico')) {
-            $wxs = $wxs -replace '<Property Id="ARPPRODUCTICON"[^>]*/>', ''
-            $wxs = $wxs -replace '<Icon [^>]*/>', ''
-            $wxs = $wxs -replace '\s*Icon="AppIcon"', ''
-          }
-          if (-not (Test-Path 'packaging/windows/licencia.rtf')) {
-            $wxs = $wxs -replace '<WixVariable [^>]*/>', ''
-          }
-          Set-Content -Path "$env:RUNNER_TEMP/texturepacker-rs.wxs" -Value $wxs
+          $wxs = $wxs.Replace('@EXE_APP@', "$PWD\target\${{ matrix.target }}\release\tp-app.exe")
+          $wxs = $wxs.Replace('@EXE_CLI@', "$PWD\target\${{ matrix.target }}\release\tp-cli.exe")
+          # Sin icon.ico ni licencia.rtf en el repo: se recortan del manifiesto
+          # (instalador con UI básica y sin página de licencia).
+          $wxs = $wxs -replace '<Property Id="ARPPRODUCTICON"[^>]*/>', ''
+          $wxs = $wxs -replace '<Icon [^>]*/>', ''
+          $wxs = $wxs -replace '\s*Icon="AppIcon"', ''
+          $wxs = $wxs -replace '<WixVariable [^>]*/>', ''
+          Set-Content -Path "$env:RUNNER_TEMP\texturepacker-rs.wxs" -Value $wxs -Encoding UTF8
 
-          $uiExt = (wix extension list -g | Select-String 'WixToolset.UI.wixext').ToString()
-          wix build "$env:RUNNER_TEMP/texturepacker-rs.wxs" `
-            -ext "$($uiExt -replace '.*\s', '')" `
-            -o "texturepacker-rs-${{ matrix.target }}.msi"
+          & "$wixBin\candle.exe" -arch x64 -out "$env:RUNNER_TEMP\tp.wixobj" "$env:RUNNER_TEMP\texturepacker-rs.wxs"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & "$wixBin\light.exe" -out "texturepacker-rs-${{ matrix.target }}.msi" "$env:RUNNER_TEMP\tp.wixobj"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           Compress-Archive -Path dist/tp-app.exe -DestinationPath tp-app-${{ matrix.target }}.zip
 
@@ -147,6 +145,7 @@ jobs:
             "tp-app-${{ matrix.target }}.dmg"
           rm -rf "$APP" "$DMG_DIR"
 
+          cp target/${{ matrix.target }}/release/tp-app dist/
           tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
 
       - name: Subir artefactos del job
