@@ -14,6 +14,16 @@ pub(super) fn preview_ui(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
+    // La barra nunca desborda: si no cabe, aparece scroll horizontal.
+    egui::ScrollArea::horizontal()
+        .id_salt("zoom_bar_scroll")
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            zoom_bar_inner(app, ui);
+        });
+}
+
+fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // Indicador de frescura de la vista previa.
         match app.preview_state() {
@@ -75,11 +85,13 @@ fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
         }
 
         ui.separator();
-        ui.checkbox(&mut app.show_outlines, "Mostrar contornos")
-            .on_hover_text("Marcos y triangulación de los sprites");
-        ui.checkbox(&mut app.show_pivots, "Pivots");
-        ui.checkbox(&mut app.show_borders, "Bordes 9-patch")
-            .on_hover_text("Barras verdes de los bordes 9-patch de cada sprite");
+        ui.menu_button("Vista", |ui| {
+            ui.checkbox(&mut app.show_outlines, "Mostrar contornos")
+                .on_hover_text("Marcos y triangulación de los sprites");
+            ui.checkbox(&mut app.show_pivots, "Pivots");
+            ui.checkbox(&mut app.show_borders, "Bordes 9-patch")
+                .on_hover_text("Barras verdes de los bordes 9-patch de cada sprite");
+        });
 
         // Controles del algoritmo Manual, en un menú para no saturar la barra.
         if app.config.effective_algorithm() == tp_core::config::PackingAlgorithm::Manual {
