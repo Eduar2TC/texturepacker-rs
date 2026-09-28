@@ -40,6 +40,23 @@ la página de [Releases](https://github.com/Eduar2TC/texturepacker-rs/releases)
 binarios de `tp-cli` para Linux x64/arm64, Windows x64 y macOS (Apple Silicon
 e Intel), y de `tp-app` para Linux x64, Windows y macOS.
 
+Los ficheros usan nombres amables (`tp-cli-linux-x64.tar.gz`,
+`tp-app-macos-arm64.dmg`, `texturepacker-rs-windows-x64.msi`…). Además de los
+comprimidos, hay **instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS,
+`.msi` con WiX en Windows (instala tp-app y tp-cli, añade tp-cli al PATH) y un
+zip de Linux con icono y lanzador `.desktop`.
+
+### Novedades v0.3.0
+
+- **Icono propio en todas las plataformas**: ventana de la app, instalador
+  Windows, bundle macOS y lanzador Linux (generado por `packaging/gen_icon.py`).
+- **Instaladores nativos** `.dmg` / `.msi` / zip con `.desktop` en el release.
+- **Nombres de descarga amables** (`linux-x64`, `macos-arm64`…) en lugar de
+  los triples de target de Rust.
+- **Interfaz corregida y verificada con interacción real**: clic y arrastre en
+  el árbol de sprites conviven (antes un overlay robaba el press), menú
+  contextual «Mover a hoja…» funcional y la barra de zoom ya no desborda.
+
 ### Novedades v0.2.0
 
 - **Espacio de trabajo dinámico**: vista previa en memoria sin escribir en

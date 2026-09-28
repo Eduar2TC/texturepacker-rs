@@ -20,14 +20,19 @@ jobs:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
+            friendly: linux-x64
             os: ubuntu-24.04
           - target: aarch64-unknown-linux-gnu
+            friendly: linux-arm64
             os: ubuntu-24.04
           - target: x86_64-pc-windows-msvc
+            friendly: windows-x64
             os: windows-latest
           - target: aarch64-apple-darwin
+            friendly: macos-arm64
             os: macos-latest
           - target: x86_64-apple-darwin
+            friendly: macos-intel
             os: macos-latest
 
     steps:
@@ -74,7 +79,7 @@ jobs:
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/tp-cli dist/
-          tar -czf tp-cli-${{ matrix.target }}.tar.gz -C dist tp-cli
+          tar -czf tp-cli-${{ matrix.friendly }}.tar.gz -C dist tp-cli
           if [ -f target/${{ matrix.target }}/release/tp-app ]; then
             # Zip con LEEME de GTK3, icono y lanzador .desktop.
             cp target/${{ matrix.target }}/release/tp-app dist/
@@ -84,8 +89,8 @@ jobs:
             # El .desktop lleva @INSTALL_DIR@ sin sustituir: el zip es
             # portable y el LEEME explica cómo completarlo tras descomprimir.
             cp packaging/linux/tp-app.desktop tp-app-linux/
-            zip -j tp-app-${{ matrix.target }}.zip tp-app-linux/*
-            tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
+            zip -j tp-app-${{ matrix.friendly }}.zip tp-app-linux/*
+            tar -czf tp-app-${{ matrix.friendly }}.tar.gz -C dist tp-app
           fi
 
       - name: Preparar artefactos (Windows)
@@ -94,7 +99,7 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item target/${{ matrix.target }}/release/tp-cli.exe dist/
-          Compress-Archive -Path dist/tp-cli.exe -DestinationPath tp-cli-${{ matrix.target }}.zip
+          Compress-Archive -Path dist/tp-cli.exe -DestinationPath tp-cli-${{ matrix.friendly }}.zip
           Copy-Item target/${{ matrix.target }}/release/tp-app.exe dist/
 
           # ---- Instalador .msi (WiX v3 clásico candle/light; el tool v7
@@ -119,17 +124,17 @@ jobs:
 
           & "$wixBin\candle.exe" -arch x64 -out "$env:RUNNER_TEMP\tp.wixobj" "$env:RUNNER_TEMP\texturepacker-rs.wxs"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & "$wixBin\light.exe" -out "texturepacker-rs-${{ matrix.target }}.msi" "$env:RUNNER_TEMP\tp.wixobj"
+          & "$wixBin\light.exe" -out "texturepacker-rs-${{ matrix.friendly }}.msi" "$env:RUNNER_TEMP\tp.wixobj"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          Compress-Archive -Path dist/tp-app.exe -DestinationPath tp-app-${{ matrix.target }}.zip
+          Compress-Archive -Path dist/tp-app.exe -DestinationPath tp-app-${{ matrix.friendly }}.zip
 
       - name: Preparar artefactos (macOS)
         if: runner.os == 'macOS'
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/tp-cli dist/
-          tar -czf tp-cli-${{ matrix.target }}.tar.gz -C dist tp-cli
+          tar -czf tp-cli-${{ matrix.friendly }}.tar.gz -C dist tp-cli
 
           # ---- Bundle .app + .dmg con firma ad-hoc ----
           # Sin firma, los binarios arm64 no arrancan en Gatekeeper.
@@ -149,11 +154,11 @@ jobs:
           cp -R "$APP" "$DMG_DIR/"
           hdiutil create -volname "TexturePacker-RS" \
             -srcfolder "$DMG_DIR" -ov -format UDZO \
-            "tp-app-${{ matrix.target }}.dmg"
+            "tp-app-${{ matrix.friendly }}.dmg"
           rm -rf "$APP" "$DMG_DIR"
 
           cp target/${{ matrix.target }}/release/tp-app dist/
-          tar -czf tp-app-${{ matrix.target }}.tar.gz -C dist tp-app
+          tar -czf tp-app-${{ matrix.friendly }}.tar.gz -C dist tp-app
 
       - name: Subir artefactos del job
         uses: actions/upload-artifact@v4
@@ -191,19 +196,29 @@ jobs:
             dist/tp-app-*.dmg
             dist/*.msi
           body: |
-            Primera versión pública de TexturePacker-RS 🧩
+            ## Novedades
 
-            - **tp-cli**: empaquetado headless y descifrado (`tp-cli pack`, `tp-cli decrypt`)
-            - **tp-app**: aplicación de escritorio (egui/eframe)
+            - **Vista de trabajo dinámica**: la vista previa se recalcula en memoria
+              al editar; «Publicar» escribe los ficheros cuando tú decides.
+            - **Autowatch**: editar, crear o borrar PNGs refresca la vista al momento.
+            - **Algoritmo Manual**: arrastra sprites en la vista para fijar su posición.
+            - **Pack por carpetas**: hojas como en TexturePacker (arrastre entre hojas
+              en el panel) y modo automático que espeja tus subcarpetas de entrada.
+            - **Icono propio** en la ventana, el instalador Windows (.msi), el bundle
+              macOS (.app) y el lanzador de Linux.
+            - **Instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS, `.msi` con
+              WiX en Windows y zip con lanzador `.desktop` en Linux.
 
-            | Plataforma | Binarios |
-            |---|---|
-            | Linux x64 | `tp-cli-x86_64-unknown-linux-gnu.tar.gz`, `tp-app-x86_64-unknown-linux-gnu.tar.gz` |
-            | Linux arm64 (solo CLI) | `tp-cli-aarch64-unknown-linux-gnu.tar.gz` |
-            | Windows x64 | `tp-cli-x86_64-pc-windows-msvc.zip`, `tp-app-x86_64-pc-windows-msvc.zip` |
-            | macOS Apple Silicon | `tp-cli-aarch64-apple-darwin.tar.gz`, `tp-app-aarch64-apple-darwin.tar.gz` |
-            | macOS Intel | `tp-cli-x86_64-apple-darwin.tar.gz`, `tp-app-x86_64-apple-darwin.tar.gz` |
+            ## Descargas
 
-            La app de escritorio en Linux requiere las librerías GTK3 del sistema
-            (`libgtk-3`); los binarios no las empaquetan.
+            | Plataforma | tp-app | tp-cli |
+            |---|---|---|
+            | Linux x64 | `tp-app-linux-x64.tar.gz` · zip con `.desktop` | `tp-cli-linux-x64.tar.gz` |
+            | Linux arm64 | — | `tp-cli-linux-arm64.tar.gz` |
+            | Windows x64 | `tp-app-windows-x64.zip` o **instalador `.msi`** | `tp-cli-windows-x64.zip` |
+            | macOS Apple Silicon | `tp-app-macos-arm64.dmg` o `.tar.gz` | `tp-cli-macos-arm64.tar.gz` |
+            | macOS Intel | `tp-app-macos-intel.dmg` o `.tar.gz` | `tp-cli-macos-intel.tar.gz` |
+
+            La app en Linux requiere GTK3 del sistema; el zip incluye un LEEME
+            con la orden de instalación para cada distro.
           generate_release_notes: true
