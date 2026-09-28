@@ -35,6 +35,7 @@
 
     <Feature Id="Main" Title="TexturePacker-RS" Level="1">
       <ComponentGroupRef Id="Binarios" />
+      <ComponentRef Id="MenuDir" />
     </Feature>
 
     <Directory Id="TARGETDIR" Name="SourceDir">
@@ -42,7 +43,19 @@
         <Directory Id="INSTALLFOLDER" Name="TexturePacker-RS" />
       </Directory>
       <Directory Id="ProgramMenuFolder">
-        <Directory Id="AppMenuDir" Name="TexturePacker-RS" />
+        <Directory Id="AppMenuDir" Name="TexturePacker-RS">
+          <!-- Carpeta del menú Inicio: se elimina al desinstalar
+               (keypath HKLM, todo por máquina). -->
+          <Component Id="MenuDir" Guid="*">
+            <RegistryValue Root="HKLM"
+                           Key="Software\Eduar2TC\TexturePacker-RS"
+                           Name="menu_dir"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+            <RemoveFolder Id="AppMenuDirCleanup" On="uninstall" />
+          </Component>
+        </Directory>
       </Directory>
     </Directory>
 
@@ -57,18 +70,6 @@
                     Description="Empaquetador de atlas de sprites"
                     Advertise="yes" />
         </File>
-      </Component>
-
-      <!-- Carpeta del menú Inicio: se crea con la instalación y se elimina
-           al desinstalar (keypath HKLM, todo por máquina). -->
-      <Component Id="MenuDir" Guid="*" Directory="AppMenuDir">
-        <RegistryValue Root="HKLM"
-                       Key="Software\Eduar2TC\TexturePacker-RS"
-                       Name="menu_dir"
-                       Type="integer"
-                       Value="1"
-                       KeyPath="yes" />
-        <RemoveFolder Id="AppMenuDirCleanup" On="uninstall" />
       </Component>
 
       <Component Id="CliExe" Guid="*">
