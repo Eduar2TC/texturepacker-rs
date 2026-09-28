@@ -311,11 +311,19 @@ impl App {
     pub fn move_sprites_to_group(&mut self, ids: &[String], group_index: usize) -> usize {
         let mut moved = 0usize;
         for id in ids {
+            // ¿Ya está en el grupo destino? Retirarlo de los demás y, solo si
+            // no estaba ya allí, añadirlo (mover a su propio grupo = no-op;
+            // sin este guardia, retain+condición lo BORRABA).
+            let mut already_there = false;
             for (i, g) in self.config.folder_groups.iter_mut().enumerate() {
                 let before = g.sprites.len();
                 g.sprites.retain(|s| s != id);
-                moved += before - g.sprites.len();
-                if i == group_index && before == g.sprites.len() {
+                if i == group_index && before > g.sprites.len() {
+                    already_there = true;
+                }
+            }
+            if !already_there {
+                if let Some(g) = self.config.folder_groups.get_mut(group_index) {
                     g.sprites.push(id.clone());
                     moved += 1;
                 }
@@ -336,11 +344,18 @@ impl App {
             let Some(id) = self.sprite_id_for_path(&path) else {
                 continue;
             };
+            // Mismo guardia que move_sprites_to_group: reasignar a su propio
+            // grupo es un no-op, no un borrado.
+            let mut already_there = false;
             for (i, g) in self.config.folder_groups.iter_mut().enumerate() {
                 let before = g.sprites.len();
                 g.sprites.retain(|s| s != &id);
-                moved += before - g.sprites.len();
-                if i == group_index && before == g.sprites.len() {
+                if i == group_index && before > g.sprites.len() {
+                    already_there = true;
+                }
+            }
+            if !already_there {
+                if let Some(g) = self.config.folder_groups.get_mut(group_index) {
                     g.sprites.push(id.clone());
                     moved += 1;
                 }

@@ -33,6 +33,8 @@ enum TreeAction {
     AssignToGroup(PathBuf, String),
     /// Assign concrete sprite ids to the sheet at that index (drag & drop).
     AssignIds(Vec<String>, usize),
+    /// Assign the sprite at this path to the sheet at that index (menú).
+    AssignPathToSheet(PathBuf, usize),
     CopyPath(PathBuf),
 }
 
@@ -108,10 +110,17 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     let mut drop_target: Option<String> = None;
     egui::ScrollArea::vertical()
         .id_salt("sprites_tree")
+        // El arrastre del contenido (drag-to-scroll) roba el arrastre a las
+        // filas (drag&drop de sprites hacia las hojas).
+        .scroll_source(
+            egui::scroll_area::ScrollSource::SCROLL_BAR
+                | egui::scroll_area::ScrollSource::MOUSE_WHEEL,
+        )
         .show(ui, |ui| {
             // Modelo TexturePacker: hojas (sheets) como nodos del panel, con
-            // sus sprites anidados; el arrastre entre hojas reasigna.
-            if !app.groups_active() && app.config.folder_groups.len() > 1 {
+            // sus sprites anidados; el arrastre entre hojas reasigna. Se
+            // muestran en cuanto hay más de una hoja (activa o no).
+            if app.config.folder_groups.len() > 1 {
                 for (gi, g) in app.config.folder_groups.iter().enumerate() {
                     render_sheet(app, ui, gi, g, force, &mut action);
                 }
@@ -151,6 +160,29 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 );
             }
         }
+        Some(TreeAction::AssignPathToSheet(path, sheet_index)) => {
+            // Vía garantizada de asignación: resolución path → ids con la
+            // misma lógica que el menú de directorios.
+            let ids: Vec<String> = collect_sprite_ids(app, &path);
+            let moved = app.move_sprites_to_group(&ids, sheet_index);
+            if moved > 0 {
+                let name = app
+                    .config
+                    .folder_groups
+                    .get(sheet_index)
+                    .map(|g| g.name.clone())
+                    .unwrap_or_default();
+                let shown = if name.is_empty() {
+                    "hoja principal".to_string()
+                } else {
+                    name
+                };
+                app.log(
+                    LogKind::Info,
+                    format!("{moved} sprite(s) movidos a «{shown}»."),
+                );
+            }
+        }
         Some(TreeAction::AssignToGroup(path, group)) => {
             let ids: Vec<String> = collect_sprite_ids(app, &path);
             let Some(index) = app
@@ -161,24 +193,12 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             else {
                 return;
             };
-            let mut moved = 0usize;
-            for id in ids {
-                for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
-                    let before = g.sprites.len();
-                    g.sprites.retain(|s| s != &id);
-                    moved += before - g.sprites.len();
-                    if i == index && before == g.sprites.len() {
-                        g.sprites.push(id.clone());
-                        moved += 1;
-                    }
-                }
-            }
+            let moved = app.move_sprites_to_group(&ids, index);
             if moved > 0 {
                 app.log(
                     LogKind::Info,
                     format!("{moved} sprite(s) movidos al grupo «{group}»."),
                 );
-                app.after_workspace_change();
             }
         }
         Some(TreeAction::CopyPath(path)) => {
@@ -201,23 +221,12 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 .iter()
                 .position(|g| g.name == target)
             {
-                let id = sprite.id.clone();
-                let mut moved = 0usize;
-                for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
-                    let before = g.sprites.len();
-                    g.sprites.retain(|s| s != &id);
-                    moved += before - g.sprites.len();
-                    if i == index && before == g.sprites.len() {
-                        g.sprites.push(id.clone());
-                        moved += 1;
-                    }
-                }
+                let moved = app.move_sprites_to_group(std::slice::from_ref(&sprite.id), index);
                 if moved > 0 {
                     app.log(
                         LogKind::Info,
                         format!("«{}» movido al grupo «{target}».", sprite.id),
                     );
-                    app.after_workspace_change();
                 }
             }
         }
@@ -301,7 +310,7 @@ fn render_sheet(
         for p in &paths {
             let name = name_of(p);
             let selected = app.selected_paths.contains(p);
-            let resp = ui.selectable_label(selected, name);
+            let resp = ui.selectable_label(selected, &name);
             if resp.clicked() {
                 let toggle =
                     ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift);
@@ -313,24 +322,25 @@ fn render_sheet(
                     ui.close();
                 }
             });
-            resp.clone().on_hover_text(p.display().to_string());
-            // Drag source: el propio sprite (en modo manual, siempre).
+            // Drag source: widget de arrastre con id propio sobre la fila.
             if !app.config.auto_folder_groups {
-                let drag = resp.clone().interact(egui::Sense::drag());
-                if drag.dragged() {
-                    if let Some(s) = app
-                        .result
-                        .as_ref()
-                        .and_then(|o| {
-                            o.result
-                                .sprites
-                                .iter()
-                                .find(|s| Path::new(&s.source_path) == p.as_path())
-                        })
-                        .cloned()
-                    {
-                        egui::DragAndDrop::set_payload(ui.ctx(), s);
+                if let Some(sprite) = app
+                    .result
+                    .as_ref()
+                    .and_then(|o| {
+                        o.result
+                            .sprites
+                            .iter()
+                            .find(|s| Path::new(&s.source_path) == p.as_path())
+                    })
+                    .cloned()
+                {
+                    // Mismo id que la fila: clic y arrastre conviven.
+                    let dnd = resp.interact(egui::Sense::drag());
+                    if dnd.dragged() {
+                        egui::DragAndDrop::set_payload(ui.ctx(), sprite);
                     }
+                    dnd.on_hover_cursor(egui::CursorIcon::Grab);
                 }
             }
         }
@@ -342,14 +352,20 @@ fn render_sheet(
         }
     });
 
-    // Drop zone: cualquier payload de SpriteAsset soltado sobre la hoja.
     let body_hover = body
         .body_response
         .as_ref()
         .is_some_and(|r| r.contains_pointer());
-    let over = body.header_response.contains_pointer() || body_hover;
-    if egui::DragAndDrop::has_payload_of_type::<SpriteAsset>(ui.ctx()) && over {
-        // Marca visual del destino.
+    let hover = body
+        .header_response
+        .dnd_hover_payload::<SpriteAsset>()
+        .or_else(|| {
+            body.body_response
+                .as_ref()
+                .and_then(|r| r.dnd_hover_payload::<SpriteAsset>())
+        });
+    if hover.is_some() {
+        // Marca visual del destino mientras se arrastra encima.
         let rect = match body.body_response.as_ref() {
             Some(r) => body.header_response.rect.union(r.rect),
             None => body.header_response.rect,
@@ -360,12 +376,19 @@ fn render_sheet(
             egui::Color32::from_rgba_unmultiplied(120, 200, 120, 40),
         );
     }
-    // Al soltar sobre esta hoja: consumir el payload y reasignar a ella.
-    if over && ui.input(|i| i.pointer.any_released()) {
-        if let Some(sprite) = egui::DragAndDrop::take_payload::<SpriteAsset>(ui.ctx()) {
-            *action = Some(TreeAction::AssignIds(vec![sprite.id.clone()], index));
-        }
+    // Al soltar sobre esta hoja: reasignar el sprite a ella.
+    let released = body
+        .header_response
+        .dnd_release_payload::<SpriteAsset>()
+        .or_else(|| {
+            body.body_response
+                .as_ref()
+                .and_then(|r| r.dnd_release_payload::<SpriteAsset>())
+        });
+    if let Some(sprite) = released {
+        *action = Some(TreeAction::AssignIds(vec![sprite.id.clone()], index));
     }
+    let _ = body_hover;
 }
 
 fn render_node(
@@ -435,6 +458,29 @@ fn render_node(
             *action = Some(TreeAction::Select(node.path.clone(), toggle));
         }
         response.clone().context_menu(|ui| {
+            // Vía garantizada para asignar a hoja (además del arrastre).
+            let sheets: Vec<(usize, String)> = app
+                .config
+                .folder_groups
+                .iter()
+                .enumerate()
+                .map(|(i, g)| (i, g.name.clone()))
+                .collect();
+            if sheets.len() > 1 {
+                ui.menu_button("Mover a hoja…", |ui| {
+                    for (i, name) in &sheets {
+                        let label = if name.is_empty() {
+                            "(hoja principal)".to_string()
+                        } else {
+                            name.clone()
+                        };
+                        if ui.button(label).clicked() {
+                            *action = Some(TreeAction::AssignPathToSheet(node.path.clone(), *i));
+                            ui.close();
+                        }
+                    }
+                });
+            }
             if ui.button("Quitar sprite").clicked() {
                 *action = Some(TreeAction::Remove(node.path.clone()));
                 ui.close();
@@ -447,23 +493,27 @@ fn render_node(
         response
             .clone()
             .on_hover_text(node.path.display().to_string());
-        // Arrastrar un sprite: carga un payload con su id (pack por grupos).
-        if app.groups_active() {
-            let drag = response.clone().interact(egui::Sense::drag());
-            if drag.dragged() {
-                let sprite = app
-                    .result
-                    .as_ref()
-                    .and_then(|out| {
-                        out.result
-                            .sprites
-                            .iter()
-                            .find(|s| Path::new(&s.source_path) == node.path.as_path())
-                    })
-                    .cloned();
-                if let Some(sprite) = sprite {
+        // Arrastrar un sprite del árbol hacia una hoja (pack por carpetas):
+        // fuente de arrastre sobre el rect de la fila ya pintada.
+        if !app.config.auto_folder_groups {
+            if let Some(sprite) = app
+                .result
+                .as_ref()
+                .and_then(|out| {
+                    out.result
+                        .sprites
+                        .iter()
+                        .find(|s| Path::new(&s.source_path) == node.path.as_path())
+                })
+                .cloned()
+            {
+                // Mismo id que la fila: los sentidos se fusionan y el clic
+                // no se pierde (un overlay con id distinto roba el press).
+                let dnd = response.interact(egui::Sense::drag());
+                if dnd.dragged() {
                     egui::DragAndDrop::set_payload(ui.ctx(), sprite);
                 }
+                dnd.on_hover_cursor(egui::CursorIcon::Grab);
             }
         }
     }
