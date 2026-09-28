@@ -47,23 +47,28 @@
     </Directory>
 
     <ComponentGroup Id="Binarios" Directory="INSTALLFOLDER">
+      <!-- Atajo advertised dentro del File: pasa ICE43/ICE57 con keypath
+           de fichero por máquina. -->
       <Component Id="AppExe" Guid="*">
-        <File Id="AppExeFile" Name="tp-app.exe" Source="@EXE_APP@" KeyPath="yes" />
-        <!-- Acceso directo en el menú Inicio, dentro de su carpeta. -->
-        <Shortcut Id="AppShortcut"
-                  Directory="AppMenuDir"
-                  Name="TexturePacker-RS"
-                  Description="Empaquetador de atlas de sprites"
-                  WorkingDirectory="INSTALLFOLDER"
-                  Icon="AppIcon" />
-        <!-- RegistryValue para que el shortcut no sea el keypath (regla WiX). -->
+        <File Id="AppExeFile" Name="tp-app.exe" Source="@EXE_APP@" KeyPath="yes">
+          <Shortcut Id="AppShortcut"
+                    Directory="AppMenuDir"
+                    Name="TexturePacker-RS"
+                    Description="Empaquetador de atlas de sprites"
+                    Advertise="yes" />
+        </File>
+      </Component>
+
+      <!-- Carpeta del menú Inicio: se crea con la instalación y se elimina
+           al desinstalar (keypath HKLM, todo por máquina). -->
+      <Component Id="MenuDir" Guid="*" Directory="AppMenuDir">
         <RegistryValue Root="HKLM"
                        Key="Software\Eduar2TC\TexturePacker-RS"
-                       Name="installed_app"
+                       Name="menu_dir"
                        Type="integer"
                        Value="1"
-                       KeyPath="no" />
-        <RemoveFolder Id="AppMenuDirCleanup" Directory="AppMenuDir" On="uninstall" />
+                       KeyPath="yes" />
+        <RemoveFolder Id="AppMenuDirCleanup" On="uninstall" />
       </Component>
 
       <Component Id="CliExe" Guid="*">
