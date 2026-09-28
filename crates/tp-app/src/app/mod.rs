@@ -19,6 +19,41 @@ mod sprites_panel;
 mod toolbar;
 
 use eframe::egui;
+
+/// Retardo tras el último cambio antes de reempaquetar (ajuste de sliders).
+const PREVIEW_DEBOUNCE_MS: u64 = 120;
+/// Cadencia de sondeo del snapshot (mtimes de los sprites en disco).
+const SNAPSHOT_POLL_MS: u64 = 150;
+
+/// Umbral (px) a partir del cual el panel inferior se considera abierto.
+const BOTTOM_OPEN_HEIGHT: f32 = 180.0;
+
+/// Estilo visual global: tema oscuro con esquinas suaves, acento cian y
+/// sliders rellenos. Llamado una vez por frame; solo construye el estilo
+/// nuevo la primera vez.
+fn apply_theme(ctx: &egui::Context) {
+    if ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("tp_theme"))) == Some(true) {
+        return;
+    }
+    ctx.set_theme(egui::Theme::Dark);
+    ctx.style_mut(|style| {
+        let v = &mut style.visuals;
+        v.window_corner_radius = 8.into();
+        v.menu_corner_radius = 6.into();
+        v.widgets.noninteractive.corner_radius = 4.into();
+        v.widgets.inactive.corner_radius = 5.into();
+        v.widgets.hovered.corner_radius = 5.into();
+        v.widgets.active.corner_radius = 5.into();
+        v.widgets.open.corner_radius = 5.into();
+        v.selection.bg_fill = egui::Color32::from_rgb(38, 98, 115);
+        v.selection.stroke.width = 1.0;
+        v.hyperlink_color = egui::Color32::from_rgb(97, 175, 239);
+        v.slider_trailing_fill = true;
+        v.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.4 };
+        v.collapsing_header_frame = true;
+    });
+    ctx.memory_mut(|m| m.data.insert_temp(egui::Id::new("tp_theme"), true));
+}
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -45,6 +80,81 @@ pub(crate) enum BottomTab {
     Output,
     Sprites,
     Mesh,
+}
+
+/// Umbral mínimo de arrastre (px) para decisiones de interacción propias:
+/// la zona vacía del lienzo no inicia marquee hasta superar esta distancia
+/// (evita marquesinas accidentales con micro-movimientos; egui ya exige
+/// `max_click_dist` = 6 px para convertir un press en drag).
+pub(crate) const DRAG_THRESHOLD_PX: f32 = 6.0;
+
+/// Tamaño mínimo en pantalla del fantasma de arrastre (px): a zoom bajo un
+/// sprite de 8 px sería invisible; se dibuja al menos tan grande como esto.
+pub(crate) const GHOST_MIN_SIZE_PX: f32 = 24.0;
+
+/// Arrastre de sprites del panel izquierdo hacia el lienzo: los ids
+/// arrastrados (multi-selección incluida) y el frame visible de cada uno
+/// (para el fantasma y el plan de colocación). Viaja como payload de
+/// DragAndDrop.
+pub(crate) struct SpriteDrag {
+    pub ids: Vec<String>,
+    pub first_frame: Option<tp_core::types::Rect>,
+    /// Frame visible de cada id arrastrado (para previsualizar la
+    /// disposición completa de la multi-selección).
+    pub frames: std::collections::BTreeMap<String, tp_core::types::Rect>,
+}
+
+impl SpriteDrag {
+    pub(crate) fn payload(ctx: &egui::Context) -> Option<std::sync::Arc<SpriteDrag>> {
+        egui::DragAndDrop::payload::<SpriteDrag>(ctx)
+    }
+
+    pub(crate) fn clear(ctx: &egui::Context) {
+        egui::DragAndDrop::clear_payload(ctx);
+    }
+
+    /// ¿Hay un arrastre de sprites en marcha (cualquier tipo de destino)?
+    pub(crate) fn has_payload(ctx: &egui::Context) -> bool {
+        egui::DragAndDrop::has_payload_of_type::<SpriteDrag>(ctx)
+    }
+
+    /// Recupera y consume el payload (para destinos que no sean el lienzo).
+    pub(crate) fn take(ctx: &egui::Context) -> Option<std::sync::Arc<SpriteDrag>> {
+        egui::DragAndDrop::take_payload::<SpriteDrag>(ctx)
+    }
+}
+
+/// Registra el inicio de un arrastre de sprites (desde el árbol) con los ids
+/// arrastrados: si la fila arrastrada pertenece a la selección multi, viajan
+/// todos los seleccionados.
+/// Inicia un arrastre de sprites desde el árbol hacia el lienzo. `pub`
+/// (no solo `pub(crate)`) para que los tests de integración conduzcan el
+/// mismo camino exacto que la UI.
+pub fn begin_sprite_drag(app: &App, ctx: &egui::Context, mut ids: Vec<String>) {
+    if ids.is_empty() {
+        return;
+    }
+    ids.sort();
+    let mut frames = std::collections::BTreeMap::new();
+    if let Some(out) = app.result.as_ref() {
+        for s in &out.result.sprites {
+            if ids.contains(&s.id) && !s.is_alias {
+                frames.insert(s.id.clone(), s.visible_frame);
+            }
+        }
+    }
+    let first_frame = ids.iter().find_map(|id| frames.get(id).copied());
+    // OJO: set_payload ya envuelve en Arc internamente; pasar el struct
+    // directamente (no un Arc propio) para que payload::<SpriteDrag>()
+    // haga downcast correctamente.
+    egui::DragAndDrop::set_payload(
+        ctx,
+        SpriteDrag {
+            ids,
+            first_frame,
+            frames,
+        },
+    );
 }
 
 pub(crate) enum LogKind {
@@ -116,6 +226,9 @@ pub struct App {
     pending_seq: Option<(u64, std::time::Instant)>,
     /// Snapshot of the inputs of the last packed run (dynamic workspace).
     packed_snapshot: Option<WorkspaceSnapshot>,
+    /// La configuración cambió por UI: el próximo `request_preview` no
+    /// necesita comparar snapshots (ahorra re-escanear el disco por frame).
+    pending_force: bool,
     /// Pivots/borders edited in the GUI, reapplied on every repack.
     pivot_edits: HashMap<String, Point2D>,
     border_edits: HashMap<String, [i32; 4]>,
@@ -130,6 +243,17 @@ pub struct App {
     preview_stale: bool,
     /// Panel inferior plegado (gana espacio para la vista del atlas).
     bottom_collapsed: bool,
+    /// Última altura abierta del panel inferior (se restaura al desplegar).
+    bottom_height: f32,
+    /// Rect en pantalla del lienzo del atlas (para el drop del panel).
+    canvas_rect: Option<egui::Rect>,
+    /// Zoom actual de la vista del atlas (convierte pantalla → píxeles).
+    preview_zoom: f32,
+    /// Rects en pantalla de las filas de sprite del panel izquierdo
+    /// (ruta del fichero → rect de la fila), registrados durante el último
+    /// frame. Permite a las pruebas apuntar eventos de puntero a la fila
+    /// exacta de un sprite (autotest `tp-smoke`).
+    sprite_rows: Vec<(PathBuf, egui::Rect)>,
     /// Último título de ventana aplicado (evita comandos repetidos).
     last_title: String,
     /// One automatic preview retry per successful cycle (mid-write reads).
@@ -137,7 +261,28 @@ pub struct App {
 }
 
 impl App {
+    /// Constructor para la ventana nativa (necesita el `CreationContext`
+    /// de eframe para temas, fuentes y storage).
     pub fn new(cc: &eframe::CreationContext<'_>, initial_project: Option<PathBuf>) -> Self {
+        Self::build(cc.egui_ctx.clone(), initial_project)
+    }
+
+    /// Ejecuta un frame completo de la app sobre un `egui::Context` dado.
+    /// Es el mismo camino que toma la ventana nativa (`eframe::App::update`
+    /// con un `Frame` de testing), así que sirve para conducir la app real
+    /// en pruebas headless y en el autotest `tp-smoke` sin interacción
+    /// humana: pasa `RawInput` y obtiene los shapes/resultados del frame.
+    pub fn run_frame(&mut self, ctx: &egui::Context, input: egui::RawInput) -> egui::FullOutput {
+        let mut frame = eframe::Frame::_new_kittest();
+        ctx.run(input, |ctx| {
+            eframe::App::update(self, ctx, &mut frame);
+        })
+    }
+
+    /// Constructor interno compartido: funciona con cualquier `egui::Context`,
+    /// incluido uno puro de pruebas (sin ventana ni GPU).
+    fn build(egui_ctx: egui::Context, initial_project: Option<PathBuf>) -> Self {
+        let cc = eframe::CreationContext::_new_kittest(egui_ctx.clone());
         let mut app = Self {
             config: ProjectConfig::default(),
             input_dir_text: String::new(),
@@ -170,6 +315,7 @@ impl App {
             change_seq: 0,
             pending_seq: None,
             packed_snapshot: None,
+            pending_force: false,
             pivot_edits: HashMap::new(),
             border_edits: HashMap::new(),
             watcher: None,
@@ -179,7 +325,12 @@ impl App {
             bottom_collapsed: false,
             last_title: String::new(),
             preview_retry_used: false,
+            bottom_height: BOTTOM_OPEN_HEIGHT,
+            canvas_rect: None,
+            preview_zoom: 1.0,
+            sprite_rows: Vec::new(),
         };
+        apply_theme(&egui_ctx);
         app.log(
             LogKind::Info,
             "Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».".into(),
@@ -190,6 +341,83 @@ impl App {
             app.open_project(path);
         }
         app
+    }
+
+    /// Igual que `App::new` pero aceptando un `egui::Context` cualquiera
+    /// (típicamente uno headless de pruebas): mismo arranque que la ventana
+    /// nativa —tema, log de bienvenida, watcher y proyecto inicial—.
+    pub fn new_for_testing(egui_ctx: egui::Context, initial_project: Option<PathBuf>) -> Self {
+        Self::build(egui_ctx, initial_project)
+    }
+
+    /// Vista previa actual aplicada a la UI (`None` hasta el primer pack).
+    pub fn result(&self) -> Option<&PipelineOutput> {
+        self.result.as_ref()
+    }
+
+    /// Texturas egui cargadas (una por página del atlas).
+    pub fn texture_count(&self) -> usize {
+        self.textures.len()
+    }
+
+    /// (sprites totales, aliases, páginas) del último resultado.
+    pub fn pack_summary(&self) -> (usize, usize, &[tp_core::types::PageInfo]) {
+        match &self.result {
+            Some(out) => (
+                out.result.total_sprites,
+                out.result.alias_count,
+                &out.result.pages,
+            ),
+            None => (0, 0, &[]),
+        }
+    }
+
+    /// Nivel de zoom actual de la vista del atlas.
+    pub fn zoom(&self) -> f32 {
+        self.zoom
+    }
+
+    /// Configuración del proyecto (solo lectura; para tests e inspector).
+    pub fn config(&self) -> &ProjectConfig {
+        &self.config
+    }
+
+    /// ¿Hay un repack solicitado y aún no lanzado (debounce pendiente)?
+    pub fn repack_requested(&self) -> bool {
+        self.pending_force
+    }
+
+    /// Rects en pantalla de las filas de sprite del panel izquierdo tal y
+    /// como quedaron en el último frame dibujado (para pruebas de puntero).
+    pub fn sprite_row_rects(&self) -> &[(PathBuf, egui::Rect)] {
+        &self.sprite_rows
+    }
+
+    /// Rect en pantalla del lienzo del atlas (última pasada de la vista);
+    /// `None` si aún no hay vista o la página no se dibujó este frame.
+    pub fn canvas_rect(&self) -> Option<egui::Rect> {
+        self.canvas_rect
+    }
+
+    /// Zoom de la vista del atlas: pantalla → píxeles del atlas es dividir
+    /// por este valor (es el que usan el fantasma y el drop).
+    pub fn preview_zoom(&self) -> f32 {
+        self.preview_zoom
+    }
+
+    /// Contenido del Log en formato «I/W/E texto» (para inspección en pruebas).
+    pub fn log_texts(&self) -> Vec<String> {
+        self.logs
+            .iter()
+            .map(|l| {
+                let tag = match l.kind {
+                    LogKind::Info => "I",
+                    LogKind::Warning => "W",
+                    LogKind::Error => "E",
+                };
+                format!("{tag} {}", l.text)
+            })
+            .collect()
     }
 
     fn log(&mut self, kind: LogKind, text: String) {
@@ -258,13 +486,10 @@ impl App {
             return;
         }
         let seq = self.change_seq;
-        if !self.snapshot_changed() {
-            return;
-        }
         if debounce {
             match self.pending_seq {
                 Some((s, at)) if s == seq => {
-                    if at.elapsed() < std::time::Duration::from_millis(400) {
+                    if at.elapsed() < std::time::Duration::from_millis(PREVIEW_DEBOUNCE_MS) {
                         return;
                     }
                 }
@@ -273,6 +498,12 @@ impl App {
                     return;
                 }
             }
+        }
+        // La bandera se consume al pasar el debounce: los cambios de la UI
+        // evitan el re-escaneo del disco aunque el slider tarde en parar.
+        let force = std::mem::take(&mut self.pending_force);
+        if !force && !self.snapshot_changed() {
+            return;
         }
         self.pending_seq = None;
         self.commit_paths();
@@ -369,7 +600,7 @@ impl App {
 
     /// Estado de la vista previa para el indicador de la barra de zoom:
     /// reempaquetando, actualizando, desactualizada o al día.
-    pub fn preview_state(&self) -> PreviewState {
+    pub(crate) fn preview_state(&self) -> PreviewState {
         if self.running.is_some() {
             PreviewState::Publishing
         } else if self.pending.is_some() {
@@ -595,7 +826,8 @@ impl App {
             || self
                 .pending_seq
                 .map(|(s, at)| {
-                    s == self.change_seq && at.elapsed() < std::time::Duration::from_millis(400)
+                    s == self.change_seq
+                        && at.elapsed() < std::time::Duration::from_millis(PREVIEW_DEBOUNCE_MS)
                 })
                 .unwrap_or(false);
         if needs {
@@ -611,6 +843,143 @@ impl App {
 
     /// Input fields of the Settings panel changed → commit and repack.
     fn on_paths_edited(&mut self) {
+        self.commit_paths();
+        self.after_workspace_change();
+    }
+
+    /// Suelta sprites arrastrados del panel sobre el lienzo: activa el
+    /// algoritmo Manual si hace falta, fija las posiciones relativas entre
+    /// sí (con el mismo snap y clamp que promete el fantasma) y repacktua
+    /// al instante. Devuelve cuántos sprites se colocaron.
+    pub fn drop_sprites_on_canvas(&mut self, atlas_pos: egui::Pos2) -> usize {
+        let Some(drag) = SpriteDrag::payload(&self.egui_ctx) else {
+            return 0;
+        };
+        let ids = drag.ids.clone();
+        let frames = drag.frames.clone();
+        let first_frame = drag.first_frame;
+        SpriteDrag::clear(&self.egui_ctx);
+        if ids.is_empty() {
+            return 0;
+        }
+        // Se necesitan frames conocidos: sin resultado previo no hay nada
+        // que colocar (los sprites recién añadidos se empaquetan solos).
+        if self.result.is_none() {
+            self.log(
+                LogKind::Warning,
+                "Espera a que la vista se calcule antes de colocar sprites.".into(),
+            );
+            return 0;
+        }
+
+        // Activar Manual si no lo está: el usuario está componiendo a mano.
+        if self.config.effective_algorithm() != tp_core::config::PackingAlgorithm::Manual {
+            self.config.algorithm = tp_core::config::PackingAlgorithm::Manual;
+            self.log(
+                LogKind::Info,
+                "Algoritmo cambiado a Manual: los sprites soltados fijan su posición.".into(),
+            );
+        }
+
+        // Fantasma y drop comparten el plan: lo que se ve es lo que queda.
+        let placed_list =
+            Self::plan_canvas_drop(&ids, &frames, first_frame, atlas_pos, &self.config);
+        for (id, (px, py)) in &placed_list {
+            self.config.manual_positions.insert(id.clone(), (*px, *py));
+        }
+        let placed = placed_list.len();
+        let first_pos = placed_list.first().map(|(_, p)| *p);
+
+        if placed > 0 {
+            // Selección visible: los colocados quedan seleccionados.
+            self.selected_paths.clear();
+            for id in &ids {
+                if let Some(s) = self
+                    .result
+                    .as_ref()
+                    .and_then(|o| o.result.sprites.iter().find(|s| &s.id == id))
+                {
+                    self.selected_paths.insert(PathBuf::from(&s.source_path));
+                }
+            }
+            let n = placed;
+            let (px, py) = first_pos.unwrap_or((0, 0));
+            self.selected_sprite = ids
+                .iter()
+                .find(|id| self.config.manual_positions.contains_key(*id))
+                .cloned();
+            self.log(
+                LogKind::Info,
+                format!("{n} sprite(s) colocados en ({px}, {py}): se reempaqueta al instante."),
+            );
+            self.pending_force = true;
+            self.after_workspace_change();
+        }
+        placed
+    }
+
+    /// Plan de colocación de un drop en el lienzo: para cada id arrastrado
+    /// colocado (no alias, con frame conocido), la posición manual `(x, y)`
+    /// resultante. Único camino para el fantasma del arrastre y para el drop
+    /// real: el fantasma dibuja exactamente estas posiciones.
+    ///
+    /// - El frame del sprite primero queda bajo el cursor (esquina superior
+    ///   izquierda), menos borde/padding del atlas: el píxel, no la caja.
+    /// - La disposición relativa entre los sprites se conserva.
+    /// - Con rejilla Manual activa, el anclaje se imanta al paso (el motor
+    ///   aplica el mismo snap al empaquetar: consistencia garantizada).
+    /// - Cada sprite se clampea para que quepa dentro del lienzo (igual que
+    ///   el arrastre en vivo: soltar en el borde no sale del atlas).
+    pub fn plan_canvas_drop(
+        ids: &[String],
+        frames: &std::collections::BTreeMap<String, tp_core::types::Rect>,
+        first_frame: Option<tp_core::types::Rect>,
+        atlas_pos: egui::Pos2,
+        config: &ProjectConfig,
+    ) -> Vec<(String, (i32, i32))> {
+        let (bp, pad) = (config.border_padding.max(0), config.padding.max(0));
+        let mut anchor_x = (atlas_pos.x as i32 - bp - pad).max(0);
+        let mut anchor_y = (atlas_pos.y as i32 - bp - pad).max(0);
+        if let Some(g) = &config.manual_grid {
+            let (sx, sy) = g.snap_pos((anchor_x, anchor_y));
+            anchor_x = sx;
+            anchor_y = sy;
+        }
+        let frame0 = first_frame.unwrap_or(tp_core::types::Rect::new(0, 0, 0, 0));
+        let origin = (frame0.x, frame0.y);
+        let canvas_w = if config.fixed_width > 0 {
+            config.fixed_width
+        } else {
+            config.max_texture_size
+        };
+        let canvas_h = if config.fixed_height > 0 {
+            config.fixed_height
+        } else {
+            config.max_texture_size
+        };
+
+        let mut out = Vec::new();
+        for id in ids {
+            // Los aliases no ocupan frame propio: quedan donde el motor los
+            // ponga (superpuestos a su objetivo).
+            let Some(frame) = frames.get(id) else {
+                continue;
+            };
+            let px = anchor_x + frame.x - origin.0;
+            let py = anchor_y + frame.y - origin.1;
+            let max_x = (canvas_w - 2 * bp - (frame.width + 2 * pad)).max(0);
+            let max_y = (canvas_h - 2 * bp - (frame.height + 2 * pad)).max(0);
+            out.push((id.clone(), (px.clamp(0, max_x), py.clamp(0, max_y))));
+        }
+        out
+    }
+
+    /// Workspace changed via the settings panel: commit and repack at once,
+    /// without waiting for the passive snapshot poll (ni re-escanear el
+    /// disco: el propio widget ya avisó de que cambió). `request_preview`
+    /// coalesces los arrastres de sliders (un cambio por frame).
+    pub fn on_config_changed(&mut self) {
+        self.pending_force = true;
         self.commit_paths();
         self.after_workspace_change();
     }
@@ -634,8 +1003,10 @@ impl App {
             self.parse_variants();
             self.after_workspace_change();
         }
-        // El snapshot (mtimes incluidos) se recalcula como mucho cada 250 ms.
-        if self.last_snapshot_poll.elapsed() >= std::time::Duration::from_millis(250) {
+        // El snapshot (mtimes incluidos) se recalcula como mucho cada
+        // SNAPSHOT_POLL_MS: los cambios de ajustes llegan por on_config_changed,
+        // así que este sondeo solo vigila los ficheros en disco (autowatch).
+        if self.last_snapshot_poll.elapsed() >= std::time::Duration::from_millis(SNAPSHOT_POLL_MS) {
             self.last_snapshot_poll = std::time::Instant::now();
             self.preview_stale = self.snapshot_changed();
             if self.preview_stale {
@@ -1209,6 +1580,8 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        apply_theme(ctx);
+
         if let Some(rx) = &self.running {
             match rx.try_recv() {
                 Ok(msg) => self.handle_run_result(ctx, msg),
@@ -1229,30 +1602,122 @@ impl eframe::App for App {
         self.poll_changes(ctx);
         handle_shortcuts(self, ctx);
 
+        // Registro fresco cada frame: las filas que no se dibujen este
+        // frame (filtro, panel colapsado…) desaparecen del registro.
+        self.sprite_rows.clear();
+
+        // Soltar ficheros del SO en CUALQUIER parte de la ventana (centro,
+        // paneles, barra): comportamiento estándar de las apps del estilo.
+        handle_global_file_drop(self, ctx);
+
         toolbar::toolbar(self, ctx);
 
+        // Barra de estado (abajo del todo, declarada primero): datos del
+        // atlas actual. Responde a «¿dónde están mis datos?» sin robar
+        // altura a la vista.
+        egui::TopBottomPanel::bottom("status_bar")
+            .resizable(false)
+            .exact_height(22.0)
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(out) = &self.result {
+                        let pages = out.pages.len();
+                        if let Some(p) = out.pages.get(self.selected_page) {
+                            let fill = out
+                                .result
+                                .pages
+                                .iter()
+                                .find(|pi| pi.index == p.index)
+                                .map(|pi| pi.fill_ratio)
+                                .unwrap_or(0.0);
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "Página {} · {}×{} px · relleno {:.0}%",
+                                    p.index + 1,
+                                    p.width,
+                                    p.height,
+                                    fill * 100.0
+                                ))
+                                .weak(),
+                            );
+                            if pages > 1 {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "· {}/{}",
+                                        self.selected_page + 1,
+                                        pages
+                                    ))
+                                    .weak(),
+                                );
+                            }
+                        }
+                        ui.separator();
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} sprites · {} aliases",
+                                out.result.total_sprites, out.result.alias_count
+                            ))
+                            .weak(),
+                        );
+                    } else {
+                        ui.label(
+                            egui::RichText::new("Sin atlas — añade sprites".to_string()).weak(),
+                        );
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if self.project_path.is_none() {
+                            ui.label(
+                                egui::RichText::new("proyecto sin guardar — Ctrl+S")
+                                    .weak()
+                                    .italics(),
+                            );
+                        }
+                    });
+                });
+            });
+
         // Panel inferior plegable: colapsado deja el atlas como protagonista.
-        egui::TopBottomPanel::bottom("bottom_panel")
-            .resizable(!self.bottom_collapsed)
-            .default_height(180.0)
-            .min_height(64.0)
-            .height_range(if self.bottom_collapsed {
-                28.0..=28.0
-            } else {
-                28.0..=f32::INFINITY
-            })
-            .show(ctx, |ui| bottom::bottom_ui(self, ui));
+        // Conserva la última altura abierta para restaurarla al desplegar.
+        let bottom_open = self.bottom_height.max(64.0);
+        let resizable = !self.bottom_collapsed;
+        let bottom = egui::TopBottomPanel::bottom("bottom_panel")
+            .resizable(resizable)
+            .default_height(bottom_open)
+            .height_range(28.0..=f32::INFINITY);
+        let bottom = if self.bottom_collapsed {
+            bottom.exact_height(28.0)
+        } else {
+            bottom
+        };
+        bottom.show(ctx, |ui| {
+            if !self.bottom_collapsed {
+                self.bottom_height = ui.available_height();
+            }
+            bottom::bottom_ui(self, ui);
+        });
+
+        // Fondo ligeramente distinto en los paneles laterales: separa
+        // herramientas (izquierda/derecha) del lienzo (centro).
+        let panel_fill = ctx.style().visuals.panel_fill;
+        let side_fill = egui::Color32::from_rgba_unmultiplied(
+            panel_fill.r().saturating_sub(6),
+            panel_fill.g().saturating_sub(6),
+            panel_fill.b().saturating_sub(6),
+            255,
+        );
 
         egui::SidePanel::left("sprites_panel")
             .resizable(true)
             .default_width(250.0)
             .min_width(180.0)
+            .frame(egui::Frame::default().fill(side_fill))
             .show(ctx, |ui| sprites_panel::sprites_ui(self, ui));
 
         egui::SidePanel::right("settings_panel")
             .resizable(true)
             .default_width(330.0)
             .min_width(260.0)
+            .frame(egui::Frame::default().fill(side_fill))
             .show(ctx, |ui| settings::settings_ui(self, ui));
 
         egui::CentralPanel::default().show(ctx, |ui| preview::preview_ui(self, ui));
@@ -1274,8 +1739,73 @@ impl eframe::App for App {
     }
 }
 
+/// Soltar ficheros del SO en cualquier parte de la ventana: los añade al
+/// workspace. Devuelve un overlay azul mientras el arrastre esté sobre la
+/// app (feedback estándar) y registra en el Log lo añadido.
+fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
+    let (hovered, dropped) =
+        ctx.input(|i| (i.raw.hovered_files.clone(), i.raw.dropped_files.clone()));
+    if !hovered.is_empty() {
+        let screen = ctx.content_rect();
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            "drop_overlay".into(),
+        ));
+        painter.rect_filled(
+            screen.shrink(2.0),
+            6.0,
+            egui::Color32::from_rgba_unmultiplied(90, 180, 255, 28),
+        );
+        painter.rect_stroke(
+            screen.shrink(4.0),
+            6.0,
+            egui::Stroke::new(
+                2.0,
+                egui::Color32::from_rgba_unmultiplied(120, 200, 255, 200),
+            ),
+            egui::StrokeKind::Outside,
+        );
+        let text = if hovered.len() == 1 {
+            "Suelta para añadir al workspace".to_string()
+        } else {
+            format!("Suelta para añadir {} elementos", hovered.len())
+        };
+        painter.text(
+            screen.center() + egui::vec2(0.0, -16.0),
+            egui::Align2::CENTER_CENTER,
+            text,
+            egui::FontId::proportional(22.0),
+            egui::Color32::from_rgba_unmultiplied(230, 245, 255, 255),
+        );
+        painter.text(
+            screen.center() + egui::vec2(0.0, 14.0),
+            egui::Align2::CENTER_CENTER,
+            "(sprites o carpetas; se empaquetan al instante)",
+            egui::FontId::proportional(13.0),
+            egui::Color32::from_rgba_unmultiplied(180, 210, 235, 220),
+        );
+    }
+    if dropped.is_empty() {
+        return;
+    }
+    let mut added = 0;
+    for file in dropped {
+        if let Some(path) = file.path {
+            if app.add_input(path) {
+                added += 1;
+            }
+        }
+    }
+    if added > 0 {
+        app.log(LogKind::Info, format!("{added} sprite(s) añadido(s)."));
+    } else {
+        app.log(LogKind::Warning, "No se añadieron sprites nuevos.".into());
+    }
+}
+
 /// Atajos de teclado globales (estilo estándar de herramientas de escritorio):
-/// Ctrl+O abrir, Ctrl+S guardar, Ctrl+P publicar, Supr quitar selección.
+/// Ctrl+O abrir, Ctrl+S guardar, Ctrl+P publicar, Supr quitar selección,
+/// +/-/0 zoom, F ajustar, Esc cierra ventanas flotantes.
 fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     let consume = |ctx: &egui::Context, key: egui::Key| {
         ctx.input(|i| {
@@ -1292,7 +1822,66 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     if consume(ctx, egui::Key::P) && app.running.is_none() {
         app.start_pack();
     }
-    // Supr lo gestiona el panel de sprites (con guardia de foco y hover).
+
+    // Zoom de teclado (sin modificadores, como en Figma/Photoshop):
+    // +/- acercan y alejan, 0 restaura 1:1 y F encuadra.
+    let (zoom_in, zoom_out, zoom_reset, zoom_fit) = ctx.input(|i| {
+        let blocked = i.modifiers.ctrl || i.modifiers.command || i.modifiers.alt;
+        (
+            !blocked && i.key_pressed(egui::Key::Equals),
+            !blocked && i.key_pressed(egui::Key::Minus),
+            !blocked && i.key_pressed(egui::Key::Num0),
+            !blocked && i.key_pressed(egui::Key::F),
+        )
+    });
+    if zoom_in {
+        preview::zoom_step(app, 1);
+    }
+    if zoom_out {
+        preview::zoom_step(app, -1);
+    }
+    if zoom_reset {
+        app.zoom = 1.0;
+    }
+    if zoom_fit {
+        app.fit_zoom();
+    }
+
+    // Esc cierra la ventana flotante activa (convención estándar).
+    let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+    if esc {
+        if app.show_animation {
+            app.show_animation = false;
+        } else if app.show_split {
+            app.show_split = false;
+        } else if app.show_sprite_settings {
+            app.show_sprite_settings = false;
+        }
+    }
+
+    // Cursor de «copiando» mientras se arrastra un sprite del árbol hacia
+    // el lienzo o una hoja (feedback estándar de arrastrar-y-soltar).
+    if SpriteDrag::has_payload(ctx) {
+        ctx.set_cursor_icon(egui::CursorIcon::Copy);
+    }
+}
+
+/// Conduce la app real (la misma que abre la ventana) durante `frames`
+/// frames sobre un `egui::Context` headless. Utilidad para pruebas:
+/// `App::new_for_testing` + `run_frame` sin repetir la receta.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn run_headless(app: &mut App, ctx: &egui::Context, mut frames: usize) {
+    while frames > 0 {
+        let input = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let _ = app.run_frame(ctx, input);
+        frames -= 1;
+    }
 }
 
 fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -1306,5 +1895,37 @@ fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) {
         } else if tp_core::ingest::is_image_file(&path) {
             out.push(path);
         }
+    }
+}
+
+#[cfg(test)]
+mod drag_payload_tests {
+    use super::*;
+
+    #[test]
+    fn payload_set_then_read_without_frames() {
+        let ctx = egui::Context::default();
+        let mut app = App::build(ctx.clone(), None);
+        begin_sprite_drag(&app, &ctx, vec!["a".into(), "b".into()]);
+        let got = SpriteDrag::payload(&ctx);
+        assert!(
+            got.is_some(),
+            "payload debe sobrevivir sin frames intermedios"
+        );
+        SpriteDrag::clear(&ctx);
+        assert!(SpriteDrag::payload(&ctx).is_none());
+        let _ = &mut app;
+    }
+
+    #[test]
+    fn payload_survives_a_frame_without_release() {
+        let ctx = egui::Context::default();
+        let mut app = App::build(ctx.clone(), None);
+        begin_sprite_drag(&app, &ctx, vec!["a".into()]);
+        let _ = app.run_frame(&ctx, egui::RawInput::default());
+        assert!(
+            SpriteDrag::payload(&ctx).is_some(),
+            "payload debe sobrevivir a un frame sin release"
+        );
     }
 }

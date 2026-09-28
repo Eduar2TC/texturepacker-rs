@@ -2,10 +2,29 @@
 
 use super::{App, PreviewState};
 use eframe::egui;
+use std::path::PathBuf;
 
 const ZOOM_STEPS: [f32; 7] = [0.1, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0];
 
 pub(super) fn preview_ui(app: &mut App, ui: &mut egui::Ui) {
+    // Soltar sprites arrastrados del panel: convertir pantalla → píxeles del
+    // atlas y colocarlos ahí (consumo del payload en el frame de release).
+    if ui.input(|i| i.pointer.any_released()) {
+        if let (Some(_drag), Some(rect)) =
+            (crate::app::SpriteDrag::payload(ui.ctx()), app.canvas_rect)
+        {
+            if let Some(p) = ui.input(|i| i.pointer.latest_pos()) {
+                if rect.contains(p) {
+                    let ax = ((p.x - rect.min.x) / app.preview_zoom.max(0.0001)) as i32;
+                    let ay = ((p.y - rect.min.y) / app.preview_zoom.max(0.0001)) as i32;
+                    let n = app.drop_sprites_on_canvas(egui::pos2(ax as f32, ay as f32));
+                    if n == 0 {
+                        crate::app::SpriteDrag::clear(ui.ctx());
+                    }
+                }
+            }
+        }
+    }
     egui::TopBottomPanel::bottom("zoom_bar")
         .resizable(false)
         .exact_height(32.0)
@@ -73,12 +92,12 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
         if ui.button("+").on_hover_text("Acercar").clicked() {
             zoom_step(app, 1);
         }
-        if ui.button("1:1").on_hover_text("Zoom al 100%").clicked() {
+        if ui.button("1:1").on_hover_text("Zoom al 100% (tamaño real)").clicked() {
             app.zoom = 1.0;
         }
         if ui
             .button("Ajustar")
-            .on_hover_text("Encuadrar el atlas en la vista")
+            .on_hover_text("Encuadrar el atlas completo en la vista")
             .clicked()
         {
             app.fit_zoom();
@@ -163,7 +182,24 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
     });
 }
 
-fn zoom_step(app: &mut App, dir: i32) {
+/// Rect en pantalla del fantasma de un sprite soltado en `(px, py)` del
+/// atlas: aplica zoom y el tamaño mínimo visible (`GHOST_MIN_SIZE_PX`).
+/// Comparte la misma transformación que `to_screen`, pero con el tamaño
+/// acotado para que el fantasma no desaparezca a zoom bajo.
+fn ghost_rect(px: i32, py: i32, w: i32, h: i32, zoom: f32, rect: egui::Rect) -> (egui::Rect, f32) {
+    let zoom = zoom.max(0.0001);
+    let min = super::GHOST_MIN_SIZE_PX;
+    let sw = (w as f32 * zoom).max(min);
+    let sh = (h as f32 * zoom).max(min);
+    let gx = rect.min.x + px as f32 * zoom;
+    let gy = rect.min.y + py as f32 * zoom;
+    (
+        egui::Rect::from_min_size(egui::pos2(gx, gy), egui::vec2(sw, sh)),
+        sw.min(sh),
+    )
+}
+
+pub(super) fn zoom_step(app: &mut App, dir: i32) {
     if dir > 0 {
         app.zoom = ZOOM_STEPS
             .iter()
@@ -182,6 +218,8 @@ fn zoom_step(app: &mut App, dir: i32) {
 
 fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     app.preview_size = ui.available_size();
+    app.canvas_rect = None;
+    app.preview_zoom = app.zoom;
 
     let Some(out) = &app.result else {
         // Primera experiencia: el vacío es accionable, no solo texto.
@@ -199,6 +237,37 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         super::toolbar::add_smart_folder_dialog(app);
                     }
                 });
+                ui.add_space(18.0);
+                // Suelta de ficheros del SO sobre el espacio de trabajo.
+                let (hovered, _dropped) =
+                    ui.input(|i| (i.raw.hovered_files.clone(), i.raw.dropped_files.clone()));
+                let tint = if hovered.is_empty() {
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+                } else {
+                    egui::Color32::from_rgba_unmultiplied(120, 200, 255, 45)
+                };
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width().min(520.0), 84.0),
+                    egui::Sense::hover(),
+                );
+                ui.painter().rect_stroke(
+                    rect,
+                    8.0,
+                    egui::Stroke::new(1.5, tint),
+                    egui::StrokeKind::Inside,
+                );
+                ui.painter().text(
+                    rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "⤵  Arrastra aquí imágenes o carpetas",
+                    egui::FontId::proportional(16.0),
+                    if hovered.is_empty() {
+                        egui::Color32::from_gray(150)
+                    } else {
+                        egui::Color32::from_rgb(160, 215, 255)
+                    },
+                );
+                ui.weak("PNG · WebP · JPG · TGA · BMP · GIF · DDS · QOI");
             });
         });
         return;
@@ -226,9 +295,22 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     // Banda 9-patch que se está arrastrando (None = nada).
     let mut drag: Option<(Edge, i32)> = None;
     let mut border_released = false;
+    // El cursor está sobre una banda 9-patch (para no pisar su cursor).
+    let mut band_hovered = false;
     // Arrastre manual (algoritmo Manual): (id, x, y) destino del sprite.
     let mut manual_moved: Option<(String, i32, i32)> = None;
     let mut manual_stopped = false;
+    // Arrastre de un sprite (cualquier modo): (id, frame original).
+    let mut drag_source: Option<(String, tp_core::types::Rect)> = None;
+    // Vista fantasma del arrastre fuera del modo Manual.
+    let mut drag_ghost: Option<(tp_core::types::Rect, f32, f32)> = None;
+    // Selección por rectángulo (marquee) sobre el atlas.
+    let mut marquee_origin: Option<egui::Pos2> = None;
+    let mut marquee_select: Option<(i32, i32, i32, i32)> = None;
+    // Clic en zona vacía: deselecciona (convención estándar).
+    let mut clicked_empty = false;
+    // Supr con la vista bajo el cursor: quita los sprites seleccionados.
+    let mut delete_in_preview = false;
     // Geometría compartida para mapear posiciones manuales ↔ atlas.
     let (bp, pad) = (app.config.border_padding.max(0), app.config.padding.max(0));
     let canvas_w = if app.config.fixed_width > 0 {
@@ -248,6 +330,93 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+            // El lienzo es destino de soltado de sprites del panel izquierdo:
+            // registrar geometría y consumir el drop (ver post-frame abajo).
+            app.canvas_rect = Some(rect);
+            let painter = ui.painter();
+            let panel_drag = crate::app::SpriteDrag::payload(ui.ctx());
+            if panel_drag.is_some() && ui.rect_contains_pointer(rect) {
+                // Resalte del lienzo como zona de destino válida.
+                painter.rect_filled(
+                    rect,
+                    0.0,
+                    egui::Color32::from_rgba_unmultiplied(120, 200, 255, 22),
+                );
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    egui::Stroke::new(
+                        2.0,
+                        egui::Color32::from_rgba_unmultiplied(120, 200, 255, 160),
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+                // Fantasma bajo el cursor: el MISMO plan del drop (misma
+                // fuente de verdad), así lo que se ve es lo que queda al
+                // soltar: anclado a la esquina, con snap y clamp de lienzo.
+                if let (Some(drag), Some(p)) =
+                    (panel_drag.as_deref(), ui.input(|i| i.pointer.latest_pos()))
+                {
+                    let ax = ((p.x - rect.min.x) / zoom.max(0.0001)) as i32;
+                    let ay = ((p.y - rect.min.y) / zoom.max(0.0001)) as i32;
+                    let plan = App::plan_canvas_drop(
+                        &drag.ids,
+                        &drag.frames,
+                        drag.first_frame,
+                        egui::pos2(ax as f32, ay as f32),
+                        &app.config,
+                    );
+                    let first = plan
+                        .first()
+                        .map(|(_, (px, py))| (*px, *py))
+                        .unwrap_or((ax, ay));
+                    for (i, (id, (px, py))) in plan.iter().enumerate() {
+                        let f = drag
+                            .frames
+                            .get(id)
+                            .copied()
+                            .unwrap_or(tp_core::types::Rect::new(0, 0, 32, 32));
+                        let (g, _) = ghost_rect(*px, *py, f.width, f.height, zoom, rect);
+                        painter.rect_filled(
+                            g,
+                            0.0,
+                            egui::Color32::from_rgba_unmultiplied(
+                                120,
+                                200,
+                                255,
+                                if i == 0 { 40 } else { 26 },
+                            ),
+                        );
+                        painter.rect_stroke(
+                            g,
+                            0.0,
+                            egui::Stroke::new(
+                                1.5,
+                                egui::Color32::from_rgba_unmultiplied(160, 220, 255, 220),
+                            ),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
+                    // Etiqueta centrada bajo el sprite principal (siempre
+                    // visible, también con el fantasma mínimo de 24 px).
+                    let f = drag
+                        .first_frame
+                        .unwrap_or(tp_core::types::Rect::new(0, 0, 64, 64));
+                    let (g, _) = ghost_rect(first.0, first.1, f.width, f.height, zoom, rect);
+                    let label = if drag.ids.len() == 1 {
+                        "Soltar para colocar aquí".to_string()
+                    } else {
+                        format!("Soltar {} sprites aquí", drag.ids.len())
+                    };
+                    painter.text(
+                        egui::pos2(g.center().x, g.max.y + 14.0),
+                        egui::Align2::CENTER_CENTER,
+                        label,
+                        egui::FontId::proportional(12.0),
+                        egui::Color32::from_rgba_unmultiplied(200, 235, 255, 240),
+                    );
+                }
+            }
             let painter = ui.painter();
             painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
             painter.image(
@@ -302,14 +471,14 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 .collect();
 
             // Interactividad: sprite bajo el cursor (tooltip + resalte) y
-            // zoom con Ctrl+rueda sobre la vista.
+            // zoom con Ctrl+rueda / gesto de pinza (trackpad).
             if response.hovered() {
-                let (with_ctrl, scroll_y) = ui.input(|i| {
+                let (with_ctrl, zoom_delta_input) = ui.input(|i| {
                     let ctrl = i.modifiers.ctrl || i.modifiers.command;
-                    (ctrl, i.raw_scroll_delta.y)
+                    (ctrl, i.zoom_delta())
                 });
-                if with_ctrl && scroll_y != 0.0 {
-                    zoom_delta = Some((1.0 - scroll_y * 0.0015).clamp(0.5, 2.0));
+                if with_ctrl && zoom_delta_input != 1.0 {
+                    zoom_delta = Some(zoom_delta_input.clamp(0.5, 2.0));
                 }
                 if let Some(pos) = ui.input(|i| i.pointer.latest_pos()) {
                     let px = ((pos.x - rect.min.x) / zoom) as i32;
@@ -345,7 +514,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                                     s.alias_target_id.as_deref().unwrap_or("?")
                                 ));
                             }
-                            ui.label(egui::RichText::new("Ctrl+rueda: zoom").weak());
+                            ui.label(egui::RichText::new("Ctrl+rueda o pinza: zoom").weak());
                         });
                     }
                 }
@@ -421,58 +590,138 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 let is_selected = |id: &str| app.selected_sprite.as_deref() == Some(id);
                 for sprite in &sprites {
                     let interactive = is_selected(&sprite.id) && !sprite.is_alias;
-                    if let Some((edge, value, released)) =
-                        draw_borders(ui, painter, sprite, &to_screen, zoom, interactive)
-                    {
+                    if let Some((edge, value, released)) = draw_borders(
+                        ui,
+                        painter,
+                        sprite,
+                        &to_screen,
+                        zoom,
+                        interactive,
+                        &mut band_hovered,
+                    ) {
                         drag = Some((edge, value));
                         border_released |= released;
                     }
                 }
             }
 
-            // Algoritmo Manual: arrastrar el sprite seleccionado fija su
-            // posición en el atlas (config.manual_positions).
-            if manual_mode && drag.is_none() {
-                if let Some(id) = app.selected_sprite.clone() {
-                    if let Some(sprite) =
-                        sprites.iter().find(|s| s.id == id).filter(|s| !s.is_alias)
-                    {
-                        let f = sprite.visible_frame;
-                        let r = egui::Rect::from_min_max(
-                            to_screen(f.x, f.y),
-                            to_screen(f.x + f.width, f.y + f.height),
-                        );
-                        let dresp = ui
-                            .interact(
-                                r,
-                                egui::Id::new(("manual_drag", sprite.id.as_str())),
-                                egui::Sense::drag(),
-                            )
-                            .on_hover_cursor(egui::CursorIcon::Grab);
-                        if dresp.dragged() {
-                            if let Some(pos) = dresp.interact_pointer_pos() {
-                                let px = ((pos.x - rect.min.x) / zoom) as i32 - bp - pad;
-                                let py = ((pos.y - rect.min.y) / zoom) as i32 - bp - pad;
-                                // Rejilla opcional: vista viva imantada mientras
-                                // se arrastra; el motor confita el mismo snap.
-                                let (px, py) = match &app.config.manual_grid {
-                                    Some(g) => g.snap_pos((px, py)),
-                                    None => (px, py),
-                                };
-                                let max_x = (canvas_w - 2 * bp - (f.width + 2 * pad)).max(0);
-                                let max_y = (canvas_h - 2 * bp - (f.height + 2 * pad)).max(0);
-                                manual_moved = Some((
-                                    sprite.id.clone(),
-                                    px.clamp(0, max_x),
-                                    py.clamp(0, max_y),
-                                ));
-                            }
-                        }
-                        if dresp.drag_stopped() {
-                            manual_stopped = true;
-                        }
+            // Interacción unificada sobre la respuesta del lienzo (un solo
+            // widget: sin robo de clics). Arrastrar un sprite lo mueve en el
+            // modo Manual o muestra una vista fantasma en los demás; arrastrar
+            // desde zona vacía selecciona por rectángulo.
+            let pointer = response.interact_pointer_pos();
+            if response.drag_started() {
+                if let Some(p) = pointer {
+                    let px = ((p.x - rect.min.x) / zoom) as i32;
+                    let py = ((p.y - rect.min.y) / zoom) as i32;
+                    let probe = tp_core::types::Rect::new(px, py, 1, 1);
+                    drag_source = sprites
+                        .iter()
+                        .find(|s| s.visible_frame.contains(&probe) && !s.is_alias)
+                        .map(|s| (s.id.clone(), s.visible_frame));
+                    if drag_source.is_none() {
+                        marquee_origin = Some(p);
                     }
                 }
+            }
+            if response.dragged() {
+                if let Some((id, f)) = &drag_source {
+                    if let Some(p) = pointer {
+                        if manual_mode {
+                            let px = ((p.x - rect.min.x) / zoom) as i32 - bp - pad;
+                            let py = ((p.y - rect.min.y) / zoom) as i32 - bp - pad;
+                            // Rejilla opcional: vista viva imantada mientras
+                            // se arrastra; el motor aplica el mismo snap.
+                            let (px, py) = match &app.config.manual_grid {
+                                Some(g) => g.snap_pos((px, py)),
+                                None => (px, py),
+                            };
+                            let max_x = (canvas_w - 2 * bp - (f.width + 2 * pad)).max(0);
+                            let max_y = (canvas_h - 2 * bp - (f.height + 2 * pad)).max(0);
+                            manual_moved =
+                                Some((id.clone(), px.clamp(0, max_x), py.clamp(0, max_y)));
+                        } else {
+                            // Vista fantasma: el frame sigue al puntero
+                            // (centro anclado), invitando al modo Manual.
+                            let cx = rect.min.x + (f.x as f32 + f.width as f32 * 0.5) * zoom;
+                            let cy = rect.min.y + (f.y as f32 + f.height as f32 * 0.5) * zoom;
+                            drag_ghost = Some((*f, (p.x - cx) / zoom, (p.y - cy) / zoom));
+                        }
+                    }
+                } else if let (Some(o), Some(p)) = (marquee_origin, pointer) {
+                    // Umbral propio de la marquesina: un micro-movimiento no
+                    // dibuja ni selecciona (el clic simple deselecciona y no
+                    // debe convertirse en selección de un píxel).
+                    if o.distance(p) <= super::DRAG_THRESHOLD_PX {
+                        drag_source = None;
+                        marquee_origin = None;
+                    }
+                    let r = egui::Rect::from_two_pos(o, p);
+                    painter.rect_filled(
+                        r,
+                        0.0,
+                        egui::Color32::from_rgba_unmultiplied(120, 200, 255, 26),
+                    );
+                    painter.rect_stroke(
+                        r,
+                        0.0,
+                        egui::Stroke::new(
+                            1.0,
+                            egui::Color32::from_rgba_unmultiplied(120, 200, 255, 170),
+                        ),
+                        egui::StrokeKind::Inside,
+                    );
+                }
+            }
+            if response.drag_stopped() {
+                if drag_source.is_some() {
+                    if manual_mode {
+                        manual_stopped = true;
+                    }
+                } else if let (Some(o), Some(p)) = (marquee_origin, pointer) {
+                    if o.distance(p) > super::DRAG_THRESHOLD_PX {
+                        let r = egui::Rect::from_two_pos(o, p);
+                        let ax0 = ((r.min.x - rect.min.x) / zoom) as i32;
+                        let ay0 = ((r.min.y - rect.min.y) / zoom) as i32;
+                        let ax1 = ((r.max.x - rect.min.x) / zoom) as i32;
+                        let ay1 = ((r.max.y - rect.min.y) / zoom) as i32;
+                        marquee_select = Some((ax0, ay0, ax1, ay1));
+                    }
+                }
+                drag_source = None;
+                marquee_origin = None;
+            }
+
+            // Cursor de agarre al pasar sobre un sprite (sin pisar el
+            // cursor de resize de las bandas 9-patch).
+            if hovered.is_some() && drag_source.is_none() && drag.is_none() && !band_hovered {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+            }
+
+            // Vista fantasma del arrastre fuera del modo Manual.
+            if let Some((f, dx, dy)) = drag_ghost {
+                let gx = f.x as f32 + dx;
+                let gy = f.y as f32 + dy;
+                let g = egui::Rect::from_min_max(
+                    to_screen(gx.round() as i32, gy.round() as i32),
+                    to_screen(gx.round() as i32 + f.width, gy.round() as i32 + f.height),
+                );
+                painter.rect_stroke(
+                    g,
+                    0.0,
+                    egui::Stroke::new(
+                        1.5,
+                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 110),
+                    ),
+                    egui::StrokeKind::Inside,
+                );
+                painter.text(
+                    g.left_top() + egui::vec2(0.0, -6.0),
+                    egui::Align2::LEFT_BOTTOM,
+                    "Algoritmo «Manual» para fijar posición",
+                    egui::FontId::proportional(11.0),
+                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 185),
+                );
             }
 
             // Un click que completa un arrastre de banda no selecciona sprites.
@@ -488,9 +737,15 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         .or_else(|| sprites.iter().find(|s| s.visible_frame.contains(&probe)))
                     {
                         picked = Some(sprite.id.clone());
+                    } else {
+                        clicked_empty = true;
                     }
                 }
             }
+
+            // Supr con el cursor sobre la vista: quita los seleccionados.
+            delete_in_preview |=
+                response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Delete));
         });
 
     if let Some(factor) = zoom_delta {
@@ -548,6 +803,54 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     if let Some(id) = picked {
         app.select_sprite(&id);
     }
+    if clicked_empty {
+        app.selected_sprite = None;
+        app.selected_paths.clear();
+    }
+    if let Some((x0, y0, x1, y1)) = marquee_select {
+        // Rectángulo degenerado (clic sin arrastre): no altera la selección.
+        if x1 - x0 > 1 || y1 - y0 > 1 {
+            select_sprites_in_rect(app, x0, y0, x1, y1);
+        }
+    }
+    if delete_in_preview {
+        app.remove_selected();
+    }
+}
+
+/// Selecciona todos los sprites cuyo frame visible toca el rectángulo del
+/// atlas dado (selección múltiple por marquee).
+fn select_sprites_in_rect(app: &mut App, x0: i32, y0: i32, x1: i32, y1: i32) {
+    let Some(out) = &app.result else {
+        return;
+    };
+    let region =
+        tp_core::types::Rect::new(x0.min(x1), y0.min(y1), (x1 - x0).abs(), (y1 - y0).abs());
+    let page = app.selected_page;
+    let ids: Vec<String> = out
+        .result
+        .sprites
+        .iter()
+        .filter(|s| s.atlas_page_index as usize == page && s.visible_frame.intersects(&region))
+        .map(|s| s.id.clone())
+        .collect();
+    if ids.is_empty() {
+        return;
+    }
+    app.selected_paths.clear();
+    app.selected_sprite = None;
+    for id in &ids {
+        if let Some(s) = out.result.sprites.iter().find(|s| &s.id == id) {
+            app.selected_paths.insert(PathBuf::from(&s.source_path));
+        }
+    }
+    if ids.len() == 1 {
+        app.selected_sprite = Some(ids[0].clone());
+    }
+    app.log(
+        super::LogKind::Info,
+        format!("{} sprite(s) seleccionados por rectángulo.", ids.len()),
+    );
 }
 
 /// Overwrite a single side of the selected sprite's 9-patch border.
@@ -652,6 +955,7 @@ fn draw_borders(
     to_screen: &impl Fn(i32, i32) -> egui::Pos2,
     zoom: f32,
     interactive: bool,
+    band_hovered: &mut bool,
 ) -> Option<(Edge, i32, bool)> {
     let v = sprite.visible_frame;
     if v.width <= 0 || v.height <= 0 {
@@ -742,6 +1046,7 @@ fn draw_borders(
                 egui::Sense::drag(),
             )
             .on_hover_cursor(edge.cursor());
+        *band_hovered |= response.hovered();
 
         if response.dragged() {
             if let Some(pos) = response.interact_pointer_pos() {

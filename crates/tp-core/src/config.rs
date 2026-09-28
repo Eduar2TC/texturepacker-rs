@@ -1188,10 +1188,78 @@ impl ProjectConfig {
     }
 
     /// Parse a `.tpproj` TOML project file.
+    ///
+    /// Como `serde` aborta en el **primer** campo ausente, un proyecto
+    /// incompleto daba errores de uno en uno («missing field input_directory»,
+    /// corregir, volver a cargar, «missing field padding»...). Aquí se
+    /// pre-analiza el TOML y se validan **todos** los campos obligatorios de
+    /// una vez: un solo mensaje lista los que faltan.
     pub fn from_toml(text: &str) -> Result<Self> {
+        let value: toml::Value = toml::from_str(text)?;
+        if let Some(table) = value.as_table() {
+            let missing: Vec<&str> = REQUIRED_TOML_FIELDS
+                .iter()
+                .copied()
+                .filter(|f| !table.contains_key(*f))
+                .collect();
+            if !missing.is_empty() {
+                return Err(TpError::Config(if missing.len() == 1 {
+                    format!(
+                        "falta un campo obligatorio en el proyecto TOML: `{}`",
+                        missing[0]
+                    )
+                } else {
+                    format!(
+                        "faltan {} campos obligatorios en el proyecto TOML: {}",
+                        missing.len(),
+                        missing
+                            .iter()
+                            .map(|f| format!("`{f}`"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }));
+            }
+        }
+        // Delegar en serde con la lista ya verificada: los errores restantes
+        // son de tipo/valor con línea y columna del TOML.
         Ok(toml::from_str(text)?)
     }
 }
+
+/// Campos obligatorios de un `.tpproj`: todo lo que `ProjectConfig` serializa
+/// sin `#[serde(default)]` ni `skip_serializing_if` y que no sea `Option`
+/// (un `Option` ausente ya se deserializa como `None`, y `toml` ni siquiera
+/// lo escribe cuando es `None`). Los campos con default quedan fuera a
+/// propósito para que los proyectos antiguos sigan cargando.
+///
+/// El test `required_fields_list_is_honest` mantiene esta lista sincronizada
+/// con el struct: si añades/quitas un campo sin default, el test falla y te
+/// pide actualizarla (orden = orden de aparición en el struct).
+const REQUIRED_TOML_FIELDS: &[&str] = &[
+    "input_directory",
+    "output_directory",
+    "max_texture_size",
+    "padding",
+    "extrude",
+    "allow_rotation",
+    "enable_trim",
+    "trim_threshold",
+    "enable_polygon",
+    "polygon_tolerance",
+    "enable_aliasing",
+    "color_depth",
+    "dithering_algorithm",
+    "gpu_format",
+    "template_format",
+    "packing_strategy",
+    "scale_variants",
+    "enable_normal_maps",
+    "default_pivot_x",
+    "default_pivot_y",
+    "base_file_name",
+    "recursive",
+];
 
 #[cfg(test)]
 mod tests {
@@ -1226,6 +1294,70 @@ mod tests {
             .to_toml()
             .unwrap()
             .contains("manual_grid"));
+    }
+
+    #[test]
+    fn missing_fields_are_reported_all_at_once() {
+        // Proyecto mínimo con SOLO 3 campos: el error debe listar TODOS
+        // los obligatorios ausentes de una vez (no el primero que serde
+        // encuentre).
+        let err = ProjectConfig::from_toml("input_directory = \"in\"\n").unwrap_err();
+        let msg = err.to_string();
+        for field in [
+            "output_directory",
+            "max_texture_size",
+            "padding",
+            "recursive",
+        ] {
+            assert!(
+                msg.contains(field),
+                "el error debería mencionar `{field}`: {msg}"
+            );
+        }
+        // Un solo campo ausente → mensaje singular.
+        let mut text = ProjectConfig::default().to_toml().unwrap();
+        let line = text
+            .lines()
+            .find(|l| l.starts_with("recursive"))
+            .map(str::to_string)
+            .unwrap();
+        text = text.replace(&line, "");
+        let err = ProjectConfig::from_toml(&text).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("falta un campo obligatorio"),
+            "mensaje singular esperado: {msg}"
+        );
+        // Un TOML que no es una tabla (p. ej. vacío) tampoco rompe: sin
+        // campos no hay lista que verificar y serde da su error normal.
+        assert!(ProjectConfig::from_toml("").is_err());
+    }
+
+    #[test]
+    fn required_fields_list_is_honest() {
+        // La lista REQUIRED_TOML_FIELDS debe describir la realidad de
+        // serde: cada campo listado DEBE ser exigido por serde (quitarlo
+        // del TOML rompe la carga), y nada fuera de la lista puede ser
+        // obligatorio (proyectos antiguos deben seguir cargando).
+        let cfg = ProjectConfig::default();
+        let full = cfg.to_toml().unwrap();
+        for field in REQUIRED_TOML_FIELDS {
+            let line = full
+                .lines()
+                .find(|l| l.starts_with(*field))
+                .unwrap_or_else(|| panic!("el campo {field} no aparece en el TOML generado"));
+            let stripped = full.replace(line, "");
+            let err = match ProjectConfig::from_toml(&stripped) {
+                Ok(_) => panic!(
+                    "{field} está en REQUIRED_TOML_FIELDS pero serde no lo exige (tiene default o es Option): sácalo de la lista"
+                ),
+                Err(e) => e.to_string(),
+            };
+            assert!(
+                err.contains(field),
+                "al quitar `{field}` el error no lo menciona: {err}"
+            );
+        }
     }
 
     #[test]

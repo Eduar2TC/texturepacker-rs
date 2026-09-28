@@ -2,7 +2,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod app;
+// La app vive en la librería (tp_app::App) para compartirla con el
+// autotest `tp-smoke` y las pruebas headless.
 
 /// Icono de ventana (empotrado en el binario, decodificado al arrancar).
 /// El PNG maestro vive en `packaging/` y se regenera con
@@ -31,6 +32,6 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "TexturePacker-RS",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, project)))),
+        Box::new(move |cc| Ok(Box::new(tp_app::App::new(cc, project)))),
     )
 }

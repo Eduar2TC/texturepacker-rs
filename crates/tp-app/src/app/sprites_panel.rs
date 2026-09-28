@@ -5,7 +5,6 @@ use eframe::egui;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use tp_core::ingest::{is_image_file, normalize_path};
-use tp_core::types::SpriteAsset;
 use tp_core::ProjectConfig;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -38,8 +37,19 @@ enum TreeAction {
     CopyPath(PathBuf),
 }
 
+/// Estado mutable del recorrido del árbol: acciones pendientes, destino de
+/// soltado bajo el cursor y rects en pantalla de las filas de sprite
+/// dibujadas este frame (registro para pruebas con eventos de puntero).
+struct TreeWalk {
+    action: Option<TreeAction>,
+    drop_target: Option<String>,
+    rows: Vec<(PathBuf, egui::Rect)>,
+}
+
 pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
-    handle_drop(app, ui);
+    // El soltar de ficheros del SO lo gestiona la ventana completa
+    // (handle_global_file_drop); aquí solo queda el arrastre interno
+    // de sprites hacia las hojas.
     let panel_hovered = ui.rect_contains_pointer(ui.max_rect());
     let filter_focused = app.tree_filter_focused;
 
@@ -52,7 +62,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         if hidden > 0 {
             ui.separator();
             if ui
-                .small_button(format!("Restaurar ({hidden})"))
+                .small_button(format!("↺ Restaurar ({hidden})"))
                 .on_hover_text("Volver a incluir los sprites quitados")
                 .clicked()
             {
@@ -61,14 +71,14 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button("-")
+                .small_button("⊖")
                 .on_hover_text("Plegar todas las carpetas")
                 .clicked()
             {
                 app.tree_force_open = Some(false);
             }
             if ui
-                .small_button("+")
+                .small_button("⊕")
                 .on_hover_text("Desplegar todas las carpetas")
                 .clicked()
             {
@@ -97,17 +107,26 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     if tree.is_empty() {
         ui.add_space(8.0);
         let msg = if app.tree_filter.is_empty() {
-            "Arrastra sprites o carpetas aquí\no usa «Añadir sprites» en la barra de herramientas."
+            "Arrastra imágenes o carpetas
+desde tu sistema a cualquier
+parte de la ventana."
         } else {
             "Ningún sprite coincide con el filtro."
         };
-        ui.label(egui::RichText::new(msg).weak());
+        ui.add_space(12.0);
+        ui.vertical_centered(|ui| {
+            ui.label(egui::RichText::new("🗂").size(28.0));
+            ui.label(egui::RichText::new(msg).weak());
+        });
         return;
     }
 
     let force = app.tree_force_open.take();
-    let mut action: Option<TreeAction> = None;
-    let mut drop_target: Option<String> = None;
+    let mut walk = TreeWalk {
+        action: None,
+        drop_target: None,
+        rows: Vec::new(),
+    };
     egui::ScrollArea::vertical()
         .id_salt("sprites_tree")
         // El arrastre del contenido (drag-to-scroll) roba el arrastre a las
@@ -122,16 +141,17 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             // muestran en cuanto hay más de una hoja (activa o no).
             if app.config.folder_groups.len() > 1 {
                 for (gi, g) in app.config.folder_groups.iter().enumerate() {
-                    render_sheet(app, ui, gi, g, force, &mut action);
+                    render_sheet(app, ui, gi, g, force, &mut walk);
                 }
                 ui.separator();
             }
             for node in &tree {
-                render_node(app, ui, node, true, &mut action, force, &mut drop_target);
+                render_node(app, ui, node, true, &mut walk, force);
             }
         });
+    app.sprite_rows = walk.rows;
 
-    match action {
+    match walk.action {
         Some(TreeAction::Select(path, toggle)) => apply_selection(app, path, toggle),
         Some(TreeAction::Remove(path)) => {
             let removed = app.remove_path(&path);
@@ -208,29 +228,59 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         None => {}
     }
 
-    // Soltar un sprite arrastrado (payload SpriteAsset) sobre una carpeta
-    // reasigna sus sprites al grupo con el nombre de la carpeta. El payload
-    // solo se consume en el frame en que se suelta el botón.
+    // Soltar sprites arrastrados (payload unificado SpriteDrag) sobre una
+    // carpeta reasigna TODOS los ids del arrastre al grupo con el nombre de
+    // la carpeta. El payload solo se consume en el frame de release.
     let released = ui.input(|i| i.pointer.any_released());
-    if released && drop_target.is_some() {
-        if let Some(sprite) = egui::DragAndDrop::take_payload::<SpriteAsset>(ui.ctx()) {
-            let target = drop_target.take().unwrap();
+    if released && walk.drop_target.is_some() {
+        if let Some(drag) = crate::app::SpriteDrag::take(ui.ctx()) {
+            let target = walk.drop_target.take().unwrap();
             if let Some(index) = app
                 .config
                 .folder_groups
                 .iter()
                 .position(|g| g.name == target)
             {
-                let moved = app.move_sprites_to_group(std::slice::from_ref(&sprite.id), index);
+                let moved = app.move_sprites_to_group(&drag.ids, index);
                 if moved > 0 {
                     app.log(
                         LogKind::Info,
-                        format!("«{}» movido al grupo «{target}».", sprite.id),
+                        format!("{} sprite(s) movidos al grupo «{target}».", drag.ids.len()),
                     );
                 }
             }
         }
     }
+}
+
+/// Ids a arrastrar para la fila `path`: si la fila pertenece a una
+/// multi-selección, viajan todos los seleccionados (en orden estable).
+fn drag_ids(app: &App, path: &Path) -> Vec<String> {
+    let Some(out) = app.result.as_ref() else {
+        return Vec::new();
+    };
+    let norm = normalize_path(path);
+    let dragged_selected = app.selected_paths.iter().any(|p| normalize_path(p) == norm);
+    let own = path.to_path_buf();
+    let paths: Vec<&PathBuf> = if dragged_selected && app.selected_paths.len() > 1 {
+        app.selected_paths.iter().collect()
+    } else {
+        vec![&own]
+    };
+    let mut ids: Vec<String> = Vec::new();
+    for p in paths {
+        let n = normalize_path(p);
+        if let Some(s) = out
+            .result
+            .sprites
+            .iter()
+            .find(|s| normalize_path(Path::new(&s.source_path)) == n)
+        {
+            ids.push(s.id.clone());
+        }
+    }
+    ids.sort();
+    ids
 }
 
 /// Every image file under `path` (itself included), as ingested sprite ids.
@@ -273,7 +323,7 @@ fn render_sheet(
     index: usize,
     group: &tp_core::config::FolderGroup,
     force: Option<bool>,
-    action: &mut Option<TreeAction>,
+    walk: &mut TreeWalk,
 ) {
     let id = egui::Id::new(("tree_sheet", group.name.clone()));
     let title = if group.name.is_empty() {
@@ -311,20 +361,26 @@ fn render_sheet(
             let name = name_of(p);
             let selected = app.selected_paths.contains(p);
             let resp = ui.selectable_label(selected, &name);
+            // Registro para pruebas: rect en pantalla de esta fila.
+            walk.rows.push((p.clone(), resp.rect));
             if resp.clicked() {
                 let toggle =
                     ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift);
-                *action = Some(TreeAction::Select(p.clone(), toggle));
+                walk.action = Some(TreeAction::Select(p.clone(), toggle));
             }
             resp.context_menu(|ui| {
                 if ui.button("Quitar sprite").clicked() {
-                    *action = Some(TreeAction::Remove(p.clone()));
+                    walk.action = Some(TreeAction::Remove(p.clone()));
                     ui.close();
                 }
             });
             // Drag source: widget de arrastre con id propio sobre la fila.
+            // El payload va al lienzo (colocar donde se suelta) y a las hojas
+            // del árbol (pack por carpetas).
             if !app.config.auto_folder_groups {
-                if let Some(sprite) = app
+                // Solo el drag de sprites ya empaquetados (con frame) coloca
+                // en el lienzo: los nuevos entran por el flujo automático.
+                if app
                     .result
                     .as_ref()
                     .and_then(|o| {
@@ -333,12 +389,14 @@ fn render_sheet(
                             .iter()
                             .find(|s| Path::new(&s.source_path) == p.as_path())
                     })
-                    .cloned()
+                    .is_some()
                 {
                     // Mismo id que la fila: clic y arrastre conviven.
                     let dnd = resp.interact(egui::Sense::drag());
                     if dnd.dragged() {
-                        egui::DragAndDrop::set_payload(ui.ctx(), sprite);
+                        // Un solo payload: SpriteDrag (hay una única ranura
+                        // de DragAndDrop y el doble set lo sobrescribía).
+                        crate::app::begin_sprite_drag(app, ui.ctx(), drag_ids(app, p));
                     }
                     dnd.on_hover_cursor(egui::CursorIcon::Grab);
                 }
@@ -356,15 +414,13 @@ fn render_sheet(
         .body_response
         .as_ref()
         .is_some_and(|r| r.contains_pointer());
-    let hover = body
-        .header_response
-        .dnd_hover_payload::<SpriteAsset>()
-        .or_else(|| {
-            body.body_response
+    let hover = crate::app::SpriteDrag::has_payload(ui.ctx())
+        && (body.header_response.contains_pointer()
+            || body
+                .body_response
                 .as_ref()
-                .and_then(|r| r.dnd_hover_payload::<SpriteAsset>())
-        });
-    if hover.is_some() {
+                .is_some_and(|r| r.contains_pointer()));
+    if hover {
         // Marca visual del destino mientras se arrastra encima.
         let rect = match body.body_response.as_ref() {
             Some(r) => body.header_response.rect.union(r.rect),
@@ -376,17 +432,19 @@ fn render_sheet(
             egui::Color32::from_rgba_unmultiplied(120, 200, 120, 40),
         );
     }
-    // Al soltar sobre esta hoja: reasignar el sprite a ella.
-    let released = body
-        .header_response
-        .dnd_release_payload::<SpriteAsset>()
-        .or_else(|| {
-            body.body_response
-                .as_ref()
-                .and_then(|r| r.dnd_release_payload::<SpriteAsset>())
-        });
-    if let Some(sprite) = released {
-        *action = Some(TreeAction::AssignIds(vec![sprite.id.clone()], index));
+    // Al soltar sobre esta hoja: reasignar los sprites arrastrados a ella.
+    // El payload unificado SpriteDrag se consume aquí (mismo destino que el
+    // lienzo: la primera zona que lo consuma se queda el arrastre).
+    let released = ui.input(|i| i.pointer.any_released());
+    let over_sheet = body.header_response.contains_pointer()
+        || body
+            .body_response
+            .as_ref()
+            .is_some_and(|r| r.contains_pointer());
+    if released && over_sheet && crate::app::SpriteDrag::has_payload(ui.ctx()) {
+        if let Some(drag) = crate::app::SpriteDrag::take(ui.ctx()) {
+            walk.action = Some(TreeAction::AssignIds(drag.ids.clone(), index));
+        }
     }
     let _ = body_hover;
 }
@@ -396,9 +454,8 @@ fn render_node(
     ui: &mut egui::Ui,
     node: &TreeNode,
     root: bool,
-    action: &mut Option<TreeAction>,
+    walk: &mut TreeWalk,
     force: Option<bool>,
-    drop_target: &mut Option<String>,
 ) {
     if node.is_dir {
         let name = match node.origin {
@@ -429,18 +486,17 @@ fn render_node(
             .default_open(root || !app.tree_filter.is_empty())
             .show(ui, |ui| {
                 for child in &node.children {
-                    render_node(app, ui, child, false, action, force, drop_target);
+                    render_node(app, ui, child, false, walk, force);
                 }
             });
         inner.header_response.context_menu(|ui| {
-            dir_menu(ui, node, action, &app.config.folder_groups);
+            dir_menu(ui, node, &mut walk.action, &app.config.folder_groups);
         });
-        // Soltar un sprite arrastrado sobre una carpeta reasigna al grupo
-        // con el mismo nombre que la carpeta.
-        if egui::DragAndDrop::has_payload_of_type::<SpriteAsset>(ui.ctx())
-            && inner.header_response.contains_pointer()
+        // Soltar sprites arrastrados sobre una carpeta reasigna al grupo
+        // con el mismo nombre que la carpeta (payload unificado SpriteDrag).
+        if crate::app::SpriteDrag::has_payload(ui.ctx()) && inner.header_response.contains_pointer()
         {
-            *drop_target = Some(node.name.clone());
+            walk.drop_target = Some(node.name.clone());
         }
     } else {
         let name =
@@ -453,9 +509,11 @@ fn render_node(
             };
         let selected = app.selected_paths.contains(&node.path);
         let response = ui.selectable_label(selected, name);
+        // Registro para pruebas: rect en pantalla de esta fila.
+        walk.rows.push((node.path.clone(), response.rect));
         if response.clicked() {
             let toggle = ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift);
-            *action = Some(TreeAction::Select(node.path.clone(), toggle));
+            walk.action = Some(TreeAction::Select(node.path.clone(), toggle));
         }
         response.clone().context_menu(|ui| {
             // Vía garantizada para asignar a hoja (además del arrastre).
@@ -475,28 +533,30 @@ fn render_node(
                             name.clone()
                         };
                         if ui.button(label).clicked() {
-                            *action = Some(TreeAction::AssignPathToSheet(node.path.clone(), *i));
+                            walk.action =
+                                Some(TreeAction::AssignPathToSheet(node.path.clone(), *i));
                             ui.close();
                         }
                     }
                 });
             }
             if ui.button("Quitar sprite").clicked() {
-                *action = Some(TreeAction::Remove(node.path.clone()));
+                walk.action = Some(TreeAction::Remove(node.path.clone()));
                 ui.close();
             }
             if ui.button("Copiar ruta").clicked() {
-                *action = Some(TreeAction::CopyPath(node.path.clone()));
+                walk.action = Some(TreeAction::CopyPath(node.path.clone()));
                 ui.close();
             }
         });
         response
             .clone()
             .on_hover_text(node.path.display().to_string());
-        // Arrastrar un sprite del árbol hacia una hoja (pack por carpetas):
-        // fuente de arrastre sobre el rect de la fila ya pintada.
+        // Arrastrar un sprite del árbol: hacia el lienzo (colocarlo donde
+        // se suelta) o hacia una hoja (pack por carpetas).
         if !app.config.auto_folder_groups {
-            if let Some(sprite) = app
+            // Igual arriba: solo sprites ya empaquetados.
+            if app
                 .result
                 .as_ref()
                 .and_then(|out| {
@@ -505,13 +565,15 @@ fn render_node(
                         .iter()
                         .find(|s| Path::new(&s.source_path) == node.path.as_path())
                 })
-                .cloned()
+                .is_some()
             {
                 // Mismo id que la fila: los sentidos se fusionan y el clic
                 // no se pierde (un overlay con id distinto roba el press).
                 let dnd = response.interact(egui::Sense::drag());
                 if dnd.dragged() {
-                    egui::DragAndDrop::set_payload(ui.ctx(), sprite);
+                    // Un solo payload: SpriteDrag (el segundo set_payload
+                    // sobrescribiría el primero).
+                    crate::app::begin_sprite_drag(app, ui.ctx(), drag_ids(app, &node.path));
                 }
                 dnd.on_hover_cursor(egui::CursorIcon::Grab);
             }
@@ -577,37 +639,6 @@ fn apply_selection(app: &mut App, path: PathBuf, toggle: bool) {
         app.selected_sprite = id;
     } else {
         app.selected_sprite = None;
-    }
-}
-
-fn handle_drop(app: &mut App, ui: &mut egui::Ui) {
-    let (hovered, dropped) = ui
-        .ctx()
-        .input(|i| (i.raw.hovered_files.clone(), i.raw.dropped_files.clone()));
-    if !ui.rect_contains_pointer(ui.max_rect()) {
-        return;
-    }
-    if !hovered.is_empty() {
-        ui.colored_label(
-            egui::Color32::from_rgb(120, 220, 120),
-            "Suelta aquí sprites o carpetas",
-        );
-    }
-    if dropped.is_empty() {
-        return;
-    }
-    let mut added = 0;
-    for file in dropped {
-        if let Some(path) = file.path {
-            if app.add_input(path) {
-                added += 1;
-            }
-        }
-    }
-    if added > 0 {
-        app.log(LogKind::Info, format!("{added} sprite(s) añadido(s)."));
-    } else {
-        app.log(LogKind::Warning, "No se añadieron sprites nuevos.".into());
     }
 }
 

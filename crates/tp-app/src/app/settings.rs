@@ -18,6 +18,11 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.separator();
+    // Bandera por-frame: cualquier combo cambia la config y dispara el
+    // repack (los controles directos lo hacen inline con .changed()).
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(egui::Id::new(SETTINGS_CHANGED_FLAG), false);
+    });
     egui::ScrollArea::vertical()
         .id_salt("settings_scroll")
         .show(ui, |ui| {
@@ -26,6 +31,12 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
             processing_section(app, ui);
             warnings_section(app, ui);
         });
+    if ui.ctx().data(|d| {
+        d.get_temp::<bool>(egui::Id::new(SETTINGS_CHANGED_FLAG))
+            .unwrap_or(false)
+    }) {
+        app.on_config_changed();
+    }
 }
 
 fn data_section(app: &mut App, ui: &mut egui::Ui) {
@@ -46,16 +57,28 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             });
             ui.label("Directorio de salida");
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.output_dir_text).desired_width(190.0));
+                let out = ui
+                    .add(egui::TextEdit::singleline(&mut app.output_dir_text).desired_width(190.0));
+                if out.changed() {
+                    app.on_config_changed();
+                }
                 if ui.button("…").clicked() {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         app.output_dir_text = dir.display().to_string();
                         app.config.output_directory = dir;
+                        app.on_config_changed();
                     }
                 }
             });
             ui.label("Nombre base de los archivos");
-            ui.add(egui::TextEdit::singleline(&mut app.config.base_file_name).desired_width(190.0));
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut app.config.base_file_name).desired_width(190.0),
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
             ui.label(
                 egui::RichText::new("Placeholders: {n} {n1} {v}  (p. ej. hoja{n1}{v})").weak(),
             );
@@ -77,25 +100,45 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             if !advanced {
                 return;
             }
-            ui.checkbox(&mut app.config.recursive, "Buscar en subdirectorios");
-            ui.checkbox(
-                &mut app.config.trim_sprite_names,
-                "Quitar la extensión de los nombres",
-            )
-            .on_hover_text("hero/idle_00.png pasa a llamarse hero/idle_00");
-            ui.checkbox(
-                &mut app.config.prepend_folder_name,
-                "Anteponer el nombre de la carpeta inteligente",
-            )
-            .on_hover_text("Solo aplica a carpetas añadidas fuera del directorio de entrada");
-            ui.checkbox(
-                &mut app.config.enable_auto_detect_animations,
-                "Auto-detectar animaciones",
-            )
-            .on_hover_text(
-                "Agrupa sprites como walk_001..walk_003 en una animación walk \
-                 y la expone en los metadatos (auto-detectar animaciones)",
-            );
+            if ui
+                .checkbox(&mut app.config.recursive, "Buscar en subdirectorios")
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .checkbox(
+                    &mut app.config.trim_sprite_names,
+                    "Quitar la extensión de los nombres",
+                )
+                .on_hover_text("hero/idle_00.png pasa a llamarse hero/idle_00")
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .checkbox(
+                    &mut app.config.prepend_folder_name,
+                    "Anteponer el nombre de la carpeta inteligente",
+                )
+                .on_hover_text("Solo aplica a carpetas añadidas fuera del directorio de entrada")
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .checkbox(
+                    &mut app.config.enable_auto_detect_animations,
+                    "Auto-detectar animaciones",
+                )
+                .on_hover_text(
+                    "Agrupa sprites como walk_001..walk_003 en una animación walk \
+                     y la expone en los metadatos (auto-detectar animaciones)",
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
             ui.label("Ruta de la textura en los metadatos (p. ej. /assets)");
             let mut texture_path = app.config.texture_path.clone().unwrap_or_default();
             if ui
@@ -111,9 +154,15 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     Some(texture_path)
                 };
+                app.on_config_changed();
             }
             ui.label("Scaling variants (p. ej. 2, 0.5 → @2x, -hd)");
-            ui.add(egui::TextEdit::singleline(&mut app.variants_text).desired_width(190.0));
+            if ui
+                .add(egui::TextEdit::singleline(&mut app.variants_text).desired_width(190.0))
+                .changed()
+            {
+                app.on_config_changed();
+            }
             ui.label("Plantilla Mustache personalizada (opcional)");
             ui.horizontal(|ui| {
                 let mut path = app
@@ -160,25 +209,55 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 .selected_text(app.config.max_texture_size.to_string())
                 .show_ui(ui, |ui| {
                     for s in sizes {
-                        ui.selectable_value(&mut app.config.max_texture_size, s, s.to_string());
+                        if ui
+                            .selectable_value(&mut app.config.max_texture_size, s, s.to_string())
+                            .clicked()
+                        {
+                            app.on_config_changed();
+                        }
                     }
                 });
-            ui.checkbox(&mut app.config.multipack, "Multipack (varias hojas)")
+            if ui
+                .checkbox(&mut app.config.multipack, "Multipack (varias hojas)")
                 .on_hover_text(
                     "Si los sprites no caben en una hoja se generan varias; con la opción \
                      desactivada el empaquetado falla",
-                );
-            ui.add(egui::Slider::new(&mut app.config.padding, 0..=16).text("Shape padding (px)"));
-            ui.add(egui::Slider::new(&mut app.config.extrude, 0..=16).text("Extrude (px)"));
-            ui.checkbox(&mut app.config.allow_rotation, "Permitir rotación 90°");
-            ui.checkbox(
-                &mut app.config.flip_vertical,
-                "Voltear verticalmente (flip Y)",
-            )
-            .on_hover_text(
-                "Solo formatos de hardware (ASTC/ETC2/PVRTC); las coordenadas \
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .add(
+                    egui::Slider::new(&mut app.config.padding, 0..=16)
+                        .text("Shape padding (px)"),
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .add(egui::Slider::new(&mut app.config.extrude, 0..=16).text("Extrude (px)"))
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .checkbox(&mut app.config.allow_rotation, "Permitir rotación 90°")
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .checkbox(&mut app.config.flip_vertical, "Voltear verticalmente (flip Y)")
+                .on_hover_text(
+                    "Solo formatos de hardware (ASTC/ETC2/PVRTC); las coordenadas \
                      de los frames no cambian",
-            );
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
             // Trim mode Polygon cambia el algoritmo a Polygon
             // automáticamente; se muestra y no se puede elegir a mano.
             let polygon_auto =
@@ -210,6 +289,8 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                     &mut app.config.algorithm,
                 );
             });
+            // Un cambio de algoritmo reacciona al instante (vía selectable_value
+            // dentro del combo, cableado en enum_combo).
             if matches!(
                 app.config.algorithm,
                 PackingAlgorithm::MaxRects | PackingAlgorithm::Guillotine
@@ -241,16 +322,26 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 },
                 &mut app.config.pack_mode,
             );
-            ui.checkbox(&mut app.config.enable_trim, "Trim (recortar transparencia)");
+            if ui
+                .checkbox(&mut app.config.enable_trim, "Trim (recortar transparencia)")
+                .changed()
+            {
+                app.on_config_changed();
+            }
 
             if !advanced {
                 return;
             }
-            ui.add(
-                egui::Slider::new(&mut app.config.border_padding, 0..=64)
-                    .text("Border padding (px)"),
-            )
-            .on_hover_text("Margen transparente entre los sprites y el borde del atlas");
+            if ui
+                .add(
+                    egui::Slider::new(&mut app.config.border_padding, 0..=64)
+                        .text("Border padding (px)"),
+                )
+                .on_hover_text("Margen transparente entre los sprites y el borde del atlas")
+                .changed()
+            {
+                app.on_config_changed();
+            }
             enum_combo(
                 ui,
                 "Restricción de tamaño",
@@ -263,23 +354,35 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 },
                 &mut app.config.size_constraints,
             );
-            ui.checkbox(
-                &mut app.config.force_squared,
-                "Atlas cuadrado (force squared)",
-            );
+            if ui
+                .checkbox(&mut app.config.force_squared, "Atlas cuadrado (force squared)")
+                .changed()
+            {
+                app.on_config_changed();
+            }
             ui.horizontal(|ui| {
                 ui.label("Tamaño fijo (0 = automático)");
-                ui.add(
-                    egui::DragValue::new(&mut app.config.fixed_width)
-                        .range(0..=8192)
-                        .speed(1),
-                );
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.config.fixed_width)
+                            .range(0..=8192)
+                            .speed(1),
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
                 ui.label(egui::RichText::new("x").weak());
-                ui.add(
-                    egui::DragValue::new(&mut app.config.fixed_height)
-                        .range(0..=8192)
-                        .speed(1),
-                );
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.config.fixed_height)
+                            .range(0..=8192)
+                            .speed(1),
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
             })
             .response
             .on_hover_text("Fija las dimensiones del atlas (tamaño fijo)");
@@ -316,30 +419,50 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 ui.label("Divisor común");
                 ui.label(egui::RichText::new("x").weak());
-                ui.add(
-                    egui::DragValue::new(&mut app.config.common_divisor_x)
-                        .range(1..=2048)
-                        .speed(1),
-                );
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.config.common_divisor_x)
+                            .range(1..=2048)
+                            .speed(1),
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
                 ui.label(egui::RichText::new("y").weak());
-                ui.add(
-                    egui::DragValue::new(&mut app.config.common_divisor_y)
-                        .range(1..=2048)
-                        .speed(1),
-                );
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.config.common_divisor_y)
+                            .range(1..=2048)
+                            .speed(1),
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
             })
             .response
             .on_hover_text("Estira los sprites con transparencia hasta ser divisibles");
-            ui.add(
-                egui::Slider::new(&mut app.config.align_to_grid, 0..=64)
-                    .text("Alinear a rejilla (0 = off)"),
-            )
-            .on_hover_text("Coloca las esquinas de los sprites en coordenadas múltiplos");
-            ui.add_enabled(
-                app.config.enable_trim,
-                egui::Slider::new(&mut app.config.trim_threshold, 1..=255)
-                    .text("Trim threshold (1-255)"),
-            );
+            if ui
+                .add(
+                    egui::Slider::new(&mut app.config.align_to_grid, 0..=64)
+                        .text("Alinear a rejilla (0 = off)"),
+                )
+                .on_hover_text("Coloca las esquinas de los sprites en coordenadas múltiplos")
+                .changed()
+            {
+                app.on_config_changed();
+            }
+            if ui
+                .add_enabled(
+                    app.config.enable_trim,
+                    egui::Slider::new(&mut app.config.trim_threshold, 1..=255)
+                        .text("Trim threshold (1-255)"),
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
             ui.add_enabled_ui(app.config.enable_trim, |ui| {
                 egui::ComboBox::from_label("Modo de recorte")
                     .selected_text(trim_mode_name(app.config.trim_mode))
@@ -367,11 +490,16 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                         );
                     });
             });
-            if app.config.enable_trim && app.config.trim_mode.trims() {
-                ui.add(
-                    egui::Slider::new(&mut app.config.trim_margin, 0..=16)
-                        .text("Margen de recorte (px)"),
-                );
+            if app.config.enable_trim
+                && app.config.trim_mode.trims()
+                && ui
+                    .add(
+                        egui::Slider::new(&mut app.config.trim_margin, 0..=16)
+                            .text("Margen de recorte (px)"),
+                    )
+                    .changed()
+            {
+                app.on_config_changed();
             }
             if app.config.trim_mode == TrimMode::Polygon {
                 ui.label(
@@ -392,31 +520,46 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             ui.add_enabled_ui(!polygon_auto, |ui| {
                 ui.checkbox(&mut app.config.enable_polygon, "Modo polígono (mallas)");
             });
-            ui.add_enabled(
-                polygon_auto,
-                egui::Slider::new(&mut app.config.polygon_tolerance, 0.0..=10.0)
-                    .text("Tolerancia (RDP)"),
-            );
+            if ui
+                .add_enabled(
+                    polygon_auto,
+                    egui::Slider::new(&mut app.config.polygon_tolerance, 0.0..=10.0)
+                        .text("Tolerancia (RDP)"),
+                )
+                .changed()
+            {
+                app.on_config_changed();
+            }
             if polygon_auto {
                 ui.label(
                     egui::RichText::new(
-                        "Empaqueta sprites por su contorno (Marching Squares → RDP → Earcut).                          Activo por el Trim mode Polygon.",
+                        "Empaqueta sprites por su contorno (Marching Squares → RDP → Earcut). Activo por el Trim mode Polygon.",
                     )
                     .weak(),
                 );
             }
             ui.label("Pivot por defecto (normalizado 0..1)");
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut app.config.default_pivot_x)
-                        .range(0.0..=1.0)
-                        .speed(0.01),
-                );
-                ui.add(
-                    egui::DragValue::new(&mut app.config.default_pivot_y)
-                        .range(0.0..=1.0)
-                        .speed(0.01),
-                );
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.config.default_pivot_x)
+                            .range(0.0..=1.0)
+                            .speed(0.01),
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut app.config.default_pivot_y)
+                            .range(0.0..=1.0)
+                            .speed(0.01),
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
             });
         });
 }
@@ -522,13 +665,30 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 GpuFormat::Png | GpuFormat::Png8 => {
                     ui.horizontal(|ui| {
                         ui.label("Optimización PNG (0-7)");
-                        ui.add(egui::DragValue::new(&mut app.config.png_opt_level).range(0..=7));
+                        if ui
+                            .add(egui::DragValue::new(&mut app.config.png_opt_level).range(0..=7))
+                            .changed()
+                        {
+                            // No reempaqueta: solo afecta a la exportación.
+                            app.log(
+                                super::LogKind::Info,
+                                "Se aplicará al Publicar (nivel de optimización PNG).".into(),
+                            );
+                        }
                     });
                 }
                 GpuFormat::Jpg => {
                     ui.horizontal(|ui| {
                         ui.label("Calidad JPG (0-100)");
-                        ui.add(egui::DragValue::new(&mut app.config.jpg_quality).range(0..=100));
+                        if ui
+                            .add(egui::DragValue::new(&mut app.config.jpg_quality).range(0..=100))
+                            .changed()
+                        {
+                            app.log(
+                                super::LogKind::Info,
+                                "Se aplicará al Publicar (calidad JPG).".into(),
+                            );
+                        }
                     });
                 }
                 GpuFormat::WebP => {
@@ -539,9 +699,18 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     if app.config.webp_quality <= 100 {
                         ui.horizontal(|ui| {
                             ui.label("Calidad WebP (0-100)");
-                            ui.add(
-                                egui::DragValue::new(&mut app.config.webp_quality).range(0..=100),
-                            );
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut app.config.webp_quality)
+                                        .range(0..=100),
+                                )
+                                .changed()
+                            {
+                                app.log(
+                                    super::LogKind::Info,
+                                    "Se aplicará al Publicar (calidad WebP).".into(),
+                                );
+                            }
                         });
                     }
                 }
@@ -655,7 +824,10 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
     }
 }
 
-fn enum_combo<T: PartialEq>(
+/// Id de la bandera por-frame "algún combo cambió la configuración".
+const SETTINGS_CHANGED_FLAG: &str = "tp_settings_changed";
+
+fn enum_combo<T: PartialEq + Clone>(
     ui: &mut egui::Ui,
     label: &str,
     selected_text: &str,
@@ -664,7 +836,15 @@ fn enum_combo<T: PartialEq>(
 ) {
     egui::ComboBox::from_label(label)
         .selected_text(selected_text)
-        .show_ui(ui, |ui| items(ui, value));
+        .show_ui(ui, |ui| {
+            let before = value.clone();
+            items(ui, value);
+            if *value != before {
+                ui.ctx().data_mut(|d| {
+                    d.insert_temp(egui::Id::new(SETTINGS_CHANGED_FLAG), true);
+                });
+            }
+        });
 }
 
 fn strategy_display(s: PackingStrategy) -> &'static str {
