@@ -46,6 +46,27 @@ comprimidos, hay **instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS,
 `.msi` con WiX en Windows (instala tp-app y tp-cli, añade tp-cli al PATH) y un
 zip de Linux con icono y lanzador `.desktop`.
 
+### Novedades v0.4.0
+
+- **Arrastrar sprites del panel al lienzo**: suelta sprites del árbol sobre
+  la vista para colocarlos donde quieras — activa el algoritmo Manual, fija
+  las posiciones relativas de la selección, imanta a la rejilla y respeta el
+  borde del atlas. El fantasma y el drop comparten la misma función de
+  colocación: lo que ves mientras arrastras es exactamente lo que queda.
+- **Arrastre unificado en el panel**: un solo payload para el lienzo y para
+  las hojas/carpetas del árbol, y la multi-selección viaja completa (con sus
+  tamaños reales en el fantasma; mínimo visible a zoom bajo).
+- **Errores de proyecto legibles de una vez**: al abrir un `.tpproj` con
+  ajustes que faltan, un único mensaje lista todos los campos obligatorios
+  ausentes (antes solo se reportaba el primero).
+- **Calidad de interacción verificada con la app real**: un autotest binario
+  (`tp-smoke`) abre un proyecto headless en CI y simula el arrastre con
+  eventos de puntero reales (`RawInput`: press en la fila → move → release
+  en el lienzo), comprobando el algoritmo Manual, el imán de rejilla y la
+  posición final exacta del sprite.
+- Un micro-movimiento del ratón ya no convierte un clic del lienzo en
+  selección por rectángulo (umbral propio de la marquesina).
+
 ### Novedades v0.3.0
 
 - **Icono propio en todas las plataformas**: ventana de la app, instalador
@@ -95,6 +116,10 @@ cargo run -p tp-app
 # Abre un proyecto directamente
 cargo run -p tp-app -- ruta/al/proyecto.tpproj
 
+# Autotest de la app: abre un proyecto de ejemplo y verifica la vista previa
+# sin interacción humana (imprime SMOKE PASS y devuelve 0 si todo va bien)
+cargo run -p tp-app --bin tp-smoke
+
 # CLI
 cargo run -p tp-cli -- --help
 
@@ -118,17 +143,26 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 |------|-----------|
 | Barra superior | **Abrir** / **Guardar** / **↺** (restablecer), **➕** añadir sprites, **➖** quitar seleccionados, **Carpeta** (carpeta inteligente), **⚙** ajustes de sprite (pivots y bordes 9-patch), **Publicar**, **✂** (dividir hoja) y **▶** (vista previa de animación), ruta del proyecto |
 | Panel izquierdo | Árbol **Sprites**: carpetas y archivos; selección simple o múltiple (Ctrl/Shift), arrastrar y soltar, «Restaurar (N)» para deshacer exclusiones |
-| Centro | Vista previa del atlas: zoom (−/slider/+/1:1/Ajustar), contornos, pivots, **bordes 9-patch** (barras verdes **arrastrables** en el sprite seleccionado), selección de página y de sprite; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
+| Centro | Vista previa del atlas: zoom (−/slider/+/1:1/Ajustar, Ctrl+rueda o pinza), contornos, pivots, **bordes 9-patch** (barras verdes **arrastrables** en el sprite seleccionado), selección de página y de sprite; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
 | Panel derecho | **Ajustes**: Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, formato de metadatos, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado y plantillas |
 | Ventanas flotantes | **✂ Dividir hoja**: elige una hoja, corta en rejilla (columnas × filas) o por tamaño fijo con margen/espaciado, previsualiza la rejilla y escribe los PNG, los añade al proyecto y publica. **▶ Vista previa de animación**: grupos por nombre de archivo, FPS, repetir, transporte (⏮ ⏸ ⏭), fondo (damas/alfa/negro), escala y sprites rotados |
 
-1. Añade sprites con **➕** / **Carpeta** o rellena **Directorio de entrada**
+1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
+   **➕** / **Carpeta**, o rellena **Directorio de entrada**)
    (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS y QOI).
+   Cada cambio de ajustes reempaqueta la vista al instante (debounce de
+   120 ms), como en la herramienta original.
 2. Ajusta tamaño de atlas, padding/extrude, rotación, recorte, polígonos, profundidad de color, formato y cifrado.
 3. Pulsa **«Publicar»**: la vista previa muestra el atlas con marcos, pivots, bordes 9-patch y zoom automático,
    y la pestaña *Log* los tiempos de cada etapa.
 4. Edita pivots y bordes 9-patch con **⚙** (se guardan en `pivots.json` y `borders.json` junto a
    los sprites) y guarda la configuración con **Guardar** (`.tpproj`) para reutilizarla.
+
+En la vista previa: **arrastra un sprite** para moverlo (en el algoritmo *Manual* fija su
+posición; en los demás muestra una vista fantasma que sugiere el modo Manual), **arrastra
+desde una zona vacía** para seleccionar varios por rectángulo, **clic en el vacío** para
+deseleccionar y **Supr** quita los seleccionados. Atajos: `Ctrl+O` abrir, `Ctrl+S` guardar,
+`Ctrl+P` publicar, `+`/`−`/`0` zoom (1:1), `F` encuadrar, `Esc` cierra ventanas flotantes.
 
 ## Uso rápido (CLI)
 
@@ -265,6 +299,12 @@ multipack = true            # false = error si los sprites no caben en una sola 
 enable_auto_detect_animations = true  # walk_001..N → animación "walk" en los metadatos
 ```
 
+Al cargar, el proyecto se valida de una vez: si faltan campos obligatorios,
+**un solo error los lista todos** (``faltan N campos obligatorios: `a`, `b`, …``)
+en vez de exigirlos de uno en uno. Los campos con valor por defecto y los
+`Option` (como `encryption_key`) siguen siendo opcionales, igual que en
+versiones anteriores.
+
 ## Metadatos
 
 El JSON generado organiza la información en dos bloques, `meta` y `frames`:
@@ -361,7 +401,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 179 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 190 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
@@ -383,6 +423,23 @@ desactivado), además de los del **Lote 8** (JPG/PNG8/WebP y formatos de píxel,
 flip vertical solo en formatos GPU e ingesta de TGA/BMP/QOI con deduplicación
 por hash) y del **Lote 9** (bordes 9-patch desde `borders.json` hasta los
 metadatos `border` del JSON).
+
+Además, `cargo run -p tp-app --bin tp-smoke` compila un **autotest binario
+de la app completa**: genera en un directorio temporal sprites de ejemplo y un
+proyecto `.tpproj`, lo abre con la app real (el mismo `App::new` de la ventana,
+pero sobre un `egui::Context` headless, sin ventana ni GPU), conduce frames
+de UI hasta que la vista previa termina y verifica el resultado (páginas del
+atlas con píxeles reales, conteo de sprites y aliases, texturas egui cargadas,
+zoom de encuadre y ausencia de errores en el Log). Después **simula un
+arrastre completo con eventos de puntero reales** (`RawInput`: press en la
+fila de un sprite del panel izquierdo, move en línea recta y release sobre
+el centro del lienzo), el mismo camino que recorre un usuario: el drop activa
+el algoritmo Manual, fija la posición imantada a la rejilla y el repack
+termina con el sprite en el lugar prometido. Imprime `SMOKE PASS` y
+devuelve 0; el test `tp_smoke_binary_runs` de `cargo test --workspace`
+ejecuta este mismo binario, así que CI comprueba de verdad que la app abre
+proyectos, muestra la vista previa y coloca sprites arrastrándolos, sin
+interacción humana.
 
 ## Licencia y marcas
 
