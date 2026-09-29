@@ -1,4 +1,5 @@
-//! Floating "Animation preview" window: plays the frames of a sprite group.
+//! Floating "Animation preview" window: plays the selected sprites when there
+//! is a selection, otherwise the frames of every sprite group.
 
 use super::App;
 use eframe::egui;
@@ -95,10 +96,12 @@ pub(super) fn animation_window(app: &mut App, ctx: &egui::Context) {
 fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let frames = collect_frames(app);
     if frames.is_empty() {
-        ui.label(
-            egui::RichText::new("No hay sprites empaquetados.\nAñade sprites y pulsa «Publicar».")
-                .weak(),
-        );
+        let msg = if app.selected_paths.is_empty() {
+            "No hay sprites empaquetados.\nAñade sprites y pulsa «Publicar»."
+        } else {
+            "Ningún sprite de la selección está publicado.\nPulsa «Publicar» o quita la selección."
+        };
+        ui.label(egui::RichText::new(msg).weak());
         return;
     }
 
@@ -127,10 +130,24 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
 
     // --- group selector -------------------------------------------------
     let groups = groups_of(&frames);
-    if groups.len() > 1 {
-        if app.anim.group.is_empty() {
-            app.anim.group = groups[0].clone();
+    // El grupo elegido debe seguir existiendo: con selección cambia lo que se
+    // reproduce, así que un grupo ya ausente se reinicia al primero.
+    if let Some(g) = effective_group(&groups, &app.anim.group) {
+        if g != app.anim.group {
+            app.anim.group = g;
+            app.anim.frame = 0;
         }
+    }
+    if !app.selected_paths.is_empty() {
+        ui.label(
+            egui::RichText::new(format!(
+                "Secuencia: selección ({} sprite(s)). Quita la selección para ver todos.",
+                frames.len()
+            ))
+            .weak(),
+        );
+    }
+    if groups.len() > 1 {
         ui.horizontal(|ui| {
             ui.label("Animación:");
             let mut current = app.anim.group.clone();
@@ -299,17 +316,45 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
 }
 
 /// All packable frames as `(group, frame)`, grouped and sorted by index.
+///
+/// Con selección en el panel izquierdo devuelve solo esos sprites (así lo
+/// promete el botón «▶ Animación»); sin selección, todos. La agrupación por
+/// prefijo se mantiene en ambos casos, así que una selección de un solo
+/// prefijo se reproduce como una sola secuencia.
 fn collect_frames(app: &App) -> Vec<(String, Frame)> {
     let Some(out) = &app.result else {
         return Vec::new();
     };
     let page_dims: Vec<(i32, i32)> = out.pages.iter().map(|p| (p.width, p.height)).collect();
+    // Selección por ruta de origen (la misma comprobación que
+    // `App::selected_sprite_indices`).
+    let selected: Option<std::collections::HashSet<usize>> = if app.selected_paths.is_empty() {
+        None
+    } else {
+        Some(
+            out.result
+                .sprites
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| {
+                    app.selected_paths
+                        .contains(std::path::Path::new(&s.source_path))
+                })
+                .map(|(i, _)| i)
+                .collect(),
+        )
+    };
     let mut frames: Vec<(String, Option<u64>, usize, Frame)> = out
         .result
         .sprites
         .iter()
         .enumerate()
         .filter_map(|(i, s)| {
+            if let Some(sel) = &selected {
+                if !sel.contains(&i) {
+                    return None;
+                }
+            }
             let page = s.atlas_page_index as usize;
             let (page_w, page_h) = *page_dims.get(page)?;
             if page >= app.textures.len() {
@@ -343,6 +388,31 @@ fn groups_of(frames: &[(String, Frame)]) -> Vec<String> {
         }
     }
     groups
+}
+
+/// Grupo a reproducir: el actual sigue valiendo solo si la lista lo contiene
+/// (con selección la lista cambia); si no, el primero. `None` sin grupos.
+fn effective_group(groups: &[String], current: &str) -> Option<String> {
+    if groups.is_empty() {
+        return None;
+    }
+    if current.is_empty() || !groups.iter().any(|g| g == current) {
+        Some(groups[0].clone())
+    } else {
+        Some(current.to_string())
+    }
+}
+
+impl App {
+    /// Ids de los fotogramas que reproduciría ahora la vista previa de
+    /// animación, en orden de reproducción e ignorando el filtro de grupo:
+    /// con selección en el panel, solo los sprites seleccionados.
+    pub fn animation_frame_ids(&self) -> Vec<String> {
+        collect_frames(self)
+            .into_iter()
+            .map(|(_, f)| f.name)
+            .collect()
+    }
 }
 
 /// Untrimmed size of a frame in sprite orientation.
@@ -452,5 +522,19 @@ mod tests {
         assert_eq!(Background::Dark.label(), "Oscuro");
         assert_eq!(Background::Light.label(), "Claro");
         assert_eq!(Background::Checker.label(), "Damas");
+    }
+
+    #[test]
+    fn effective_group_falls_back_when_the_group_is_gone() {
+        let groups = vec!["idle_".to_string(), "walk_".to_string()];
+        // Elegido y presente → se respeta (también si viene vacío, que es el
+        // estado inicial: se adopta el primero).
+        assert_eq!(effective_group(&groups, "walk_").as_deref(), Some("walk_"));
+        assert_eq!(effective_group(&groups, "").as_deref(), Some("idle_"));
+        // Elegido pero ausente (cambió la selección) → primero.
+        assert_eq!(effective_group(&groups, "run_").as_deref(), Some("idle_"));
+        // Sin grupos → nada que reproducir.
+        assert_eq!(effective_group(&[], "idle_"), None);
+        assert_eq!(effective_group(&[], ""), None);
     }
 }
