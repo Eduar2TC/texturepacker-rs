@@ -1470,6 +1470,68 @@ fn grouped_packing_writes_subfolder_sheets() {
 }
 
 #[test]
+fn sprites_listed_in_the_main_sheet_stay_in_the_atlas() {
+    use tp_core::config::FolderGroup;
+
+    let fx = Fixture::new("main_sheet_listed");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    write_png(&input.join("hero.png"), 16, 16, [255, 0, 0, 255]);
+    write_png(&input.join("bg.png"), 24, 24, [0, 0, 255, 255]);
+    write_png(&input.join("btn_ok.png"), 12, 10, [0, 255, 0, 255]);
+
+    // `hero` está listado EXPLÍCITAMENTE en la hoja principal. Listarlo no
+    // debe excluirlo: antes desaparecía del atlas porque el grupo por defecto
+    // solo recogía los ids no asignados a ningún grupo.
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        folder_groups: vec![
+            FolderGroup {
+                name: String::new(),
+                sprites: vec!["hero".into()],
+            },
+            FolderGroup {
+                name: "ui".into(),
+                sprites: vec!["btn_ok".into()],
+            },
+        ],
+        ..ProjectConfig::default()
+    };
+
+    let out = tp_core::pipeline::run_grouped(&cfg).unwrap();
+
+    let ids: Vec<&str> = {
+        let mut v: Vec<&str> = out.result.sprites.iter().map(|s| s.id.as_str()).collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(
+        ids,
+        vec!["bg", "btn_ok", "hero"],
+        "los tres sprites deben empaquetarse"
+    );
+    assert_eq!(out.result.total_sprites, ids.len());
+    assert!(
+        output.join("atlas.png").is_file() && output.join("ui/atlas.png").is_file(),
+        "ambas hojas se escriben"
+    );
+
+    let page_of = |id: &str| {
+        out.result
+            .sprites
+            .iter()
+            .find(|s| s.id == id)
+            .unwrap()
+            .atlas_page_index
+    };
+    assert_eq!(page_of("hero"), 0, "hoja principal");
+    assert_eq!(page_of("bg"), 0, "los no asignados siguen en la principal");
+    assert_eq!(page_of("btn_ok"), 1, "hoja ui");
+}
+
+#[test]
 fn manual_positions_survive_project_roundtrip() {
     let fx = Fixture::new("manual_roundtrip");
     let input = make_input_dir(&fx.dir, "in");

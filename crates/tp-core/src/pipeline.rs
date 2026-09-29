@@ -775,36 +775,45 @@ fn execute(
 
 /// Pack-by-folder: one pipeline run per group, with every other group's
 /// sprites excluded so each group packs independently. The default group
-/// (empty name) takes unassigned sprites and writes into the output root;
-/// named groups write into `<output>/<name>/`. Page indices from each sub-run
-/// are offset in order, so the merged result keeps sprites, pages, page infos
-/// and the output file list coherent for the GUI preview.
+/// (empty name) takes the sprites listed in it plus every unassigned one and
+/// writes into the output root; named groups write into `<output>/<name>/`.
+/// Page indices from each sub-run are offset in order, so the merged result
+/// keeps sprites, pages, page infos and the output file list coherent for the
+/// GUI preview.
 fn run_groups(
     config: &ProjectConfig,
     all_sprites: &[IngestedSprite],
     groups: &[FolderGroup],
     write_to_disk: bool,
 ) -> Result<PipelineOutput> {
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
     use std::path::PathBuf;
 
-    // El grupo por defecto (sin nombre) recoge todo lo no asignado; si el
-    // proyecto no lo trae y quedan sprites sueltos, se añade al final.
     let mut groups: Vec<FolderGroup> = groups.to_vec();
-    let assigned: HashSet<String> = groups
+    let listed: HashSet<&str> = groups
         .iter()
-        .flat_map(|g| g.sprites.iter().cloned())
+        .flat_map(|g| g.sprites.iter().map(String::as_str))
         .collect();
-    let has_unassigned = all_sprites.iter().any(|s| !assigned.contains(&s.id));
+    let has_unassigned = all_sprites.iter().any(|s| !listed.contains(s.id.as_str()));
+    // Si el proyecto no trae grupo por defecto y quedan sprites sueltos, se
+    // añade al final.
     if !groups.iter().any(|g| g.name.is_empty()) && has_unassigned {
         groups.push(FolderGroup::default());
     }
-    let owns = |s: &IngestedSprite, g: &FolderGroup| {
-        if g.name.is_empty() {
-            !assigned.contains(&s.id)
-        } else {
-            g.sprites.iter().any(|id| id == &s.id)
+    // Dueño de cada id: el primer grupo que lo lista; los no listados caen
+    // en el grupo por defecto (sin nombre), que además recoge sus propios
+    // ids — sin esa rama, listar un sprite en la hoja principal lo excluiría
+    // de todas las hojas y desaparecería del atlas.
+    let mut owner: HashMap<&str, usize> = HashMap::new();
+    for (i, g) in groups.iter().enumerate() {
+        for id in &g.sprites {
+            owner.entry(id.as_str()).or_insert(i);
         }
+    }
+    let default_idx = groups.iter().position(|g| g.name.is_empty());
+    let owns = |s: &IngestedSprite, i: usize| match owner.get(s.id.as_str()) {
+        Some(&o) => o == i,
+        None => default_idx == Some(i),
     };
 
     let t0 = Instant::now();
@@ -817,8 +826,8 @@ fn run_groups(
     let mut alias_count = 0usize;
     let mut page_offset = 0usize;
 
-    for g in &groups {
-        let members: Vec<&IngestedSprite> = all_sprites.iter().filter(|s| owns(s, g)).collect();
+    for (i, g) in groups.iter().enumerate() {
+        let members: Vec<&IngestedSprite> = all_sprites.iter().filter(|s| owns(s, i)).collect();
         if members.is_empty() {
             continue;
         }
@@ -831,7 +840,7 @@ fn run_groups(
         // ruta (la ingesta normaliza las rutas antes de comparar).
         let others: Vec<PathBuf> = all_sprites
             .iter()
-            .filter(|s| !owns(s, g))
+            .filter(|s| !owns(s, i))
             .map(|s| s.source_path.clone())
             .collect();
         let mut excluded = gcfg.excluded_inputs.clone();
