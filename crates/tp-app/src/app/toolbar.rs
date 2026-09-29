@@ -48,7 +48,14 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 .on_disabled_hover_text("Selecciona sprites en el panel izquierdo")
                 .clicked()
             {
-                app.remove_selected();
+                // Orden visual del panel: tras quitar, el cursor queda en la
+                // fila siguiente (igual que con la tecla Supr).
+                let order: Vec<_> = app
+                    .sprite_row_rects()
+                    .iter()
+                    .map(|(p, _)| p.clone())
+                    .collect();
+                app.remove_selected(&order);
             }
             if ui
                 .button("📁 Carpeta")

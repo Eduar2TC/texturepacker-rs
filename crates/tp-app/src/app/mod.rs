@@ -203,6 +203,16 @@ pub struct App {
     preview_size: egui::Vec2,
     selected_paths: BTreeSet<PathBuf>,
     selected_sprite: Option<String>,
+    /// Ancla de la selección por rango (Shift): el intervalo va de aquí a
+    /// la fila bajo el cursor, en orden visual del panel.
+    selection_anchor: Option<PathBuf>,
+    /// Cursor de teclado en la lista de sprites: fila sobre la que actúan
+    /// las flechas. Se separa del ancla solo mientras Shift está pulsado.
+    list_cursor: Option<PathBuf>,
+    /// El panel de sprites tiene el foco de teclado: las flechas y Supr
+    /// actúan en la lista aunque el puntero esté en otra parte de la
+    /// ventana (hasta que un clic en el lienzo o el filtro lo devuelven).
+    tree_kb_focus: bool,
     /// Rutas entradas por la última acción (suelta del SO o diálogo): el
     /// árbol y el lienzo las señalan para responder «¿dónde acaba de ir mi
     /// archivo?» mientras el atlas se calcula.
@@ -309,6 +319,9 @@ impl App {
             preview_size: egui::Vec2::ZERO,
             selected_paths: BTreeSet::new(),
             selected_sprite: None,
+            selection_anchor: None,
+            list_cursor: None,
+            tree_kb_focus: false,
             just_added: Vec::new(),
             just_added_at: None,
             advanced_settings: false,
@@ -404,6 +417,17 @@ impl App {
     /// como quedaron en el último frame dibujado (para pruebas de puntero).
     pub fn sprite_row_rects(&self) -> &[(PathBuf, egui::Rect)] {
         &self.sprite_rows
+    }
+
+    /// Rutas seleccionadas en el panel izquierdo, en el orden visual de la
+    /// lista (para pruebas y para operar sobre el lote completo).
+    pub fn selected_paths(&self) -> &BTreeSet<PathBuf> {
+        &self.selected_paths
+    }
+
+    /// Ruta bajo el cursor de teclado del panel de sprites.
+    pub fn list_cursor(&self) -> Option<&Path> {
+        self.list_cursor.as_deref()
     }
 
     /// Rect en pantalla del lienzo del atlas (última pasada de la vista);
@@ -1275,20 +1299,64 @@ impl App {
     }
 
     /// Remove the selected sprites/folders from the sprite set.
-    fn remove_selected(&mut self) {
+    ///
+    /// `order` es el orden visual de la lista del panel: tras quitar el
+    /// lote, el cursor queda en la fila siguiente visible (o en la
+    /// anterior, si se borró el final), de modo que repetir Supr recorre
+    /// la lista sin volver al ratón.
+    fn remove_selected(&mut self, order: &[PathBuf]) {
         let selected: Vec<PathBuf> = self.selected_paths.iter().cloned().collect();
         if selected.is_empty() {
             return;
         }
+        // Posición del lote en la lista antes de quitarlo (para el «siguiente»).
+        let first = order.iter().position(|p| selected.contains(p));
+        let last = order.iter().rposition(|p| selected.contains(p));
         let mut removed = 0usize;
-        for path in selected {
-            removed += self.remove_path(&path);
+        for path in &selected {
+            removed += self.remove_path(path);
         }
         self.selected_paths.clear();
         self.selected_sprite = None;
+        // Primera fila que sobrevive tras el lote, buscando primero hacia
+        // abajo y luego hacia arriba (estándar de los gestores de archivos).
+        let next = match (first, last) {
+            (Some(f), Some(l)) => order
+                .iter()
+                .skip(l + 1)
+                .chain(order.iter().take(f).rev())
+                .find(|p| !selected.contains(p) && !selected.iter().any(|s| p.starts_with(s)))
+                .cloned(),
+            _ => None,
+        };
+        self.list_cursor = next.clone();
+        self.selection_anchor = next.clone();
+        if let Some(p) = next {
+            self.selected_paths.insert(p);
+            self.sync_selected_sprite();
+        }
         self.log(LogKind::Info, format!("{removed} sprite(s) quitado(s)."));
         self.change_seq += 1;
         self.request_preview(true);
+    }
+
+    /// Sincroniza `selected_sprite` (id dentro del pack) con `selected_paths`:
+    /// solo hay id cuando la selección es exactamente un sprite.
+    fn sync_selected_sprite(&mut self) {
+        if self.selected_paths.len() == 1 {
+            let only = self.selected_paths.iter().next().cloned();
+            self.selected_sprite = only.and_then(|p| {
+                self.result.as_ref().and_then(|out| {
+                    out.result
+                        .sprites
+                        .iter()
+                        .find(|s| Path::new(&s.source_path) == p.as_path())
+                        .map(|s| s.id.clone())
+                })
+            });
+        } else {
+            self.selected_sprite = None;
+        }
     }
 
     /// Exclude a single file, or every image inside a directory.
@@ -1375,7 +1443,9 @@ impl App {
                 }
                 let path = PathBuf::from(&sprite.source_path);
                 self.selected_paths.clear();
-                self.selected_paths.insert(path);
+                self.selected_paths.insert(path.clone());
+                self.list_cursor = Some(path.clone());
+                self.selection_anchor = Some(path);
             }
         }
     }
@@ -1640,6 +1710,9 @@ impl App {
                     self.sync_paths();
                     self.selected_paths.clear();
                     self.selected_sprite = None;
+                    self.selection_anchor = None;
+                    self.list_cursor = None;
+                    self.tree_kb_focus = false;
                     self.pivot_edits.clear();
                     self.border_edits.clear();
                     self.start_watcher();
@@ -1661,6 +1734,9 @@ impl App {
         self.sync_paths();
         self.selected_paths.clear();
         self.selected_sprite = None;
+        self.selection_anchor = None;
+        self.list_cursor = None;
+        self.tree_kb_focus = false;
         self.pivot_edits.clear();
         self.border_edits.clear();
         self.start_watcher();
@@ -1691,10 +1767,6 @@ impl eframe::App for App {
         self.poll_pending(ctx);
         self.poll_changes(ctx);
         handle_shortcuts(self, ctx);
-
-        // Registro fresco cada frame: las filas que no se dibujen este
-        // frame (filtro, panel colapsado…) desaparecen del registro.
-        self.sprite_rows.clear();
 
         // Soltar ficheros del SO en CUALQUIER parte de la ventana (centro,
         // paneles, barra): comportamiento estándar de las apps del estilo.
@@ -1957,9 +2029,11 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
         app.fit_zoom();
     }
 
-    // Esc cierra la ventana flotante activa (convención estándar).
+    // Esc cierra la ventana flotante activa (convención estándar) y, de
+    // paso, devuelve el foco de teclado de la lista de sprites al ratón.
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if esc {
+        app.tree_kb_focus = false;
         if app.show_animation {
             app.show_animation = false;
         } else if app.show_split {

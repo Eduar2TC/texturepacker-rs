@@ -14,6 +14,28 @@ enum Origin {
     Nested,
 }
 
+/// Cómo un clic de fila altera la selección (estándar de gestores de
+/// archivos): solo, acumulando o por rango visual desde el ancla.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SelectMode {
+    Replace,
+    Toggle,
+    Range,
+}
+
+impl SelectMode {
+    /// Modo resultante de los modificadores pulsados al pulsar la fila.
+    fn from_modifiers(mods: egui::Modifiers) -> Self {
+        if mods.shift {
+            SelectMode::Range
+        } else if mods.command || mods.ctrl {
+            SelectMode::Toggle
+        } else {
+            SelectMode::Replace
+        }
+    }
+}
+
 struct TreeNode {
     path: PathBuf,
     name: String,
@@ -23,7 +45,7 @@ struct TreeNode {
 }
 
 enum TreeAction {
-    Select(PathBuf, bool),
+    Select(PathBuf, SelectMode),
     /// Exclude a file, or every image inside a directory.
     Remove(PathBuf),
     /// Drop a smart folder from the project.
@@ -52,6 +74,14 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     // de sprites hacia las hojas.
     let panel_hovered = ui.rect_contains_pointer(ui.max_rect());
     let filter_focused = app.tree_filter_focused;
+    // Registro fresco cada frame: las filas que no se dibujen este frame
+    // (filtro, panel colapsado…) desaparecen del registro.
+    app.sprite_rows.clear();
+    // Mientras se escribe en el filtro, las flechas vuelven al texto y la
+    // lista deja de moverse por teclado.
+    if filter_focused {
+        app.tree_kb_focus = false;
+    }
 
     let tree = build_tree(&app.config, &app.tree_filter);
     let total = count_files(&tree);
@@ -96,14 +126,6 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
 
     groups_ui(app, ui);
 
-    // Delete removes the selected sprites (unless the filter is being edited).
-    if panel_hovered && !filter_focused && !app.selected_paths.is_empty() {
-        let delete = ui.input(|i| i.key_pressed(egui::Key::Delete));
-        if delete {
-            app.remove_selected();
-        }
-    }
-
     if tree.is_empty() {
         ui.add_space(8.0);
         let msg = if app.tree_filter.is_empty() {
@@ -129,6 +151,10 @@ parte de la ventana."
     };
     egui::ScrollArea::vertical()
         .id_salt("sprites_tree")
+        // Por defecto la ventana del scroll sigue al contenido: se quedaba
+        // más estrecha que el panel (y más baja con pocos sprites), con un
+        // hueco hasta su borde. Así ocupa todo el ancho y el alto del panel.
+        .auto_shrink([false, false])
         // El arrastre del contenido (drag-to-scroll) roba el arrastre a las
         // filas (drag&drop de sprites hacia las hojas).
         .scroll_source(
@@ -148,6 +174,10 @@ parte de la ventana."
             for node in &tree {
                 render_node(app, ui, node, true, &mut walk, force);
             }
+            // Teclado de la lista (flechas, Ctrl+A, Supr): se atiende aquí,
+            // dentro del ScrollArea y con las filas ya registradas, para
+            // poder desplazar la vista hasta la fila que mueve el cursor.
+            handle_list_keys(app, ui, &walk.rows, panel_hovered, filter_focused);
         });
     app.sprite_rows = walk.rows;
 
@@ -370,9 +400,8 @@ fn render_sheet(
             // Registro para pruebas: rect en pantalla de esta fila.
             walk.rows.push((p.clone(), resp.rect));
             if resp.clicked() {
-                let toggle =
-                    ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift);
-                walk.action = Some(TreeAction::Select(p.clone(), toggle));
+                let mode = ui.input(|i| SelectMode::from_modifiers(i.modifiers));
+                walk.action = Some(TreeAction::Select(p.clone(), mode));
             }
             resp.context_menu(|ui| {
                 if ui.button("Quitar sprite").clicked() {
@@ -524,8 +553,8 @@ fn render_node(
         // Registro para pruebas: rect en pantalla de esta fila.
         walk.rows.push((node.path.clone(), response.rect));
         if response.clicked() {
-            let toggle = ui.input(|i| i.modifiers.command || i.modifiers.ctrl || i.modifiers.shift);
-            walk.action = Some(TreeAction::Select(node.path.clone(), toggle));
+            let mode = ui.input(|i| SelectMode::from_modifiers(i.modifiers));
+            walk.action = Some(TreeAction::Select(node.path.clone(), mode));
         }
         response.clone().context_menu(|ui| {
             // Vía garantizada para asignar a hoja (además del arrastre).
@@ -628,30 +657,190 @@ fn dir_menu(
     }
 }
 
-fn apply_selection(app: &mut App, path: PathBuf, toggle: bool) {
-    if toggle {
-        if !app.selected_paths.remove(&path) {
-            app.selected_paths.insert(path);
+fn apply_selection(app: &mut App, path: PathBuf, mode: SelectMode) {
+    match mode {
+        SelectMode::Replace => {
+            app.selected_paths.clear();
+            app.selected_paths.insert(path.clone());
+        }
+        SelectMode::Toggle => {
+            if !app.selected_paths.remove(&path) {
+                app.selected_paths.insert(path.clone());
+            }
+        }
+        SelectMode::Range => {
+            // Rango visual entre el ancla y la fila pulsada, siguiendo el
+            // orden real de la lista (las filas registradas este frame).
+            let order: Vec<PathBuf> = app.sprite_rows.iter().map(|(p, _)| p.clone()).collect();
+            let target = order.iter().position(|p| *p == path);
+            let anchor = app
+                .selection_anchor
+                .clone()
+                .or_else(|| app.list_cursor.clone())
+                .filter(|a| order.iter().any(|p| p == a));
+            match (target, anchor) {
+                (Some(t), Some(a)) => {
+                    let a = order.iter().position(|p| *p == a).unwrap_or(t);
+                    app.selected_paths.clear();
+                    for p in &order[a.min(t)..=a.max(t)] {
+                        app.selected_paths.insert(p.clone());
+                    }
+                }
+                (Some(t), None) => {
+                    app.selected_paths.clear();
+                    app.selected_paths.insert(order[t].clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    match mode {
+        SelectMode::Replace | SelectMode::Toggle => {
+            app.list_cursor = Some(path.clone());
+            app.selection_anchor = Some(path);
+        }
+        // Shift no mueve el ancla: de ella sigue partiendo el rango.
+        SelectMode::Range => {
+            app.list_cursor = Some(path);
+            if app.selection_anchor.is_none() {
+                app.selection_anchor = app.list_cursor.clone();
+            }
+        }
+    }
+    // El panel gana el foco de teclado: las flechas siguen funcionando
+    // aunque el puntero se vaya de la lista.
+    app.tree_kb_focus = true;
+    app.sync_selected_sprite();
+}
+
+/// Teclado de la lista de sprites, atendido dentro del ScrollArea con las
+/// filas visibles del propio frame:
+///
+/// * `↑`/`↓`/`PageUp`/`PageDown`/`Home`/`End` mueven el cursor y dejan la
+///   selección en esa fila (la vista sigue al cursor);
+/// * `Shift` + esas teclas extienden el rango desde el ancla: selección
+///   por lote;
+/// * `Ctrl` + esas teclas acumulan la fila a la selección;
+/// * `Ctrl+A` selecciona toda la lista visible;
+/// * `Supr` quita la selección y deja el cursor en la fila siguiente.
+fn handle_list_keys(
+    app: &mut App,
+    ui: &egui::Ui,
+    rows: &[(PathBuf, egui::Rect)],
+    panel_hovered: bool,
+    filter_focused: bool,
+) {
+    // Con el filtro activo —o con cualquier otro widget con foco de
+    // teclado, p. ej. un campo de Ajustes— las teclas no son de la lista.
+    if rows.is_empty()
+        || filter_focused
+        || ui.ctx().wants_keyboard_input()
+        || !(panel_hovered || app.tree_kb_focus)
+    {
+        return;
+    }
+    let paths: Vec<PathBuf> = rows.iter().map(|(p, _)| p.clone()).collect();
+
+    if ui.input(|i| i.key_pressed(egui::Key::Delete)) {
+        app.remove_selected(&paths);
+        return;
+    }
+    // Ctrl+A: el lote entero, en el orden en que se ve la lista.
+    if ui.input(|i| (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::A)) {
+        app.selected_paths.clear();
+        app.selected_paths.extend(paths.iter().cloned());
+        app.list_cursor = paths.last().cloned();
+        app.selection_anchor = paths.first().cloned();
+        app.tree_kb_focus = true;
+        app.sync_selected_sprite();
+        return;
+    }
+
+    let (down, up, page_down, page_up, home, end, shift, ctrl) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::ArrowDown),
+            i.key_pressed(egui::Key::ArrowUp),
+            i.key_pressed(egui::Key::PageDown),
+            i.key_pressed(egui::Key::PageUp),
+            i.key_pressed(egui::Key::Home),
+            i.key_pressed(egui::Key::End),
+            i.modifiers.shift,
+            i.modifiers.ctrl || i.modifiers.command,
+        )
+    });
+    if !(down || up || page_down || page_up || home || end) {
+        return;
+    }
+
+    let page = rows
+        .iter()
+        .filter(|(_, r)| r.intersects(ui.clip_rect()))
+        .count()
+        .max(1) as i32;
+    let last = paths.len() as i32 - 1;
+    let cursor = app
+        .list_cursor
+        .as_ref()
+        .or_else(|| app.selected_paths.iter().next())
+        .and_then(|c| paths.iter().position(|p| p == c));
+    // Sin cursor previo, ↑/PageUp/End entran por el final de la lista.
+    let current = match cursor {
+        Some(c) => c as i32,
+        None if up || page_up || end => last,
+        None => 0,
+    };
+    let target = if down {
+        current + 1
+    } else if up {
+        current - 1
+    } else if page_down {
+        current + page
+    } else if page_up {
+        current - page
+    } else if home {
+        0
+    } else {
+        last
+    };
+    let target = target.clamp(0, last) as usize;
+    let path = paths[target].clone();
+
+    if shift {
+        let anchor = app
+            .selection_anchor
+            .clone()
+            .or_else(|| app.list_cursor.clone())
+            .filter(|a| paths.contains(a));
+        match anchor {
+            Some(a) => {
+                let a = paths.iter().position(|p| *p == a).unwrap_or(target);
+                app.selected_paths.clear();
+                app.selected_paths
+                    .extend(paths[a.min(target)..=a.max(target)].iter().cloned());
+                app.selection_anchor = Some(paths[a].clone());
+            }
+            None => {
+                app.selected_paths.clear();
+                app.selected_paths.insert(path.clone());
+                app.selection_anchor = Some(path.clone());
+            }
+        }
+    } else if ctrl {
+        // Acumula sin tocar el resto de la selección.
+        app.selected_paths.insert(path.clone());
+        if app.selection_anchor.is_none() {
+            app.selection_anchor = Some(path.clone());
         }
     } else {
         app.selected_paths.clear();
-        app.selected_paths.insert(path);
+        app.selected_paths.insert(path.clone());
+        app.selection_anchor = Some(path.clone());
     }
-    if app.selected_paths.len() == 1 {
-        let only = app.selected_paths.iter().next().cloned();
-        let id = only.and_then(|p| {
-            app.result.as_ref().and_then(|out| {
-                out.result
-                    .sprites
-                    .iter()
-                    .find(|s| Path::new(&s.source_path) == p.as_path())
-                    .map(|s| s.id.clone())
-            })
-        });
-        app.selected_sprite = id;
-    } else {
-        app.selected_sprite = None;
-    }
+    app.list_cursor = Some(path);
+    app.tree_kb_focus = true;
+    app.sync_selected_sprite();
+    // La vista sigue al cursor (mínimo desplazamiento para mostrarlo).
+    ui.scroll_to_rect(rows[target].1, None);
 }
 
 fn matches_filter(name: &str, filter: &str) -> bool {

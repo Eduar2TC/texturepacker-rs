@@ -831,6 +831,11 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             // Supr con el cursor sobre la vista: quita los seleccionados.
             delete_in_preview |=
                 response.hovered() && ui.input(|i| i.key_pressed(egui::Key::Delete));
+            // Un clic en el lienzo devuelve el foco de teclado a la vista:
+            // las flechas dejan de mover la lista del panel izquierdo.
+            if response.hovered() && ui.input(|i| i.pointer.any_pressed()) {
+                app.tree_kb_focus = false;
+            }
         });
 
     if let Some(factor) = zoom_delta {
@@ -891,6 +896,8 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     if clicked_empty {
         app.selected_sprite = None;
         app.selected_paths.clear();
+        app.list_cursor = None;
+        app.selection_anchor = None;
     }
     if let Some((x0, y0, x1, y1)) = marquee_select {
         // Rectángulo degenerado (clic sin arrastre): no altera la selección.
@@ -899,7 +906,9 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         }
     }
     if delete_in_preview {
-        app.remove_selected();
+        // Orden visual del panel: Supr deja el cursor en la fila siguiente.
+        let order: Vec<PathBuf> = app.sprite_rows.iter().map(|(p, _)| p.clone()).collect();
+        app.remove_selected(&order);
     }
 }
 
@@ -924,11 +933,20 @@ fn select_sprites_in_rect(app: &mut App, x0: i32, y0: i32, x1: i32, y1: i32) {
     }
     app.selected_paths.clear();
     app.selected_sprite = None;
+    let mut first = None;
     for id in &ids {
         if let Some(s) = out.result.sprites.iter().find(|s| &s.id == id) {
-            app.selected_paths.insert(PathBuf::from(&s.source_path));
+            let path = PathBuf::from(&s.source_path);
+            if first.is_none() {
+                first = Some(path.clone());
+            }
+            app.selected_paths.insert(path);
         }
     }
+    // El marquee manda el cursor/la ancla a lo seleccionado: las flechas
+    // siguen desde ahí.
+    app.list_cursor = first.clone();
+    app.selection_anchor = first;
     if ids.len() == 1 {
         app.selected_sprite = Some(ids[0].clone());
     }
