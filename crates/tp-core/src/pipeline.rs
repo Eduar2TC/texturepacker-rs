@@ -12,7 +12,7 @@
 //! 10. Cifrar si hay clave.
 //! 11. Guardar imágenes + renderizar plantilla de metadatos.
 
-use crate::config::{AlphaHandling, FolderGroup, ProjectConfig};
+use crate::config::{AlphaHandling, FolderGroup, ProjectConfig, ScaleMode, VariantOptions};
 use crate::error::{Result, TpError};
 use crate::export;
 use crate::ingest::{self, IngestedSprite};
@@ -23,7 +23,7 @@ use crate::templates;
 use crate::types::{AtlasPage, PackResult, PageInfo, Point2D, Rect, SpriteAsset};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -42,14 +42,14 @@ pub struct PipelineOutput {
 pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     // Los grupos viajan siempre: el gancho de `execute` decide si están
     // activos (modo manual con asignaciones o modo automático por carpetas).
-    execute(config, true, Some(&config.folder_groups))
+    execute(config, true, Some(&config.folder_groups), None)
 }
 
 /// Run the pipeline without touching the disk: pack in memory only, so the
 /// GUI can show a live preview of the workspace. No directory is created and
 /// no image or metadata file is rendered or written.
 pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, false, Some(&config.folder_groups))
+    execute(config, false, Some(&config.folder_groups), None)
 }
 
 /// Pack by manual folder groups (`folder_groups`): one pipeline run per
@@ -59,18 +59,19 @@ pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
 /// members; the merged result keeps every group's sprites and pages for the
 /// GUI preview.
 pub fn run_grouped(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, true, Some(&config.folder_groups))
+    execute(config, true, Some(&config.folder_groups), None)
 }
 
 /// In-memory version of [`run_grouped`] for the live preview.
 pub fn run_grouped_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, false, Some(&config.folder_groups))
+    execute(config, false, Some(&config.folder_groups), None)
 }
 
 fn execute(
     config: &ProjectConfig,
     write_to_disk: bool,
     groups: Option<&[FolderGroup]>,
+    variant: Option<&VariantRun>,
 ) -> Result<PipelineOutput> {
     config.validate()?;
     let mut stage_times: Vec<(String, u64)> = Vec::new();
@@ -144,7 +145,7 @@ fn execute(
     if ingested.sprites.is_empty() {
         return Err("No se encontraron sprites válidos en el directorio de entrada".into());
     }
-    let sprites = ingested.sprites;
+    let mut sprites = ingested.sprites;
     stage_times.push(("ingest".into(), t.elapsed().as_millis() as u64));
 
     // Empaquetado por carpetas (manual por grupos o automático por
@@ -196,6 +197,41 @@ fn execute(
             .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
         {
             return run_groups(config, &sprites, groups, write_to_disk);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // PASO 2b: variantes de escala con empaquetado propio
+    // ------------------------------------------------------------------
+    // Solo al escribir: la vista previa no genera ficheros y se lleva como
+    // siempre (una corrida y todas las variantes reescalando la hoja). Cada
+    // variante que no puede reutilizar la hoja base corre por su cuenta,
+    // con su filtro, su tamaño máximo y su geometría ya escalada.
+    let mut variant_files: Vec<String> = Vec::new();
+    let mut export_scales: Vec<f32> = config.scale_variants.clone();
+    if let Some(v) = variant {
+        scale_ingested_sprites(&mut sprites, v.scale, config.scale_mode);
+    } else if write_to_disk {
+        let (identical, passes, plan_warnings) = plan_variants(config, &sprites);
+        warnings.extend(plan_warnings);
+        export_scales = identical;
+        for p in passes {
+            let mut pcfg = config.clone();
+            let mut excluded = pcfg.excluded_inputs.clone();
+            excluded.extend(p.excluded.clone());
+            pcfg.excluded_inputs = excluded;
+            pcfg.scale_variants = vec![p.run.scale];
+            pcfg.max_texture_size = p.max_texture_size;
+            scale_variant_geometry(&mut pcfg, p.run.scale);
+            let t = Instant::now();
+            let out = execute(&pcfg, true, None, Some(&p.run))?;
+            warnings.extend(out.result.warnings);
+            variant_files.extend(out.result.output_files);
+            let inner: u64 = out.result.stage_times_ms.iter().map(|(_, ms)| *ms).sum();
+            stage_times.push((
+                format!("variante {}", variant_suffix_for(config, p.run.scale)),
+                inner + t.elapsed().as_millis() as u64,
+            ));
         }
     }
 
@@ -297,6 +333,32 @@ fn execute(
             pack_out.pages.len()
         )));
     }
+    // Variantes con layout idéntico: avisar si, al escalarlas, la hoja
+    // supera el tamaño máximo que pidieron para esa variante.
+    if variant.is_none() {
+        for &scale in &export_scales {
+            let Some(max) = config
+                .variant_options_for(scale)
+                .and_then(|o| o.max_texture_size)
+                .filter(|&m| m > 0)
+            else {
+                continue;
+            };
+            if pack_out.pages.iter().any(|p| {
+                let w = ((p.width as f32) * scale).round() as i32;
+                let h = ((p.height as f32) * scale).round() as i32;
+                w > max || h > max
+            }) {
+                warnings.push(format!(
+                    "Variante {}: la hoja escalada supera su tamaño máximo de {max} px; \
+                     con layout idéntico no se puede reducir (desactiva «layout idéntico» \
+                     o sube el máximo).",
+                    variant_suffix_for(config, scale)
+                ));
+            }
+        }
+    }
+
     // Multipack placeholders — avisar cuando varias hojas se nombran
     // con el sufijo implícito `_N` en vez de un placeholder `{n}`/`{n1}`.
     if pack_out.pages.len() > 1 && !has_page_placeholder(&config.base_file_name) {
@@ -574,26 +636,24 @@ fn execute(
     }
 
     let mut output_files: Vec<String> = Vec::new();
-    let mut base_page_infos: Vec<PageInfo> = Vec::new();
 
     // Opciones de codificación comunes a todas las hojas y variantes.
     let enc_opts = export::EncodeOptions::from_config(config);
     let flip_active = config.flip_vertical && config.gpu_format.is_hardware();
 
-    // Sufijo {v} de cada escala: nombre explícito de `variant_names`
-    // (scaling variants, p. ej. `1.0 → -ipadhd`) o convención
-    // automática @2x / -hd / -sd.
-    let variant_for = |scale: f32| -> String {
-        config
-            .variant_names
-            .iter()
-            .find(|(s, _)| (*s - scale).abs() < 1e-6)
-            .map(|(_, n)| n.clone())
-            .unwrap_or_else(|| variant_suffix(scale))
-    };
-    for scale in &config.scale_variants {
-        let is_base = (*scale - 1.0).abs() < 1e-6;
-        let variant = variant_for(*scale);
+    // Páginas de esta corrida a su escala base (1.0, o la de la variante
+    // cuando la corrida ES una): `result.pages` las usa la GUI tras
+    // publicar y los data files las cotejan, haya o no una variante de esa
+    // escala entre las que se exportan.
+    let base_scale = variant.map(|v| v.scale).unwrap_or(1.0);
+    let base_page_infos: Vec<PageInfo> = page_infos_at(config, &pages, base_scale, write_to_disk);
+
+    for scale in &export_scales {
+        // Una corrida de variante empaqueta ya a su escala: sus páginas se
+        // publican tal cual (es = 1.0) y solo cambia el sufijo {v}.
+        let es = if variant.is_some() { 1.0 } else { *scale };
+        let is_base = (es - 1.0).abs() < 1e-6;
+        let variant_name = variant_suffix_for(config, *scale);
 
         let mut variant_page_infos: Vec<PageInfo> = Vec::new();
         let mut variant_image_files: Vec<String> = Vec::new();
@@ -603,12 +663,12 @@ fn execute(
                 (page.width as usize, page.height as usize)
             } else {
                 (
-                    ((page.width as f32) * scale).round().max(1.0) as usize,
-                    ((page.height as f32) * scale).round().max(1.0) as usize,
+                    ((page.width as f32) * es).round().max(1.0) as usize,
+                    ((page.height as f32) * es).round().max(1.0) as usize,
                 )
             };
 
-            let file_name = page_file_name(config, page.index, &variant);
+            let file_name = page_file_name(config, page.index, &variant_name);
             let mut normal_name = None;
             if write_to_disk {
                 let bytes = {
@@ -619,7 +679,7 @@ fn execute(
                             &page.pixels,
                             page.width as usize,
                             page.height as usize,
-                            *scale,
+                            es,
                             config.scale_mode,
                         )
                     };
@@ -642,7 +702,7 @@ fn execute(
 
                 // Normal-map page.
                 if let Some(npix) = &page.normal_pixels {
-                    let nfile = normal_page_file_name(config, page.index, &variant);
+                    let nfile = normal_page_file_name(config, page.index, &variant_name);
                     let (mut nscaled, nw2, nh2) = if is_base {
                         (npix.clone(), sw, sh)
                     } else {
@@ -650,7 +710,7 @@ fn execute(
                             npix,
                             page.width as usize,
                             page.height as usize,
-                            *scale,
+                            es,
                             config.scale_mode,
                         )
                     };
@@ -700,10 +760,6 @@ fn execute(
             }
         }
 
-        if is_base {
-            base_page_infos = variant_page_infos.clone();
-        }
-
         // Metadata via template engine. Con un placeholder de página en el
         // nombre base cada hoja escribe su propio data file con solo sus
         // frames (multipack); sin él se emite un único fichero con
@@ -717,7 +773,7 @@ fn execute(
                     .cloned()
                     .collect();
                 let page_infos = [pinfo.clone()];
-                let meta_name = metadata_file_name(config, &variant, pinfo.index, per_page);
+                let meta_name = metadata_file_name(config, &variant_name, pinfo.index, per_page);
                 if write_to_disk {
                     let content = templates::render(
                         &pending_result(
@@ -731,7 +787,7 @@ fn execute(
                         ),
                         &page_infos,
                         std::slice::from_ref(image),
-                        *scale,
+                        es,
                         config,
                     )?;
                     write_file(&output_dir.join(&meta_name), content.as_bytes())?;
@@ -739,7 +795,7 @@ fn execute(
                 output_files.push(meta_name);
             }
         } else {
-            let meta_name = metadata_file_name(config, &variant, 0, per_page);
+            let meta_name = metadata_file_name(config, &variant_name, 0, per_page);
             if write_to_disk {
                 let content = templates::render(
                     &pending_result(
@@ -753,7 +809,7 @@ fn execute(
                     ),
                     &variant_page_infos,
                     &variant_image_files,
-                    *scale,
+                    es,
                     config,
                 )?;
                 write_file(&output_dir.join(&meta_name), content.as_bytes())?;
@@ -761,6 +817,9 @@ fn execute(
             output_files.push(meta_name);
         }
     }
+    // Ficheros escritos por las variantes con empaquetado propio: los
+    // reporta la misma corrida para que la GUI los liste.
+    output_files.extend(variant_files);
     stage_times.push(("export".into(), t.elapsed().as_millis() as u64));
 
     let result = PackResult {
@@ -781,6 +840,193 @@ fn execute(
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Scaling variants
+// ---------------------------------------------------------------------------
+
+/// A scaling variant that packs on its own: its geometry and canvas are
+/// already at `scale`, so the run exports its sheet without rescaling it
+/// again (only the `{v}` suffix marks it as a variant).
+#[derive(Debug, Clone)]
+struct VariantRun {
+    scale: f32,
+}
+
+/// Scaling variant that needs its own packing run.
+#[derive(Debug)]
+struct VariantPass {
+    run: VariantRun,
+    /// Canvas cap of the pass (the project's own when the variant sets none).
+    max_texture_size: i32,
+    /// Source paths the variant's sprite filter leaves out.
+    excluded: Vec<PathBuf>,
+}
+
+/// `{v}` suffix of a scale: an explicit `variant_names` entry (p. ej.
+/// `1.0 → -ipadhd`) or the automatic `@2x` / `-hd` / `-sd` convention.
+fn variant_suffix_for(config: &ProjectConfig, scale: f32) -> String {
+    config
+        .variant_names
+        .iter()
+        .find(|(s, _)| (*s - scale).abs() < 1e-6)
+        .map(|(_, n)| n.clone())
+        .unwrap_or_else(|| variant_suffix(scale))
+}
+
+/// Split `config.scale_variants` into the scales this run can emit by
+/// rescaling its sheet (identical layout) and the ones that need their own
+/// packing, with the sprite paths each of them must exclude. Warnings
+/// explain every option that cannot be honoured as requested.
+fn plan_variants(
+    config: &ProjectConfig,
+    sprites: &[IngestedSprite],
+) -> (Vec<f32>, Vec<VariantPass>, Vec<String>) {
+    let mut identical = Vec::new();
+    let mut passes = Vec::new();
+    let mut warnings = Vec::new();
+    let has_manual = !config.manual_positions.is_empty();
+
+    for &scale in &config.scale_variants {
+        let opts = config
+            .variant_options_for(scale)
+            .cloned()
+            .unwrap_or(VariantOptions {
+                scale,
+                ..Default::default()
+            });
+        let suffix = variant_suffix_for(config, scale);
+
+        let excluded: Vec<PathBuf> = sprites
+            .iter()
+            .filter(|s| {
+                let file = s
+                    .source_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                !opts.includes(&[s.id.as_str(), file.as_str()])
+            })
+            .map(|s| s.source_path.clone())
+            .collect();
+        if excluded.len() == sprites.len() {
+            warnings.push(format!(
+                "Variante {suffix}: el filtro de sprites excluye los {} sprites; se omite.",
+                sprites.len()
+            ));
+            continue;
+        }
+
+        let max = opts.max_texture_size.filter(|&m| m > 0);
+        let canvas_differs = max.is_some_and(|m| m != config.max_texture_size);
+        let own_pack = !opts.force_identical_layout || !excluded.is_empty() || canvas_differs;
+        if own_pack && has_manual {
+            warnings.push(format!(
+                "Variante {suffix}: hay posiciones manuales, así que se reutiliza la hoja \
+                 base y ni el filtro ni el tamaño máximo se aplican."
+            ));
+        }
+        if own_pack && !has_manual {
+            passes.push(VariantPass {
+                run: VariantRun { scale },
+                max_texture_size: max.unwrap_or(config.max_texture_size),
+                excluded,
+            });
+        } else {
+            identical.push(scale);
+        }
+    }
+    (identical, passes, warnings)
+}
+
+/// Resample a variant's sprites (pixels and geometry) so packing, blitting
+/// and metadata already work at the variant's scale.
+fn scale_ingested_sprites(sprites: &mut [IngestedSprite], scale: f32, mode: ScaleMode) {
+    if (scale - 1.0).abs() < 1e-6 {
+        return;
+    }
+    let dim = |v: i32| ((v as f32) * scale).round().max(0.0) as i32;
+    for s in sprites.iter_mut() {
+        s.raw_width = dim(s.raw_width).max(1);
+        s.raw_height = dim(s.raw_height).max(1);
+        s.trimmed_bounds.x = dim(s.trimmed_bounds.x);
+        s.trimmed_bounds.y = dim(s.trimmed_bounds.y);
+        let (w, h) = (
+            s.trimmed_bounds.width.max(0) as usize,
+            s.trimmed_bounds.height.max(0) as usize,
+        );
+        if w > 0 && h > 0 && s.pixels.len() >= w * h * 4 {
+            let (px, nw, nh) = export::scale_rgba(&s.pixels, w, h, scale, mode);
+            s.pixels = px;
+            s.trimmed_bounds.width = nw as i32;
+            s.trimmed_bounds.height = nh as i32;
+        } else {
+            s.trimmed_bounds.width = dim(s.trimmed_bounds.width).max(1);
+            s.trimmed_bounds.height = dim(s.trimmed_bounds.height).max(1);
+        }
+    }
+}
+
+/// Scale the project's pixel-valued options for a variant's own packing, so
+/// its sheet keeps the same proportions as the base one.
+fn scale_variant_geometry(config: &mut ProjectConfig, scale: f32) {
+    if (scale - 1.0).abs() < 1e-6 {
+        return;
+    }
+    let dim = |v: i32| ((v as f32) * scale).round().max(0.0) as i32;
+    config.padding = dim(config.padding);
+    config.border_padding = dim(config.border_padding);
+    config.extrude = dim(config.extrude);
+    config.align_to_grid = dim(config.align_to_grid);
+    config.fixed_width = dim(config.fixed_width);
+    config.fixed_height = dim(config.fixed_height);
+    if let Some(grid) = config.manual_grid.as_mut() {
+        grid.step = dim(grid.step).max(1);
+    }
+}
+
+/// `PageInfo` of every page at `scale`, with the file names this run really
+/// writes (`.tpenc` included when encryption is on; names only while
+/// previewing).
+fn page_infos_at(
+    config: &ProjectConfig,
+    pages: &[AtlasPage],
+    scale: f32,
+    write_to_disk: bool,
+) -> Vec<PageInfo> {
+    let variant = variant_suffix_for(config, scale);
+    pages
+        .iter()
+        .map(|page| {
+            let name = page_file_name(config, page.index, &variant);
+            let encrypt = |n: String| match &config.encryption_key {
+                Some(_) => format!("{n}.tpenc"),
+                None => n,
+            };
+            let (file_name, normal_file_name) = if write_to_disk {
+                let normal = page
+                    .normal_pixels
+                    .as_ref()
+                    .map(|_| normal_page_file_name(config, page.index, &variant))
+                    .map(encrypt);
+                (encrypt(name), normal)
+            } else {
+                (name, None)
+            };
+            PageInfo {
+                index: page.index,
+                width: page.width,
+                height: page.height,
+                file_name,
+                format: config.gpu_format.as_str().to_string(),
+                has_normals: page.has_normals,
+                normal_file_name,
+                encrypted: config.encryption_key.is_some(),
+                fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+            }
+        })
+        .collect()
+}
+
 /// Pack-by-folder: one pipeline run per group, with every other group's
 /// sprites excluded so each group packs independently. The default group
 /// (empty name) takes the sprites listed in it plus every unassigned one and
@@ -795,7 +1041,6 @@ fn run_groups(
     write_to_disk: bool,
 ) -> Result<PipelineOutput> {
     use std::collections::{HashMap, HashSet};
-    use std::path::PathBuf;
 
     let mut groups: Vec<FolderGroup> = groups.to_vec();
     let listed: HashSet<&str> = groups
@@ -856,7 +1101,7 @@ fn run_groups(
         gcfg.excluded_inputs = excluded;
         gcfg.folder_groups = Vec::new(); // no recursión
 
-        let mut out = execute(&gcfg, write_to_disk, None)?;
+        let mut out = execute(&gcfg, write_to_disk, None, None)?;
         warnings.append(&mut out.result.warnings);
         alias_count += out.result.alias_count;
         let group_prefix = if g.name.is_empty() {
@@ -1021,7 +1266,9 @@ fn with_ext(stem: &str, ext: &str) -> String {
 /// integer scales (Retina/iOS), `-hd`/`-sd` for 0.5/1.0 cocos2d pairs, and the
 /// plain scale value with dot for anything else (`_0.75x`-style is replaced by
 /// `@0.75x`). Base scale 1.0 without other variants gets an empty suffix.
-fn variant_suffix(scale: f32) -> String {
+/// Automatic `{v}` suffix of a scale when the project does not name it
+/// (`1.0` → nothing, `2.0` → `@2x`, `0.5` → `-hd`, `1/3` → `-sd`).
+pub fn variant_suffix(scale: f32) -> String {
     match scale {
         s if (s - 2.0).abs() < 1e-6 => "@2x".to_string(),
         s if (s - 4.0).abs() < 1e-6 => "@4x".to_string(),

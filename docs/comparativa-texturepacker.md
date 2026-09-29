@@ -39,10 +39,13 @@ corrección» al final.
   `Cargo.toml`, así que `GpuFormat::is_supported()` es `true`, astcenc se compila y el
   test `etc2_pvrtc_and_astc_export_paths` exporta `atlas.astc` de verdad. La advertencia
   de `settings.rs:766` sigue ahí para construcciones sin la feature.
-- **Scaling variants**: un campo de texto de escalas (`crates/tp-app/src/app/settings.rs:159`)
-  más `variant_names` (`crates/tp-core/src/config.rs:810`). **No existen en todo el repo**:
-  sprite filter por variante, max texture size por variante, presets, `force-identical-layout`
-  y "accept fractional values".
+- **Scaling variants** **[RESUELTO]**: además del campo de escalas y `variant_names`, cada
+  variante tiene `variant_options` (`crates/tp-core/src/config.rs`): filtro de sprites con
+  comodines, `max_texture_size` propio y `force_identical_layout`. `plan_variants`
+  (`crates/tp-core/src/pipeline.rs`) decide qué variantes reescalan la hoja base y cuáles
+  empaquetan por su cuenta (con su filtro y su tope), y la GUI lo edita en «Opciones por
+  variante» (`crates/tp-app/src/app/settings.rs`). Siguen sin existir los presets del
+  original y «accept fractional values».
 - **Dithering**: 5 algoritmos (`crates/tp-core/src/config.rs:40-54`) vs 9 del original
   (faltan `NearestNeighbour`, `Linear` y los tres `PngQuant*`).
 - **Scale mode**: Smooth/Fast (`crates/tp-core/src/config.rs:310-318`) vs 7 del original
@@ -93,11 +96,15 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
 5. **Animación** (que use la selección) — **hecho**:
    `collect_frames` filtra por selección + `effective_group`; tests
    `animation_selection.rs` (2) y `effective_group_falls_back_when_the_group_is_gone`.
-6. **Scaling variants** (diálogo con filter/max size/identical layout) — **pendiente**.
+6. **Scaling variants** (filter / max size / identical layout) — **hecho**:
+   `VariantOptions` + `plan_variants` + corridas propias por variante (con
+   `scale_ingested_sprites` para empaquetar a su escala), la tabla «Opciones por
+   variante» en los ajustes y 7 tests (`variant_*` en `pipeline_e2e.rs` y
+   `variant_options_*`/`variant_filter_*` en `config.rs`).
 
 Pendientes fuera del orden acordado: **Align to grid** y la **pestaña "Archivos"**
 (§1), y el resto de la lista de §2/§3.
 
-Puerta de calidad tras los puntos 1-5: `cargo fmt --all --check`,
+Puerta de calidad tras los puntos 1-6: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (216 tests).
+`cargo test --workspace` en verde (223 tests).

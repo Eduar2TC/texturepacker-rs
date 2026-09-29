@@ -1069,6 +1069,14 @@ impl App {
             false
         } else {
             self.config.scale_variants = parsed;
+            // Las opciones de escalas que ya no existen se descartan para
+            // que no queden filas huérfanas en el proyecto.
+            self.config.variant_options.retain(|o| {
+                self.config
+                    .scale_variants
+                    .iter()
+                    .any(|s| (s - o.scale).abs() < 1e-6)
+            });
             true
         }
     }

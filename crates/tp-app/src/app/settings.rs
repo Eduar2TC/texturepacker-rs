@@ -5,7 +5,7 @@ use eframe::egui;
 use tp_core::config::{
     AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, GpuFormat, PackMode,
     PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ScaleMode, SizeConstraint,
-    SortOrder, TemplateFormat, TrimMode,
+    SortOrder, TemplateFormat, TrimMode, VariantOptions,
 };
 
 pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
@@ -163,6 +163,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.on_config_changed();
             }
+            variant_options_ui(app, ui);
             ui.label("Plantilla Mustache personalizada (opcional)");
             ui.horizontal(|ui| {
                 let mut path = app
@@ -838,6 +839,100 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
 
 /// Id de la bandera por-frame "algún combo cambió la configuración".
 const SETTINGS_CHANGED_FLAG: &str = "tp_settings_changed";
+
+/// Opciones de cada escala listada en «Scaling variants»: filtro de sprites,
+/// tamaño máximo de textura y si la variante reutiliza la hoja base.
+fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
+    let scales = app.config.scale_variants.clone();
+    if scales.len() < 2 && app.config.variant_options.is_empty() {
+        return;
+    }
+    ui.collapsing("Opciones por variante", |ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Escala").strong());
+            ui.label(egui::RichText::new("Filtro de sprites").strong());
+            ui.label(egui::RichText::new("Máx.").strong());
+            ui.label(egui::RichText::new("Idéntico").strong());
+        });
+        for scale in scales {
+            let default = VariantOptions {
+                scale,
+                ..VariantOptions::default()
+            };
+            let mut opts = app
+                .config
+                .variant_options_for(scale)
+                .cloned()
+                .unwrap_or(default.clone());
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label(format!(
+                    "{scale} ({})",
+                    tp_core::pipeline::variant_suffix(scale)
+                ))
+                .on_hover_text("Escala de esta variante y su sufijo {v}");
+                changed |= ui
+                    .add(
+                        egui::TextEdit::singleline(&mut opts.sprite_filter)
+                            .desired_width(150.0)
+                            .hint_text("vacío = todos"),
+                    )
+                    .on_hover_text(
+                        "Patrones separados por comas (comodines * y ?) sobre el nombre \
+                         del sprite; solo los que coinciden entran en la variante.",
+                    )
+                    .changed();
+                let mut max = opts.max_texture_size.unwrap_or(0);
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut max)
+                            .range(0..=16384)
+                            .suffix(" px"),
+                    )
+                    .on_hover_text(
+                        "0 = el tamaño máximo del proyecto. Un valor distinto obliga a \
+                         reempaquetar la variante con ese tope.",
+                    )
+                    .changed()
+                {
+                    opts.max_texture_size = if max == 0 { None } else { Some(max) };
+                    changed = true;
+                }
+                changed |= ui
+                    .checkbox(&mut opts.force_identical_layout, "")
+                    .on_hover_text(
+                        "Reutilizar la hoja base escalada en vez de reempaquetar. El \
+                         filtro u otro tamaño máximo obligan a reempaquetar.",
+                    )
+                    .changed();
+            });
+            if changed {
+                upsert_variant_option(&mut app.config.variant_options, opts, &default);
+                app.on_config_changed();
+            }
+        }
+        ui.label(
+            egui::RichText::new(
+                "Con filtro o tamaño máximo la variante se empaqueta por su cuenta; \
+                 sin nada, es la hoja base escalada.",
+            )
+            .weak(),
+        );
+    });
+}
+
+/// Guarda las opciones de una escala, o las borra si vuelven a los valores
+/// por defecto (así el proyecto no arrastra entradas vacías).
+fn upsert_variant_option(
+    list: &mut Vec<VariantOptions>,
+    opts: VariantOptions,
+    default: &VariantOptions,
+) {
+    list.retain(|o| (o.scale - opts.scale).abs() > 1e-6);
+    if &opts != default {
+        list.push(opts);
+    }
+}
 
 fn enum_combo<T: PartialEq + Clone>(
     ui: &mut egui::Ui,

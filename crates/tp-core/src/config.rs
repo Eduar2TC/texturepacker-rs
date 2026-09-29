@@ -637,6 +637,70 @@ pub enum TemplateFormat {
     PlainText,
 }
 
+/// Per-variant options of a scaling variant (el diálogo «scaling variants»
+/// del original): qué sprites empaqueta la variante, su tope de tamaño de
+/// textura y si reutiliza la hoja base.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VariantOptions {
+    /// Scale these options configure; must match an entry of
+    /// [`ProjectConfig::scale_variants`] (entries for other scales are
+    /// ignored and rejected by [`ProjectConfig::validate`]).
+    pub scale: f32,
+    /// Comma-separated include patterns (`*` = any run of characters,
+    /// `?` = one character) matched against the sprite id and its file
+    /// name. Empty = every sprite belongs to the variant.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub sprite_filter: String,
+    /// Canvas cap for this variant (absent/0 = the project's own
+    /// `max_texture_size`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_texture_size: Option<i32>,
+    /// Reuse the base sheet scaled instead of packing from scratch. A
+    /// sprite filter or a different max texture size forces a fresh pack
+    /// either way: neither can be honoured by scaling the base sheet.
+    #[serde(default = "default_true")]
+    pub force_identical_layout: bool,
+}
+
+impl Default for VariantOptions {
+    fn default() -> Self {
+        Self {
+            scale: 1.0,
+            sprite_filter: String::new(),
+            max_texture_size: None,
+            force_identical_layout: true,
+        }
+    }
+}
+
+impl VariantOptions {
+    /// True when the sprite identified by `names` (id and file name) belongs
+    /// to this variant. An empty filter includes everything.
+    pub fn includes(&self, names: &[&str]) -> bool {
+        let filter = self.sprite_filter.trim();
+        if filter.is_empty() {
+            return true;
+        }
+        filter.split(',').any(|pat| {
+            let pat = pat.trim();
+            !pat.is_empty() && names.iter().any(|n| glob_match(pat, n))
+        })
+    }
+}
+
+/// Glob match with `*` (any run, including `/`) and `?` (one character).
+fn glob_match(pattern: &str, text: &str) -> bool {
+    fn go(p: &[u8], t: &[u8]) -> bool {
+        match p.first() {
+            None => t.is_empty(),
+            Some(b'*') => (0..=t.len()).any(|i| go(&p[1..], &t[i..])),
+            Some(b'?') => !t.is_empty() && go(&p[1..], &t[1..]),
+            Some(b) => t.first() == Some(b) && go(&p[1..], &t[1..]),
+        }
+    }
+    go(pattern.as_bytes(), text.as_bytes())
+}
+
 /// Manual pack-by-folder group: sprites assigned to `name` are packed in
 /// their own sheet(s) inside `<output_directory>/<name>/`, separate from the
 /// main sheet. The default group (empty `name`) holds every sprite not
@@ -809,6 +873,11 @@ pub struct ProjectConfig {
     /// `0.5 → -hd`). Empty = automatic suffixes.
     #[serde(default)]
     pub variant_names: Vec<(f32, String)>,
+    /// Per-variant options (sprite filter, max texture size, identical
+    /// layout) keyed by scale. An entry whose scale is not listed in
+    /// `scale_variants` is ignored (and rejected by `validate`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub variant_options: Vec<VariantOptions>,
     /// Auto co-pack `*_normal.png` companions in the same frames.
     pub enable_normal_maps: bool,
     /// Default normalized pivot for all sprites.
@@ -972,6 +1041,7 @@ impl Default for ProjectConfig {
             folder_groups: default_folder_groups(),
             scale_variants: vec![1.0],
             variant_names: Vec::new(),
+            variant_options: Vec::new(),
             enable_normal_maps: true,
             default_pivot_x: 0.5,
             default_pivot_y: 0.5,
@@ -1044,6 +1114,14 @@ impl ProjectConfig {
         } else {
             self.algorithm
         }
+    }
+
+    /// Options configured for a scale variant (`None` = defaults: every
+    /// sprite, the project's `max_texture_size`, identical layout).
+    pub fn variant_options_for(&self, scale: f32) -> Option<&VariantOptions> {
+        self.variant_options
+            .iter()
+            .find(|o| (o.scale - scale).abs() < 1e-6)
     }
 
     /// Heuristic actually used by MaxRects (the legacy `Guillotine` strategy
@@ -1166,6 +1244,43 @@ impl ProjectConfig {
                 return Err(TpError::Config(format!(
                     "variant_names no admite rutas (se obtuvo {name:?})"
                 )));
+            }
+        }
+        for (i, opt) in self.variant_options.iter().enumerate() {
+            if opt.scale <= 0.0 || opt.scale > 8.0 {
+                return Err(TpError::Config(format!(
+                    "variant_options: la escala debe estar en (0, 8] (se obtuvo {})",
+                    opt.scale
+                )));
+            }
+            if !self
+                .scale_variants
+                .iter()
+                .any(|s| (s - opt.scale).abs() < 1e-6)
+            {
+                return Err(TpError::Config(format!(
+                    "variant_options: la escala {} no está en scale_variants",
+                    opt.scale
+                )));
+            }
+            if self.variant_options[i + 1..]
+                .iter()
+                .any(|b| (b.scale - opt.scale).abs() < 1e-6)
+            {
+                return Err(TpError::Config(format!(
+                    "variant_options: la escala {} aparece más de una vez",
+                    opt.scale
+                )));
+            }
+            if let Some(m) = opt.max_texture_size {
+                if !(0..=16384).contains(&m) || (m != 0 && (m & (m - 1)) != 0) {
+                    return Err(TpError::Config(format!(
+                        "variant_options: max_texture_size de la escala {} debe ser 0 \
+                         (usar el del proyecto) o una potencia de dos hasta 16384 \
+                         (se obtuvo {m})",
+                        opt.scale
+                    )));
+                }
             }
         }
         if self.encryption_key.as_deref() == Some("") {
@@ -1681,5 +1796,95 @@ mod tests {
         assert_eq!(AlphaHandling::parse("nope"), None);
         assert_eq!(ScaleMode::parse("fast"), Some(ScaleMode::Fast));
         assert_eq!(ScaleMode::parse("nope"), None);
+    }
+    #[test]
+    fn variant_filter_matches_ids_and_file_names() {
+        let opts = VariantOptions {
+            scale: 0.5,
+            sprite_filter: "hero*, coin".into(),
+            ..VariantOptions::default()
+        };
+        assert!(opts.includes(&["hero", "hero.png"]));
+        assert!(opts.includes(&["hero_alt", "hero_alt.png"]));
+        assert!(opts.includes(&["coin", "coin.png"]));
+        assert!(!opts.includes(&["bg", "bg.png"]));
+        // Filtro vacío: todos los sprites pertenecen a la variante.
+        assert!(VariantOptions::default().includes(&["cualquiera", "cualquiera.png"]));
+        // `?` cuenta exactamente un carácter y basta con que el patrón
+        // coincida con uno de los dos nombres (id o fichero).
+        let one = VariantOptions {
+            scale: 1.0,
+            sprite_filter: "b?g".into(),
+            ..VariantOptions::default()
+        };
+        assert!(one.includes(&["bug", "bug.png"]));
+        assert!(!one.includes(&["bg", "bg.png"]));
+        assert!(!one.includes(&["bigger", "bigger.png"]));
+        // Varios patrones separados por coma: basta con que coincida uno,
+        // con cualquiera de los dos nombres del sprite.
+        assert!(!one.includes(&["zzz", "zzz.png"]));
+        let two = VariantOptions {
+            scale: 1.0,
+            sprite_filter: "hero*, coin".into(),
+            ..VariantOptions::default()
+        };
+        assert!(two.includes(&["coin", "coin.png"]));
+        assert!(two.includes(&["hero_alt", "hero_alt.png"]));
+        assert!(!two.includes(&["zzz", "zzz.png"]));
+    }
+
+    #[test]
+    fn variant_options_validate_scale_duplicates_and_max_size() {
+        let base = || ProjectConfig {
+            scale_variants: vec![1.0, 0.5],
+            ..ProjectConfig::default()
+        };
+
+        let mut cfg = base();
+        cfg.variant_options = vec![VariantOptions {
+            scale: 0.75,
+            ..VariantOptions::default()
+        }];
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("no está en scale_variants"), "{err}");
+
+        let mut cfg = base();
+        cfg.variant_options = vec![
+            VariantOptions {
+                scale: 0.5,
+                ..VariantOptions::default()
+            },
+            VariantOptions {
+                scale: 0.5,
+                sprite_filter: "x".into(),
+                ..VariantOptions::default()
+            },
+        ];
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("más de una vez"), "{err}");
+
+        let mut cfg = base();
+        cfg.variant_options = vec![VariantOptions {
+            scale: 0.5,
+            max_texture_size: Some(1000),
+            ..VariantOptions::default()
+        }];
+        let err = cfg.validate().unwrap_err().to_string();
+        assert!(err.contains("potencia de dos"), "{err}");
+
+        let mut cfg = base();
+        cfg.variant_options = vec![VariantOptions {
+            scale: 0.5,
+            max_texture_size: Some(1024),
+            ..VariantOptions::default()
+        }];
+        cfg.validate().expect("opciones válidas");
+
+        // Serialización: solo aparecen si hay opciones y sobreviven al TOML.
+        let text = cfg.to_toml().unwrap();
+        assert!(text.contains("variant_options"));
+        let back = ProjectConfig::from_toml(&text).unwrap();
+        assert_eq!(back.variant_options, cfg.variant_options);
+        assert!(!base().to_toml().unwrap().contains("variant_options"));
     }
 }

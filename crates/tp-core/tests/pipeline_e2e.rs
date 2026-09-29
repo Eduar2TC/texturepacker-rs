@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use tp_core::config::{
     ColorDepth, DitheringAlgorithm, GpuFormat, PackMode, PackingAlgorithm, PackingStrategy,
-    ProjectConfig, SizeConstraint, TemplateFormat,
+    ProjectConfig, SizeConstraint, TemplateFormat, VariantOptions,
 };
 use tp_core::types::Rect;
 use tp_core::{export, pipeline};
@@ -1678,4 +1678,201 @@ fn manual_positions_survive_project_roundtrip() {
     assert_eq!(frame_of(&second, "b"), b0);
     assert_eq!(frame_of(&second, "c"), c0);
     assert_eq!(second.result.sprites.len(), first.result.sprites.len());
+}
+
+// ---------------------------------------------------------------------------
+// Scaling variants (filtro / tamaño máximo / layout idéntico por variante)
+// ---------------------------------------------------------------------------
+
+/// Width/height from a PNG's IHDR (bytes 16..24, big-endian).
+fn png_dims(path: &Path) -> (u32, u32) {
+    let b =
+        std::fs::read(path).unwrap_or_else(|e| panic!("no se pudo leer {}: {e}", path.display()));
+    assert_eq!(
+        &b[..8],
+        b"\x89PNG\r\n\x1a\n",
+        "{} no es un PNG",
+        path.display()
+    );
+    let be = |s: usize| u32::from_be_bytes([b[s], b[s + 1], b[s + 2], b[s + 3]]);
+    (be(16), be(20))
+}
+
+/// Frame filenames listed by an atlas JSON data file.
+fn json_frames(path: &Path) -> Vec<String> {
+    let text = std::fs::read_to_string(path)
+        .unwrap_or_else(|e| panic!("no se pudo leer {}: {e}", path.display()));
+    let v: serde_json::Value = serde_json::from_str(&text).expect("data file JSON válido");
+    v["frames"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .map(|f| f["filename"].as_str().unwrap_or_default().to_string())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Four 30x30 sprites, base sheet in one page, variants `1.0` + `0.5`.
+fn variant_fixture(name: &str) -> (Fixture, PathBuf, ProjectConfig) {
+    let fx = Fixture::new(name);
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+    for (i, n) in ["a", "b", "c", "d"].into_iter().enumerate() {
+        // Colores distintos: con el mismo color el aliasing reduciría los
+        // cuatro sprites a uno solo en la hoja.
+        write_png(
+            &input.join(format!("{n}.png")),
+            30,
+            30,
+            [200 + (i as u8) * 10, 60, 60, 255],
+        );
+    }
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        max_texture_size: 256,
+        padding: 2,
+        extrude: 0,
+        scale_variants: vec![1.0, 0.5],
+        template_format: TemplateFormat::Json,
+        ..ProjectConfig::default()
+    };
+    (fx, output, cfg)
+}
+
+#[test]
+fn variant_with_another_max_size_packs_from_scratch() {
+    let (_fx, output, mut cfg) = variant_fixture("variant_max");
+    cfg.variant_options = vec![VariantOptions {
+        scale: 0.5,
+        max_texture_size: Some(32),
+        ..VariantOptions::default()
+    }];
+
+    let out = pipeline::run(&cfg).unwrap();
+    assert_eq!(
+        out.result.pages.len(),
+        1,
+        "la hoja base (sprites de 30 px, tope 256) cabe en una página"
+    );
+
+    let (bw, bh) = png_dims(&output.join("atlas.png"));
+    let (vw, vh) = png_dims(&output.join("atlas-hd.png"));
+    assert!(
+        vw <= 32 && vh <= 32,
+        "la variante {vw}x{vh} respeta su máximo de 32 px"
+    );
+    let scaled = (
+        (bw as f32 * 0.5).round() as u32,
+        (bh as f32 * 0.5).round() as u32,
+    );
+    assert_ne!(
+        (vw, vh),
+        scaled,
+        "con otro tamaño máximo la variante empaqueta de cero, no reescala {scaled:?}"
+    );
+    // Multipack de la variante: la segunda hoja lleva su propio sufijo {v}.
+    assert!(
+        output.join("atlas_1-hd.png").exists(),
+        "los sprites que no caben van a otra hoja de la variante"
+    );
+    assert_eq!(json_frames(&output.join("atlas-hd.json")).len(), 4);
+}
+
+#[test]
+fn variant_sprite_filter_drops_sprites_from_that_variant() {
+    let (_fx, output, mut cfg) = variant_fixture("variant_filter");
+    cfg.variant_options = vec![VariantOptions {
+        scale: 0.5,
+        sprite_filter: "a, b".into(),
+        ..VariantOptions::default()
+    }];
+
+    let out = pipeline::run(&cfg).unwrap();
+    assert_eq!(
+        json_frames(&output.join("atlas.json")).len(),
+        4,
+        "base sin filtro"
+    );
+
+    let mut small = json_frames(&output.join("atlas-hd.json"));
+    small.sort();
+    assert_eq!(small, vec!["a".to_string(), "b".to_string()]);
+    assert!(
+        output.join("atlas-hd.png").exists(),
+        "la variante sí publica hoja"
+    );
+    assert_eq!(
+        out.result.warnings.len(),
+        0,
+        "sin avisos: {:?}",
+        out.result.warnings
+    );
+}
+
+#[test]
+fn variant_sprite_filter_that_matches_nothing_omits_the_variant() {
+    let (_fx, output, mut cfg) = variant_fixture("variant_filter_empty");
+    cfg.variant_options = vec![VariantOptions {
+        scale: 0.5,
+        sprite_filter: "zzz*".into(),
+        ..VariantOptions::default()
+    }];
+
+    let out = pipeline::run(&cfg).unwrap();
+    assert!(
+        !output.join("atlas-hd.png").exists(),
+        "variante sin sprites: se omite"
+    );
+    assert!(
+        out.result.warnings.iter().any(|w| w.contains("-hd")),
+        "el aviso explica por qué se omite: {:?}",
+        out.result.warnings
+    );
+    assert!(
+        output.join("atlas.png").exists(),
+        "la hoja base se publica igual"
+    );
+}
+
+#[test]
+fn variant_passes_only_run_when_writing_to_disk() {
+    let (_fx, output, mut cfg) = variant_fixture("variant_preview");
+    cfg.variant_options = vec![VariantOptions {
+        scale: 0.5,
+        sprite_filter: "a, b".into(),
+        ..VariantOptions::default()
+    }];
+
+    let out = pipeline::run_preview(&cfg).unwrap();
+    assert!(
+        !output.exists(),
+        "la vista previa no debe crear ficheros ni directorios"
+    );
+    // En memoria sigue informando de la hoja base y de las dos variantes.
+    assert_eq!(out.result.pages.len(), 1);
+    assert!(
+        out.result.output_files.iter().any(|f| f == "atlas-hd.json"),
+        "la previsualización lista las variantes: {:?}",
+        out.result.output_files
+    );
+}
+
+#[test]
+fn identical_layout_scales_the_base_sheet_by_default() {
+    let (_fx, output, _cfg) = variant_fixture("variant_identical");
+    let out = pipeline::run(&_cfg).unwrap();
+    assert_eq!(out.result.warnings.len(), 0, "{:?}", out.result.warnings);
+
+    let (bw, bh) = png_dims(&output.join("atlas.png"));
+    let (vw, vh) = png_dims(&output.join("atlas-hd.png"));
+    assert_eq!(
+        (vw, vh),
+        (
+            (bw as f32 * 0.5).round() as u32,
+            (bh as f32 * 0.5).round() as u32
+        ),
+        "sin opciones la variante es la hoja base reescalada"
+    );
 }
