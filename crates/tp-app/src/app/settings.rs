@@ -847,78 +847,127 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
     if scales.len() < 2 && app.config.variant_options.is_empty() {
         return;
     }
+    ui.add_space(2.0);
     ui.collapsing("Opciones por variante", |ui| {
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Escala").strong());
-            ui.label(egui::RichText::new("Filtro de sprites").strong());
-            ui.label(egui::RichText::new("Máx.").strong());
-            ui.label(egui::RichText::new("Idéntico").strong());
-        });
-        for scale in scales {
-            let default = VariantOptions {
-                scale,
-                ..VariantOptions::default()
-            };
-            let mut opts = app
-                .config
-                .variant_options_for(scale)
-                .cloned()
-                .unwrap_or(default.clone());
-            let mut changed = false;
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "{scale} ({})",
-                    tp_core::pipeline::variant_suffix(scale)
-                ))
-                .on_hover_text("Escala de esta variante y su sufijo {v}");
-                changed |= ui
-                    .add(
-                        egui::TextEdit::singleline(&mut opts.sprite_filter)
-                            .desired_width(150.0)
-                            .hint_text("vacío = todos"),
-                    )
-                    .on_hover_text(
-                        "Patrones separados por comas (comodines * y ?) sobre el nombre \
-                         del sprite; solo los que coinciden entran en la variante.",
-                    )
-                    .changed();
-                let mut max = opts.max_texture_size.unwrap_or(0);
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut max)
-                            .range(0..=16384)
-                            .suffix(" px"),
-                    )
-                    .on_hover_text(
-                        "0 = el tamaño máximo del proyecto. Un valor distinto obliga a \
-                         reempaquetar la variante con ese tope.",
-                    )
-                    .changed()
-                {
-                    opts.max_texture_size = if max == 0 { None } else { Some(max) };
-                    changed = true;
-                }
-                changed |= ui
-                    .checkbox(&mut opts.force_identical_layout, "")
-                    .on_hover_text(
-                        "Reutilizar la hoja base escalada en vez de reempaquetar. El \
-                         filtro u otro tamaño máximo obligan a reempaquetar.",
-                    )
-                    .changed();
-            });
-            if changed {
-                upsert_variant_option(&mut app.config.variant_options, opts, &default);
-                app.on_config_changed();
-            }
-        }
         ui.label(
             egui::RichText::new(
-                "Con filtro o tamaño máximo la variante se empaqueta por su cuenta; \
-                 sin nada, es la hoja base escalada.",
+                "«Reutiliza la base» = la hoja empaquetada a escala 1.0 llevada a esta escala \
+                 (rápido, mismo layout y mismos frames). Con filtro o tope, esa variante se \
+                 empaqueta sola y sus archivos pueden diferir.",
             )
             .weak(),
         );
+        ui.add_space(3.0);
+        egui::Grid::new("variant_options_grid")
+            .num_columns(5)
+            .spacing([8.0, 4.0])
+            .striped(true)
+            .min_col_width(56.0)
+            .show(ui, |ui| {
+                ui.strong("escala");
+                ui.strong("filtro de sprites");
+                ui.strong("máx. px");
+                ui.strong("idéntico");
+                ui.strong("qué hace");
+                ui.end_row();
+                for scale in scales {
+                    let default = VariantOptions {
+                        scale,
+                        ..VariantOptions::default()
+                    };
+                    let mut opts = app
+                        .config
+                        .variant_options_for(scale)
+                        .cloned()
+                        .unwrap_or(default.clone());
+                    let mut changed = false;
+
+                    ui.label(format!(
+                        "{scale} → {}",
+                        tp_core::pipeline::variant_suffix(scale)
+                    ))
+                    .on_hover_text(
+                        "Sufijo que llevarán los archivos de esta variante ({v} = escala)",
+                    );
+                    changed |= ui
+                        .add(
+                            egui::TextEdit::singleline(&mut opts.sprite_filter)
+                                .desired_width(150.0)
+                                .hint_text("vacío = todos"),
+                        )
+                        .on_hover_text(
+                            "Patrones separados por comas con comodines * y ? sobre el nombre \
+                             del sprite (p. ej. hero*, coin). Solo lo que coincide entra en esta \
+                             variante.",
+                        )
+                        .changed();
+                    let mut max = opts.max_texture_size.unwrap_or(0);
+                    if ui
+                        .add(
+                            egui::DragValue::new(&mut max)
+                                .range(0..=16384)
+                                .suffix(" px"),
+                        )
+                        .on_hover_text(
+                            "0 = el tamaño máximo del proyecto. Con un valor distinto, esta \
+                             variante se empaqueta sola respetando ese tope.",
+                        )
+                        .changed()
+                    {
+                        opts.max_texture_size = if max == 0 { None } else { Some(max) };
+                        changed = true;
+                    }
+                    changed |= ui
+                        .checkbox(&mut opts.force_identical_layout, "")
+                        .on_hover_text(
+                            "Sin marcar, la variante se empaqueta de nuevo con su escala en \
+                             vez de reutilizar la hoja base.",
+                        )
+                        .changed();
+
+                    let (estado, color, motivo) = variant_state(&opts);
+                    ui.colored_label(color, estado).on_hover_text(motivo);
+
+                    if changed {
+                        upsert_variant_option(&mut app.config.variant_options, opts, &default);
+                        app.on_config_changed();
+                    }
+                    ui.end_row();
+                }
+            });
     });
+}
+
+/// Qué hará realmente la variante en la publicación, para poder decirlo en
+/// la tabla sin que el usuario tenga que adivinarlo.
+fn variant_state(opts: &VariantOptions) -> (&'static str, egui::Color32, String) {
+    const SOLO: egui::Color32 = egui::Color32::from_rgb(255, 200, 80);
+    const BASE: egui::Color32 = egui::Color32::from_rgb(130, 200, 130);
+    let filtered = !opts.sprite_filter.trim().is_empty();
+    let capped = opts.max_texture_size.is_some();
+    if filtered || capped {
+        let mut why = String::from("Se empaqueta por su cuenta porque ");
+        match (filtered, capped) {
+            (true, true) => why.push_str("tiene filtro y tamaño máximo"),
+            (true, false) => why.push_str("tiene filtro"),
+            (false, true) => why.push_str("tiene tamaño máximo"),
+            (false, false) => unreachable!(),
+        }
+        why.push('.');
+        return ("empaqueta sola", SOLO, why);
+    }
+    if opts.force_identical_layout {
+        return (
+            "reutiliza la base",
+            BASE,
+            "Toma la hoja base y la escala: mismo layout y mismos frames.".into(),
+        );
+    }
+    (
+        "empaqueta sola",
+        SOLO,
+        "Layout no idéntico: se empaqueta de nuevo con su escala.".into(),
+    )
 }
 
 /// Guarda las opciones de una escala, o las borra si vuelven a los valores
