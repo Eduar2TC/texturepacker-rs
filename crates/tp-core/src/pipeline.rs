@@ -483,8 +483,10 @@ fn execute(
     // ------------------------------------------------------------------
     // Assemble SpriteAsset list
     // ------------------------------------------------------------------
-    let pivot_overrides = ingest::load_pivot_overrides(&config.input_directory).unwrap_or_default();
-    let border_overrides =
+    // Precedencia: ediciones de la GUI (`config.*_overrides`) > sidecar
+    // `pivots.json`/`borders.json` > pivot por defecto.
+    let sidecar_pivots = ingest::load_pivot_overrides(&config.input_directory).unwrap_or_default();
+    let sidecar_borders =
         ingest::load_border_overrides(&config.input_directory).unwrap_or_default();
     let mut sprite_assets: Vec<SpriteAsset> = Vec::with_capacity(sprites.len());
     let alias_targets: std::collections::HashSet<String> =
@@ -492,10 +494,12 @@ fn execute(
 
     for (i, s) in sprites.iter().enumerate() {
         let (is_alias, alias_target) = aliases[i].clone();
-        let pivot = pivot_overrides
+        let pivot = config
+            .pivot_overrides
             .get(&s.id)
             .copied()
-            .unwrap_or(Point2D::new(config.default_pivot_x, config.default_pivot_y));
+            .or_else(|| sidecar_pivots.get(&s.id).copied())
+            .unwrap_or_else(|| Point2D::new(config.default_pivot_x, config.default_pivot_y));
 
         let fr = frame[i].unwrap_or_default();
         let vis = Rect::new(
@@ -542,7 +546,11 @@ fn execute(
             is_alias,
             alias_target_id: alias_target,
             pivot,
-            border: border_overrides.get(&s.id).copied(),
+            border: config
+                .border_overrides
+                .get(&s.id)
+                .copied()
+                .or_else(|| sidecar_borders.get(&s.id).copied()),
             mesh,
             allocated_frame: fr,
             visible_frame: vis,

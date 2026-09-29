@@ -1122,6 +1122,94 @@ fn lote9_borders_from_file_and_metadata() {
 }
 
 #[test]
+fn gui_overrides_win_over_sidecar_and_default_pivot() {
+    use tp_core::types::Point2D;
+
+    let fx = Fixture::new("gui_overrides");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    // Imagen completamente opaca: el trim no recorta, así que el pivot
+    // reportado en el metadato es `pivot * tamaño`.
+    write_corner_png(&input.join("panel.png"), 16, 16, [90, 90, 90, 255]);
+    std::fs::write(
+        input.join("pivots.json"),
+        r#"{ "panel": { "x": 0.25, "y": 0.75 } }"#,
+    )
+    .unwrap();
+    std::fs::write(input.join("borders.json"), r#"{ "panel": [4, 6, 5, 3] }"#).unwrap();
+
+    let mut cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        template_format: TemplateFormat::Json,
+        ..ProjectConfig::default()
+    };
+    // Ediciones hechas en la GUI: deben ganar al sidecar.
+    cfg.pivot_overrides
+        .insert("panel".into(), Point2D::new(0.0, 1.0));
+    cfg.border_overrides.insert("panel".into(), [7, 8, 9, 10]);
+
+    let out = pipeline::run(&cfg).unwrap();
+    let panel = out
+        .result
+        .sprites
+        .iter()
+        .find(|s| s.id == "panel")
+        .expect("sprite panel");
+    assert_eq!(
+        panel.pivot,
+        Point2D::new(0.0, 1.0),
+        "el pivot de la GUI debe ganar a pivots.json"
+    );
+    assert_eq!(
+        panel.border,
+        Some([7, 8, 9, 10]),
+        "los bordes de la GUI deben ganar a borders.json"
+    );
+
+    // …y llegan a los datos publicados.
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(output.join("atlas.json")).unwrap()).unwrap();
+    let frame = &meta["frames"][0];
+    assert_eq!(frame["pivot"]["x"].as_f64().unwrap(), 0.0);
+    assert_eq!(frame["pivot"]["y"].as_f64().unwrap(), 1.0);
+    assert_eq!(frame["border"]["left"], 7);
+    assert_eq!(frame["border"]["top"], 8);
+    assert_eq!(frame["border"]["right"], 9);
+    assert_eq!(frame["border"]["bottom"], 10);
+
+    // Sin ediciones de la GUI manda el sidecar…
+    cfg.pivot_overrides.clear();
+    cfg.border_overrides.clear();
+    let out2 = pipeline::run(&cfg).unwrap();
+    let panel2 = out2
+        .result
+        .sprites
+        .iter()
+        .find(|s| s.id == "panel")
+        .unwrap();
+    assert_eq!(panel2.pivot, Point2D::new(0.25, 0.75));
+    assert_eq!(panel2.border, Some([4, 6, 5, 3]));
+
+    // …y sin sidecar, el pivot por defecto del proyecto.
+    std::fs::remove_file(input.join("pivots.json")).unwrap();
+    std::fs::remove_file(input.join("borders.json")).unwrap();
+    let out3 = pipeline::run(&cfg).unwrap();
+    let panel3 = out3
+        .result
+        .sprites
+        .iter()
+        .find(|s| s.id == "panel")
+        .unwrap();
+    assert_eq!(
+        panel3.pivot,
+        Point2D::new(cfg.default_pivot_x, cfg.default_pivot_y)
+    );
+    assert_eq!(panel3.border, None);
+}
+
+#[test]
 fn lote10_auto_detect_animations_metadata() {
     let fx = Fixture::new("animations");
     let input = make_input_dir(&fx.dir, "in");

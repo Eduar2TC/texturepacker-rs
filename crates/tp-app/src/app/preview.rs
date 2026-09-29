@@ -983,13 +983,14 @@ fn set_selected_border_edge(app: &mut App, edge: Edge, value: i32) {
         Edge::Bottom => b[3] = v,
     }
     sprite.border = if b == [0; 4] { None } else { Some(b) };
-    // Recordar la edición para sobrevivir a los reempaquetados automáticos.
+    // Recordar la edición en el proyecto: sobrevive a los reempaquetados y
+    // viaja con el .tpproj (pasa a los datos publicados).
     match sprite.border {
         Some(b) => {
-            app.border_edits.insert(sprite.id.clone(), b);
+            app.config.border_overrides.insert(sprite.id.clone(), b);
         }
         None => {
-            app.border_edits.remove(sprite.id.as_str());
+            app.config.border_overrides.remove(sprite.id.as_str());
         }
     }
 }

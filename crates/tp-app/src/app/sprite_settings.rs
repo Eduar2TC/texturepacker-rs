@@ -155,7 +155,9 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
             if ui
                 .button("💾 Guardar pivots en pivots.json")
                 .on_hover_text(
-                    "Los pivots y los bordes 9-patch se reutilizarán en el siguiente publicado",
+                    "Escribe pivots.json y borders.json junto a los sprites, para que \
+                     el CLI (y otros proyectos) usen los mismos pivots. En la GUI ya \
+                     se aplican solos y viajan en el .tpproj.",
                 )
                 .clicked()
             {
@@ -171,7 +173,7 @@ fn apply_pivot(app: &mut App, indices: &[usize], x: f32, y: f32) {
         for &i in indices {
             if let Some(sprite) = out.result.sprites.get_mut(i) {
                 sprite.pivot = pivot;
-                app.pivot_edits.insert(sprite.id.clone(), pivot);
+                app.config.pivot_overrides.insert(sprite.id.clone(), pivot);
             }
         }
     } else {
@@ -191,10 +193,10 @@ fn apply_border(app: &mut App, indices: &[usize], border: [i32; 4]) {
                 sprite.border = border;
                 match border {
                     Some(b) => {
-                        app.border_edits.insert(sprite.id.clone(), b);
+                        app.config.border_overrides.insert(sprite.id.clone(), b);
                     }
                     None => {
-                        app.border_edits.remove(sprite.id.as_str());
+                        app.config.border_overrides.remove(sprite.id.as_str());
                     }
                 }
             }

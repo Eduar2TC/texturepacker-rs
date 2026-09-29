@@ -249,9 +249,6 @@ pub struct App {
     /// La configuración cambió por UI: el próximo `request_preview` no
     /// necesita comparar snapshots (ahorra re-escanear el disco por frame).
     pending_force: bool,
-    /// Pivots/borders edited in the GUI, reapplied on every repack.
-    pivot_edits: HashMap<String, Point2D>,
-    border_edits: HashMap<String, [i32; 4]>,
     /// Filesystem watcher (autowatch): edits on disk refresh the preview.
     watcher: Option<notify::RecommendedWatcher>,
     /// Clonable handle to wake the UI from the watcher thread.
@@ -341,8 +338,6 @@ impl App {
             pending_seq: None,
             packed_snapshot: None,
             pending_force: false,
-            pivot_edits: HashMap::new(),
-            border_edits: HashMap::new(),
             watcher: None,
             egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),
@@ -844,32 +839,14 @@ impl App {
         }
     }
 
-    /// Apply a pipeline result: reapply GUI edits (pivots / 9-patch borders
-    /// lost by the repack), refresh textures and keep the selection stable.
-    fn apply_output(&mut self, ctx: &egui::Context, mut out: PipelineOutput) {
-        for sprite in &mut out.result.sprites {
-            if let Some(p) = self.pivot_edits.get(&sprite.id) {
-                sprite.pivot = *p;
-            }
-            if let Some(b) = self.border_edits.get(&sprite.id) {
-                sprite.border = Some(*b);
-            }
-        }
+    /// Apply a pipeline result: refresh textures and keep the selection
+    /// stable. Pivots and 9-patch borders already come from the project
+    /// (`pivot_overrides` / `border_overrides`), so nothing is reapplied here.
+    fn apply_output(&mut self, ctx: &egui::Context, out: PipelineOutput) {
         self.selected_page = self.selected_page.min(out.pages.len().saturating_sub(1));
         self.result = Some(out);
         self.preview_retry_used = false;
         self.rebuild_textures(ctx);
-    }
-
-    /// Remember the current pivots/borders as GUI edits before a repack.
-    fn snapshot_edits(&mut self) {
-        let Some(out) = &self.result else { return };
-        for s in &out.result.sprites {
-            self.pivot_edits.insert(s.id.clone(), s.pivot);
-            if let Some(b) = s.border {
-                self.border_edits.insert(s.id.clone(), b);
-            }
-        }
     }
 
     /// Keep the UI painting while a preview job or an unmet change is
@@ -1115,7 +1092,6 @@ impl App {
         self.pending = None;
         self.pending_seq = None;
         self.preview_retry_used = false;
-        self.snapshot_edits();
         let snapshot = self.workspace_snapshot();
         let (tx, rx) = std::sync::mpsc::channel();
         let cfg = self.config.clone();
@@ -1542,11 +1518,11 @@ impl App {
             match border {
                 Some(b) => {
                     detected += 1;
-                    self.border_edits.insert(id.clone(), b);
+                    self.config.border_overrides.insert(id.clone(), b);
                     self.log(LogKind::Info, format!("{id}: bordes detectados {b:?}"));
                 }
                 None => {
-                    self.border_edits.remove(&id);
+                    self.config.border_overrides.remove(&id);
                     self.log(
                         LogKind::Warning,
                         format!("{id}: sin barras sólidas, se quita el 9-patch"),
@@ -1713,8 +1689,6 @@ impl App {
                     self.selection_anchor = None;
                     self.list_cursor = None;
                     self.tree_kb_focus = false;
-                    self.pivot_edits.clear();
-                    self.border_edits.clear();
                     self.start_watcher();
                     self.project_path = Some(path.clone());
                     self.log(
@@ -1737,8 +1711,6 @@ impl App {
         self.selection_anchor = None;
         self.list_cursor = None;
         self.tree_kb_focus = false;
-        self.pivot_edits.clear();
-        self.border_edits.clear();
         self.start_watcher();
         self.after_workspace_change();
     }

@@ -1,6 +1,7 @@
 //! Project configuration (`ProjectConfig`) with serde/TOML persistence.
 
 use crate::error::{Result, TpError};
+use crate::types::Point2D;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -813,6 +814,16 @@ pub struct ProjectConfig {
     /// Default normalized pivot for all sprites.
     pub default_pivot_x: f32,
     pub default_pivot_y: f32,
+    /// Per-sprite pivot edited in the GUI (`sprite id → normalized pivot`).
+    /// It wins over `pivots.json` and over `default_pivot_*`, and travels in
+    /// the project so the published data matches what the preview shows.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub pivot_overrides: HashMap<String, Point2D>,
+    /// Per-sprite 9-patch borders edited in the GUI (`[left, top, right,
+    /// bottom]` in source pixels, `[0; 4]`/absent = no border). It wins over
+    /// `borders.json`.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub border_overrides: HashMap<String, [i32; 4]>,
     /// Per-channel tolerance (0-255) for automatic 9-patch border detection:
     /// two pixels count as "same color" when no channel differs more than this.
     #[serde(default)]
@@ -964,6 +975,8 @@ impl Default for ProjectConfig {
             enable_normal_maps: true,
             default_pivot_x: 0.5,
             default_pivot_y: 0.5,
+            pivot_overrides: HashMap::new(),
+            border_overrides: HashMap::new(),
             detect_border_tolerance: 0,
             detect_border_max_search: 64,
             base_file_name: "atlas".to_string(),
@@ -1331,6 +1344,31 @@ mod tests {
         // Un TOML que no es una tabla (p. ej. vacío) tampoco rompe: sin
         // campos no hay lista que verificar y serde da su error normal.
         assert!(ProjectConfig::from_toml("").is_err());
+    }
+
+    #[test]
+    fn pivot_and_border_overrides_survive_toml_roundtrip() {
+        let mut cfg = ProjectConfig::default();
+        cfg.pivot_overrides
+            .insert("sub/hero".into(), Point2D::new(0.25, 0.75));
+        cfg.border_overrides.insert("sub/hero".into(), [1, 2, 3, 4]);
+
+        let text = cfg.to_toml().unwrap();
+        let back = ProjectConfig::from_toml(&text).unwrap();
+        assert_eq!(
+            back.pivot_overrides.get("sub/hero"),
+            Some(&Point2D::new(0.25, 0.75))
+        );
+        assert_eq!(back.border_overrides.get("sub/hero"), Some(&[1, 2, 3, 4]));
+
+        // Sin ediciones no ensucian el TOML ni son campos obligatorios.
+        let clean = ProjectConfig::default().to_toml().unwrap();
+        assert!(!clean.contains("pivot_overrides"));
+        assert!(!clean.contains("border_overrides"));
+        assert!(ProjectConfig::from_toml(&clean)
+            .unwrap()
+            .pivot_overrides
+            .is_empty());
     }
 
     #[test]
