@@ -52,6 +52,14 @@ pub enum DitheringAlgorithm {
     /// Atkinson including the alpha channel.
     #[serde(rename = "AtkinsonAlpha")]
     AtkinsonAlpha,
+    /// Nearest neighbour: each pixel is rounded to the closest level on its
+    /// own, with no error diffusion (smallest color error, no contrast gain).
+    #[serde(rename = "NearestNeighbour")]
+    NearestNeighbour,
+    /// Linear: the quantization error travels to the right neighbour along the
+    /// row, spreading the levels evenly (better contrast than NearestNeighbour).
+    #[serde(rename = "Linear")]
+    Linear,
 }
 
 impl DitheringAlgorithm {
@@ -316,6 +324,18 @@ pub enum ScaleMode {
     /// Nearest neighbour — keeps hard pixel edges.
     #[serde(rename = "Fast")]
     Fast,
+    /// Scale2x (AdvMAME2x) — pixel-art upscaler for the exact factor 2.
+    #[serde(rename = "Scale2x")]
+    Scale2x,
+    /// Scale3x (AdvMAME3x) — pixel-art upscaler for the exact factor 3.
+    #[serde(rename = "Scale3x")]
+    Scale3x,
+    /// Scale4x — Scale2x applied twice, for the exact factor 4.
+    #[serde(rename = "Scale4x")]
+    Scale4x,
+    /// Eagle — pixel-art upscaler for the exact factor 2.
+    #[serde(rename = "Eagle")]
+    Eagle,
 }
 
 impl ScaleMode {
@@ -323,14 +343,36 @@ impl ScaleMode {
         match self {
             ScaleMode::Smooth => "Smooth",
             ScaleMode::Fast => "Fast",
+            ScaleMode::Scale2x => "Scale2x",
+            ScaleMode::Scale3x => "Scale3x",
+            ScaleMode::Scale4x => "Scale4x",
+            ScaleMode::Eagle => "Eagle",
         }
     }
 
-    /// Parse a CLI/UX token (`smooth` | `fast`).
+    /// Exact integer factor the mode understands, or `None` for the generic
+    /// resamplers (`Smooth`/`Fast`), which accept any factor.
+    ///
+    /// Pixel-art modes only run when the requested scale matches their factor;
+    /// any other scale falls back to [`ScaleMode::Smooth`].
+    pub fn required_factor(&self) -> Option<u32> {
+        match self {
+            ScaleMode::Smooth | ScaleMode::Fast => None,
+            ScaleMode::Scale2x | ScaleMode::Eagle => Some(2),
+            ScaleMode::Scale3x => Some(3),
+            ScaleMode::Scale4x => Some(4),
+        }
+    }
+
+    /// Parse a CLI/UX token (`smooth` | `fast` | `scale2x` | …).
     pub fn parse(value: &str) -> Option<ScaleMode> {
         match value.to_ascii_lowercase().as_str() {
             "smooth" | "linear" => Some(ScaleMode::Smooth),
             "fast" | "nearest" | "nearestneighbour" => Some(ScaleMode::Fast),
+            "scale2x" | "scale2" => Some(ScaleMode::Scale2x),
+            "scale3x" | "scale3" => Some(ScaleMode::Scale3x),
+            "scale4x" | "scale4" => Some(ScaleMode::Scale4x),
+            "eagle" => Some(ScaleMode::Eagle),
             _ => None,
         }
     }
@@ -1779,7 +1821,18 @@ mod tests {
         );
         assert_eq!(AlphaHandling::parse("nope"), None);
         assert_eq!(ScaleMode::parse("fast"), Some(ScaleMode::Fast));
+        assert_eq!(ScaleMode::parse("scale2x"), Some(ScaleMode::Scale2x));
+        assert_eq!(ScaleMode::parse("scale3x"), Some(ScaleMode::Scale3x));
+        assert_eq!(ScaleMode::parse("scale4x"), Some(ScaleMode::Scale4x));
+        assert_eq!(ScaleMode::parse("eagle"), Some(ScaleMode::Eagle));
         assert_eq!(ScaleMode::parse("nope"), None);
+        // Los modos de pixel art exigen su factor entero; los genéricos, ninguno.
+        assert_eq!(ScaleMode::Scale2x.required_factor(), Some(2));
+        assert_eq!(ScaleMode::Scale3x.required_factor(), Some(3));
+        assert_eq!(ScaleMode::Scale4x.required_factor(), Some(4));
+        assert_eq!(ScaleMode::Eagle.required_factor(), Some(2));
+        assert_eq!(ScaleMode::Smooth.required_factor(), None);
+        assert_eq!(ScaleMode::Fast.required_factor(), None);
     }
     #[test]
     fn variant_filter_matches_ids_and_file_names() {

@@ -38,9 +38,9 @@ fn usage() -> ! {
          \x20 --no-aliasing         Desactivar deduplicación por hash (alias: --disable-auto-alias)\n\
          \x20 --no-auto-animations  No agrupar sprites walk_001..N como animaciones\n\
          \x20 --color-depth T       RGBA8888 | RGBA4444 | RGB565\n\
-         \x20 --dither T            none | floyd | floyd-alpha | atkinson | atkinson-alpha\n\
+         \x20 --dither T            none | nn | linear | floyd | floyd-alpha | atkinson | atkinson-alpha\n\
          \x20 --alpha-handling T    keep | clear | bleed | premultiply\n\
-         \x20 --scale-mode T        smooth | fast\n\
+         \x20 --scale-mode T        smooth | fast | scale2x | scale3x | scale4x | eagle\n\
          \x20 --texture-path RUTA   Prefijo de la textura en los metadatos (p. ej. /assets)\n\
          \x20 --format T            png | png8 | jpg | webp | astc | etc2 | pvrtc\n\
          \x20 --png-opt-level N     Optimización PNG sin pérdida, 0-7 (1 = indexa si ≤256 colores)\n\
@@ -220,8 +220,12 @@ fn cmd_pack(args: &[String]) {
             "floyd-alpha" | "floydsteinbergalpha" => DitheringAlgorithm::FloydSteinbergAlpha,
             "atkinson" => DitheringAlgorithm::Atkinson,
             "atkinson-alpha" | "atkinsonalpha" => DitheringAlgorithm::AtkinsonAlpha,
+            "nn" | "nearestneighbour" | "nearest-neighbor" | "nearest" => {
+                DitheringAlgorithm::NearestNeighbour
+            }
+            "linear" => DitheringAlgorithm::Linear,
             _ => fail(format!(
-                "--dither inválido: {v} (usa none | FloydSteinberg | FloydSteinbergAlpha | Atkinson | AtkinsonAlpha; los nombres oficiales sin -alpha también se aceptan)"
+                "--dither inválido: {v} (usa none | NearestNeighbour | Linear | FloydSteinberg | FloydSteinbergAlpha | Atkinson | AtkinsonAlpha; alias nn, floyd, atkinson…)"
             )),
         };
     }

@@ -209,6 +209,32 @@ fn execute(
     // con su filtro, su tamaño máximo y su geometría ya escalada.
     let mut variant_files: Vec<String> = Vec::new();
     let mut export_scales: Vec<f32> = config.scale_variants.clone();
+    // Los modos de escalado de pixel art solo entienden su factor entero; el
+    // resto de escalas caen a Smooth. Solo se avisa en la corrida de arriba
+    // (las corridas internas de variante repiten la misma lista).
+    if variant.is_none() {
+        if let Some(want) = config.scale_mode.required_factor() {
+            let want = want as f32;
+            let mut mismatched: Vec<String> = Vec::new();
+            for s in config.scale_variants.iter().copied() {
+                if (s - 1.0).abs() < 1e-6 || (s - want).abs() < 1e-6 {
+                    continue;
+                }
+                let label = format!("{s}x");
+                if !mismatched.contains(&label) {
+                    mismatched.push(label);
+                }
+            }
+            if !mismatched.is_empty() {
+                warnings.push(format!(
+                    "{} solo se aplica a la escala exacta {want}x; las variantes {} se \
+                     reescalarán con Smooth",
+                    config.scale_mode.as_str(),
+                    mismatched.join(", ")
+                ));
+            }
+        }
+    }
     if let Some(v) = variant {
         scale_ingested_sprites(&mut sprites, v.scale, config.scale_mode);
     } else if write_to_disk {

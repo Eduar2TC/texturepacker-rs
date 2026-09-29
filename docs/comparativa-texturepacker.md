@@ -46,10 +46,21 @@ corrección» al final.
   empaquetan por su cuenta (con su filtro y su tope), y la GUI lo edita en «Opciones por
   variante» (`crates/tp-app/src/app/settings.rs`). Siguen sin existir los presets del
   original y «accept fractional values».
-- **Dithering**: 5 algoritmos (`crates/tp-core/src/config.rs:40-54`) vs 9 del original
-  (faltan `NearestNeighbour`, `Linear` y los tres `PngQuant*`).
-- **Scale mode**: Smooth/Fast (`crates/tp-core/src/config.rs:310-318`) vs 7 del original
-  (faltan `Scale2x`, `Scale3x`, `Scale4x`, `Eagle`, `Hq2x`).
+- **Dithering** **[RESUELTO]**: los 9 `--dither-type` del original están cubiertos:
+  `None`, `NearestNeighbour` (redondeo por píxel sin difusión) y `Linear` (el error
+  viaja al píxel de la derecha, distribución lineal con más contraste) en
+  `DitheringAlgorithm` (`crates/tp-core/src/config.rs`), Floyd–Steinberg/Atkinson con y
+  sin alfa como ya estaban, y los tres `PngQuantLow/Medium/High` en `png8_dither`
+  (`PngDither`, solo PNG-8, igual que en el original). GUI, CLI (`--dither nn|linear|…`)
+  y `pixels::distribute_error` cubren los nuevos.
+- **Scale mode** **[PARCIAL]**: ahora hay 6 de los 7 del original — `Smooth`, `Fast`,
+  `Scale2x`, `Scale3x`, `Scale4x` (= Scale2x dos veces) y `Eagle`
+  (`crates/tp-core/src/config.rs` → `scale_rgba` en `crates/tp-core/src/export.rs`).
+  Los modos de pixel art solo corren en su factor entero exacto y, si la variante pide
+  otra escala, caen a `Smooth` con un aviso (`pipeline::execute` y los avisos de la
+  GUI). Sigue faltando **`Hq2x`**: su tabla de 256 patrones solo existe en
+  implementaciones LGPL 2.1 (el algoritmo original y el crate `hqx`), así que está
+  pendiente de decisión (dependencia opcional LGPL vs. omitirlo).
 - **Normal maps**: sí se genera una hoja de normales por página, pero el sufijo es fijo
   `_normal` (`crates/tp-core/src/ingest.rs:380-385`); faltan auto-detect por color, path
   filter, sufijo configurable y nombre propio de la hoja de normales.
@@ -116,6 +127,26 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
 
 Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 
-Puerta de calidad tras los puntos 1-8: `cargo fmt --all --check`,
+Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (225 tests).
+`cargo test --workspace` en verde (231 tests tras el primer punto de §2/§3).
+
+---
+
+## Progreso de §2/§3 (orden elegido)
+
+1. **Scale modes + dithering** — **hecho** (con `Hq2x` pendiente de decisión, ver §2):
+   `Scale2x`/`Scale3x`/`Scale4x`/`Eagle` en `scale_rgba`
+   (`crates/tp-core/src/export.rs`), que solo corren en su factor entero y caen a
+   `Smooth` con aviso (`pipeline::execute` + avisos de la GUI); `NearestNeighbour` y
+   `Linear` en `DitheringAlgorithm` con sus ramas en `pixels::distribute_error`;
+   combos en «Escalado de variantes»/«Dithering», `--scale-mode` y `--dither` en el
+   CLI. Tests: `scale2x_corner_takes_the_diagonal_colour`,
+   `scale3x_edges_follow_the_corner_rules`, `eagle_corner_takes_the_three_equal_neighbours`,
+   `pixel_art_scalers_keep_the_palette_and_the_right_size`,
+   `pixel_art_modes_fall_back_to_smooth_off_their_factor`,
+   `nearest_neighbour_dither_rounds_without_diffusion`.
+2. **Normal maps** — pendiente.
+3. **Formatos de salida faltantes** — pendiente.
+4. **Exportadores** — pendiente.
+5. **Calidades y pixel formats GPU** — pendiente.

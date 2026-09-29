@@ -262,7 +262,11 @@ fn distribute_error(f: &mut [f32], ctx: DitherContext, err: f32) {
         }
     };
     match dither {
-        DitheringAlgorithm::None => {}
+        DitheringAlgorithm::None | DitheringAlgorithm::NearestNeighbour => {}
+        // Diffuses the whole error to the right neighbour of the same row, so
+        // every level shows up in proportion to its share of the input: a
+        // linear color distribution instead of plain rounding.
+        DitheringAlgorithm::Linear => add(f, x + 1, y, 1.0),
         DitheringAlgorithm::FloydSteinberg | DitheringAlgorithm::FloydSteinbergAlpha => {
             add(f, x + 1, y, 7.0 / 16.0);
             if x > 0 {
@@ -481,6 +485,51 @@ mod tests {
             DitheringAlgorithm::FloydSteinberg,
         );
         assert!(buf.iter().all(|&v| v % 17 == 0 || v == 0));
+    }
+
+    #[test]
+    fn nearest_neighbour_dither_rounds_without_diffusion() {
+        // 8 píxeles idénticos (105) en una fila: 4 bits -> paso 17, nivel 102.
+        let make = || [105u8, 105, 105, 255].repeat(8);
+
+        let mut none = make();
+        apply_quantization(
+            &mut none,
+            8,
+            1,
+            ColorDepth::Rgba4444,
+            DitheringAlgorithm::None,
+        );
+        let mut nn = make();
+        apply_quantization(
+            &mut nn,
+            8,
+            1,
+            ColorDepth::Rgba4444,
+            DitheringAlgorithm::NearestNeighbour,
+        );
+        assert_eq!(none, nn, "NearestNeighbour no difunde error");
+        assert!(nn.chunks_exact(4).all(|px| px[0] == 102 && px[3] == 255));
+
+        // Linear reparte el error hacia la derecha y saca el nivel siguiente.
+        let mut lin = make();
+        apply_quantization(
+            &mut lin,
+            8,
+            1,
+            ColorDepth::Rgba4444,
+            DitheringAlgorithm::Linear,
+        );
+        let reds: Vec<u8> = lin.chunks_exact(4).map(|px| px[0]).collect();
+        assert!(
+            reds.iter().all(|v| v % 17 == 0),
+            "fuera de la rejilla: {reds:?}"
+        );
+        assert!(
+            reds.contains(&119),
+            "Linear debe alternar niveles, no cllearse en 102: {reds:?}"
+        );
+        assert_ne!(reds, vec![102u8; 8]);
     }
 
     fn alpha_sample() -> Vec<u8> {

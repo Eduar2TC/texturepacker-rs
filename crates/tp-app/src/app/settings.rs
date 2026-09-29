@@ -598,6 +598,12 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 dither_name(app.config.dithering_algorithm),
                 |ui, v| {
                     ui.selectable_value(v, DitheringAlgorithm::None, "Ninguno");
+                    ui.selectable_value(
+                        v,
+                        DitheringAlgorithm::NearestNeighbour,
+                        "Nearest Neighbour",
+                    );
+                    ui.selectable_value(v, DitheringAlgorithm::Linear, "Linear");
                     ui.selectable_value(v, DitheringAlgorithm::FloydSteinberg, "Floyd–Steinberg");
                     ui.selectable_value(
                         v,
@@ -640,6 +646,10 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 |ui, v| {
                     ui.selectable_value(v, ScaleMode::Smooth, "Suave (bilineal)");
                     ui.selectable_value(v, ScaleMode::Fast, "Rápido (vecino más cercano)");
+                    ui.selectable_value(v, ScaleMode::Scale2x, "Scale2x (2x)");
+                    ui.selectable_value(v, ScaleMode::Scale3x, "Scale3x (3x)");
+                    ui.selectable_value(v, ScaleMode::Scale4x, "Scale4x (4x)");
+                    ui.selectable_value(v, ScaleMode::Eagle, "Eagle (2x)");
                 },
                 &mut app.config.scale_mode,
             );
@@ -788,6 +798,24 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
             "Hay variantes de escala fraccionarias; las coordenadas se redondearán a píxeles."
                 .into(),
         );
+    }
+    if let Some(want) = app.config.scale_mode.required_factor() {
+        let want = want as f32;
+        let other: Vec<String> = app
+            .config
+            .scale_variants
+            .iter()
+            .copied()
+            .filter(|s| (s - 1.0).abs() > 1e-6 && (*s - want).abs() > 1e-6)
+            .map(|s| format!("{s}x"))
+            .collect();
+        if !other.is_empty() {
+            warnings.push(format!(
+                "{} solo se aplica a la escala exacta {want}x; {} se reescalarán con Smooth.",
+                app.config.scale_mode.as_str(),
+                other.join(", ")
+            ));
+        }
     }
     let align = app.config.align_to_grid;
     if align > 0 && (app.config.padding % align != 0 || app.config.border_padding % align != 0) {
@@ -1033,6 +1061,8 @@ fn trim_mode_name(t: TrimMode) -> &'static str {
 fn dither_name(d: DitheringAlgorithm) -> &'static str {
     match d {
         DitheringAlgorithm::None => "Ninguno",
+        DitheringAlgorithm::NearestNeighbour => "Nearest Neighbour",
+        DitheringAlgorithm::Linear => "Linear",
         DitheringAlgorithm::FloydSteinberg => "Floyd–Steinberg",
         DitheringAlgorithm::Atkinson => "Atkinson",
         DitheringAlgorithm::FloydSteinbergAlpha => "Floyd–Steinberg + alpha",
