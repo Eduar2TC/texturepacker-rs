@@ -984,18 +984,6 @@ fn default_divisor() -> i32 {
     1
 }
 
-fn gcd(a: i32, b: i32) -> i32 {
-    let (mut a, mut b) = (a.abs(), b.abs());
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
-    a.max(1)
-}
-
-fn lcm(a: i32, b: i32) -> i32 {
-    (a / gcd(a, b)).saturating_mul(b)
-}
-
 fn default_folder_groups() -> Vec<FolderGroup> {
     vec![FolderGroup::default()]
 }
@@ -1081,14 +1069,11 @@ impl ProjectConfig {
         }
     }
 
-    /// Effective per-axis divisor: *Common divisor* and *Align to grid* both
-    /// extend sprite sizes, so the effective value is their LCM.
+    /// Effective per-axis divisor: only *Common divisor* extends sprite
+    /// sizes. *Align to grid* moves the sprites instead of resizing them
+    /// (the packer snaps every frame origin), so it plays no part here.
     pub fn effective_divisors(&self) -> (i32, i32) {
-        let align = self.align_to_grid.max(1);
-        (
-            lcm(self.common_divisor_x.max(1), align),
-            lcm(self.common_divisor_y.max(1), align),
-        )
+        (self.common_divisor_x.max(1), self.common_divisor_y.max(1))
     }
 
     /// Algorithm actually used by the packer. Selecting the *Polygon* trim
@@ -1195,7 +1180,7 @@ impl ProjectConfig {
         let (div_x, div_y) = self.effective_divisors();
         if div_x > 2048 || div_y > 2048 {
             return Err(TpError::Config(format!(
-                "El múltiplo común de common divisor y align_to_grid supera 2048 ({div_x}x{div_y})"
+                "El common divisor supera 2048 ({div_x}x{div_y})"
             )));
         }
         if let Some(path) = &self.texture_path {
@@ -1761,14 +1746,13 @@ mod tests {
     }
 
     #[test]
-    fn effective_divisors_combine_common_and_grid() {
+    fn effective_divisors_ignore_align_to_grid() {
         let mut cfg = ProjectConfig::default();
         assert_eq!(cfg.effective_divisors(), (1, 1));
         cfg.common_divisor_x = 4;
+        assert_eq!(cfg.effective_divisors(), (4, 1));
+        // Alinear a rejilla no estira sprites: mueve el packer.
         cfg.align_to_grid = 6;
-        // lcm(4, 6) = 12
-        assert_eq!(cfg.effective_divisors(), (12, 6));
-        cfg.align_to_grid = 0;
         assert_eq!(cfg.effective_divisors(), (4, 1));
         assert!(cfg.validate().is_ok());
         cfg.common_divisor_x = 0;

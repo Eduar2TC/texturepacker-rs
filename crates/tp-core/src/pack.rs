@@ -93,6 +93,9 @@ pub struct PackerOptions {
     pub manual_positions: ManualPositions,
     /// Manual algorithm: optional snap grid (also snaps the free row-flow).
     pub manual_grid: Option<crate::config::ManualGrid>,
+    /// Align to grid: every placed frame starts on a coordinate divisible by
+    /// this value. `0` disables it.
+    pub align_grid: i32,
 }
 
 impl PackerOptions {
@@ -122,6 +125,7 @@ impl PackerOptions {
             word_align_mod: 1,
             manual_positions: ManualPositions::new(),
             manual_grid: None,
+            align_grid: 0,
         }
     }
 }
@@ -396,6 +400,24 @@ fn ceil_to(v: i32, step: i32) -> i32 {
         v
     } else {
         v + (step - r)
+    }
+}
+
+/// Largest coordinate divisible by `step` that is not greater than `v`
+/// (counterpoint of [`ceil_to`]; `v` is never negative here).
+fn floor_to(v: i32, step: i32) -> i32 {
+    let step = step.max(1);
+    v - v.rem_euclid(step)
+}
+
+/// Move a frame origin up to the next coordinate divisible by `align`
+/// (*Align to grid*): the top-left corners of the sprites land on the
+/// requested grid. `align <= 1` leaves the position untouched.
+fn snap_pos(x: i32, y: i32, align: i32) -> (i32, i32) {
+    if align <= 1 {
+        (x, y)
+    } else {
+        (ceil_to(x.max(0), align), ceil_to(y.max(0), align))
     }
 }
 
@@ -719,6 +741,7 @@ fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
         )));
     }
 
+    let align = opts.align_grid.max(0);
     let mut cell_w = 0;
     let mut cell_h = 0;
     for it in items {
@@ -728,6 +751,10 @@ fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
     if cell_w == 0 {
         return Ok(Vec::new());
     }
+    // *Align to grid*: la celda crece hasta el múltiplo, así todos los
+    // orígenes de celda caen en la rejilla sin comprobarlos uno a uno.
+    cell_w = ceil_to(cell_w, align);
+    cell_h = ceil_to(cell_h, align);
     if cell_w > iw || cell_h > ih {
         let big = items
             .iter()
@@ -740,8 +767,15 @@ fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
         )));
     }
 
-    let cols = ((iw / cell_w) as usize).max(1);
-    let rows = ((ih / cell_h) as usize).max(1);
+    let (ox, oy) = snap_pos(bp, bp, align);
+    if ox + cell_w > bp + iw || oy + cell_h > bp + ih {
+        return Err(TpError::Pack(format!(
+            "La rejilla de {align} px no cabe en el área interior de {cw}x{ch} \
+             (celda {cell_w}x{cell_h}, borde {bp})"
+        )));
+    }
+    let cols = (((bp + iw - ox) / cell_w) as usize).max(1);
+    let rows = (((bp + ih - oy) / cell_h) as usize).max(1);
     let per_page = cols * rows;
 
     let mut sorted: Vec<&PackItem> = items.iter().collect();
@@ -760,8 +794,8 @@ fn pack_grid(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
         let slot = i % per_page;
         let (col, row) = (slot % cols, slot / cols);
         let frame = Rect::new(
-            bp + col as i32 * cell_w,
-            bp + row as i32 * cell_h,
+            ox + col as i32 * cell_w,
+            oy + row as i32 * cell_h,
             item.width + 2 * pad,
             item.height + 2 * pad,
         );
@@ -789,6 +823,7 @@ fn pack_manual(
 ) -> Result<Vec<PageState>> {
     let pad = opts.padding.max(0);
     let bp = opts.border_padding.max(0);
+    let align = opts.align_grid.max(0);
     let (iw, ih) = (cw - 2 * bp, ch - 2 * bp);
     if iw <= 0 || ih <= 0 {
         return Err(TpError::Pack(format!(
@@ -830,10 +865,19 @@ fn pack_manual(
                 item.id, item.width, item.height
             )));
         }
-        // Ajustar al interior.
+        // Ajustar al interior y, con *Align to grid*, a la rejilla: se
+        // sube el origen y, si eso lo sacaría del lienzo, se baja (la
+        // posición ya ajustada siempre cabe, así que alguna de las dos
+        // alternativas mantiene el sprite dentro).
         let fx = px.max(0).min(iw - w);
         let fy = py.max(0).min(ih - h);
-        let frame = Rect::new(bp + fx, bp + fy, w, h);
+        let (sx, sy) = snap_pos(bp + fx, bp + fy, align);
+        let (sx, sy) = if sx + w <= bp + iw && sy + h <= bp + ih {
+            (sx, sy)
+        } else {
+            (bp + floor_to(fx, align), bp + floor_to(fy, align))
+        };
+        let frame = Rect::new(sx, sy, w, h);
         let page = &mut pages[page_idx];
         page.placed.push(frame);
         page.placements.push(Placement {
@@ -866,23 +910,27 @@ fn pack_manual(
                 item.id, item.width, item.height
             )));
         }
-        let mut sx = snapv(x);
-        let mut sy = snapv(y);
+        let (mut sx, mut sy) = snap_pos(snapv(x), snapv(y), align);
         if sx + w > bp + iw {
             y = snapv(y) + snapv(row_h);
             row_h = 0;
             x = bp;
-            sx = snapv(x);
-            sy = snapv(y);
+            (sx, sy) = snap_pos(snapv(x), snapv(y), align);
         }
         if sy + h > bp + ih {
             page_idx += 1;
             pages.push(PageState::new(page_idx, cw, ch, bp));
             x = bp;
             y = snapv(bp);
-            sx = snapv(x);
-            sy = y;
+            (sx, sy) = snap_pos(snapv(x), snapv(y), align);
             row_h = 0;
+        }
+        if sx + w > bp + iw || sy + h > bp + ih {
+            return Err(TpError::Pack(format!(
+                "El sprite '{}' no cabe alineado a la rejilla de {align} px \
+                 en un atlas de {cw}x{ch}",
+                item.id
+            )));
         }
         let frame = Rect::new(sx, sy, w, h);
         let page = &mut pages[page_idx];
@@ -955,6 +1003,7 @@ fn pack_basic(
         }
     });
 
+    let align = opts.align_grid.max(0);
     let mut pages: Vec<PageState> = vec![PageState::new(0, cw, ch, bp)];
     let mut page_idx = 0usize;
     let (mut x, mut y, mut row_h) = (bp, bp, 0);
@@ -969,19 +1018,31 @@ fn pack_basic(
                 item.id, item.width, item.height
             )));
         }
-        if x + w > bp + iw {
+        // Cada sprite arranca en un múltiplo de `align` (*Align to grid*):
+        // si al subir el origen no cabe, pasa de fila y, si tampoco, de hoja.
+        let (mut sx, mut sy) = snap_pos(x, y, align);
+        if sx + w > bp + iw {
             x = bp;
             y += row_h;
             row_h = 0;
+            (sx, sy) = snap_pos(x, y, align);
         }
-        if y + h > bp + ih {
+        if sy + h > bp + ih {
             page_idx += 1;
             pages.push(PageState::new(page_idx, cw, ch, bp));
             x = bp;
             y = bp;
             row_h = 0;
+            (sx, sy) = snap_pos(x, y, align);
         }
-        let frame = Rect::new(x, y, w, h);
+        if sx + w > bp + iw || sy + h > bp + ih {
+            return Err(TpError::Pack(format!(
+                "El sprite '{}' no cabe alineado a la rejilla de {align} px \
+                 en un atlas de {cw}x{ch}",
+                item.id
+            )));
+        }
+        let frame = Rect::new(sx, sy, w, h);
         let page = &mut pages[page_idx];
         page.placed.push(frame);
         page.placements.push(Placement {
@@ -990,7 +1051,7 @@ fn pack_basic(
             rotated: false,
             page: page_idx,
         });
-        x += w;
+        x = sx + w;
         row_h = row_h.max(h);
     }
     Ok(pages)
@@ -1006,7 +1067,10 @@ fn try_place(
     opts: &PackerOptions,
     guillotine: bool,
 ) -> Result<Option<Placement>> {
-    // Collect all candidate placements, ranked by score.
+    let align = opts.align_grid.max(0);
+    // Collect all candidate placements, ranked by score. With *Align to grid*
+    // the origin is snapped up first, so only free rects that still hold the
+    // snapped frame become candidates.
     let mut candidates: Vec<(usize, bool, Score)> = Vec::new();
     for (ri, fr) in page.free_rects.iter().enumerate() {
         for rotated in [false, true] {
@@ -1014,8 +1078,10 @@ fn try_place(
                 continue;
             }
             let (pw, ph) = if rotated { (h, w) } else { (w, h) };
-            if fr.can_fit(pw, ph) {
-                let score = score_placement(fr, pw, ph, opts, page);
+            let (sx, sy) = snap_pos(fr.x, fr.y, align);
+            if sx - fr.x + pw <= fr.width && sy - fr.y + ph <= fr.height {
+                let room = Rect::new(sx, sy, fr.x + fr.width - sx, fr.y + fr.height - sy);
+                let score = score_placement(&room, pw, ph, opts, page);
                 candidates.push((ri, rotated, score));
             }
         }
@@ -1025,7 +1091,11 @@ fn try_place(
     for (ri, rotated, _) in candidates {
         let fr = page.free_rects[ri];
         let (pw, ph) = if rotated { (h, w) } else { (w, h) };
-        let frame = Rect::new(fr.x, fr.y, pw, ph);
+        let (sx, sy) = snap_pos(fr.x, fr.y, align);
+        if sx - fr.x + pw > fr.width || sy - fr.y + ph > fr.height {
+            continue;
+        }
+        let frame = Rect::new(sx, sy, pw, ph);
 
         // Polygon validation against the occupancy grid.
         if opts.polygon_mode {

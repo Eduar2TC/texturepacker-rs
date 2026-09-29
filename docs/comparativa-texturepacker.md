@@ -23,7 +23,7 @@ corrección» al final.
 | **Algoritmo "Guillotine"** y heurística "Guillotine (legacy)" (`crates/tp-app/src/app/settings.rs:277,305`) **[RESUELTO]** | Ahora hay un repartidor de guillotina real: `pack_guillotine` + `split_guillotine` en `crates/tp-core/src/pack.rs`, seleccionado desde `place_all` cuando `algorithm == Guillotine`. La etiqueta ya no promete el heurístico "legacy" oculto. |
 | **Pivots y bordes 9-patch editados en la GUI** (`crates/tp-app/src/app/sprite_settings.rs:62-105`) **[RESUELTO]** | La GUI escribe `pivot_overrides` / `border_overrides` en el `.tpproj` (`crates/tp-core/src/config.rs`) y `pipeline::run_grouped` los aplica con precedencia sobre sidecar y `default_pivot`, así que llegan al atlas y al fichero publicado sin botón aparte. |
 | **"▶ Animación: vista previa de animación de los sprites seleccionados"** (`crates/tp-app/src/app/toolbar.rs:93`) **[RESUELTO]** | `collect_frames` (`crates/tp-app/src/app/animation.rs`) filtra por `selected_paths` cuando hay selección; sin selección reproduce todos. El grupo elegido se recalcula con `effective_group` cuando la selección lo deja fuera. |
-| **"Align to grid"** (`align_to_grid`) | Solo redondea padding y borde hacia arriba y emite un aviso (`crates/tp-core/src/pipeline.rs:84-100`); no coloca las esquinas superiores de los sprites en coordenadas múltiples del valor, que es lo que hace el original. **Pendiente** (fuera del orden acordado). |
+| **"Align to grid"** (`align_to_grid`) **[RESUELTO]** | Ahora el packer sube cada origen de frame al múltiplo (`snap_pos` en `crates/tp-core/src/pack.rs`, aplicado en MaxRects/Guillotine/Polygon, Grid, Basic y Manual) y `align_to_grid` dejó de entrar en `effective_divisors`: a la par que el original, alinea **sin estirar** los sprites (solo el *common divisor* los estira). Tests `align_to_grid_snaps_every_corner_without_stretching` (8 casos) y `lote5_align_to_grid_rounds_padding_and_positions`. |
 | **Hoja principal: "← Selección" / arrastrar al nodo `(hoja principal)`** **[RESUELTO]** | `run_groups` (`crates/tp-core/src/pipeline.rs`) lleva un `owner` por id: el primer grupo que lista un sprite es su dueño y el grupo por defecto recoge los suyos propios y los no listados, así que asignar un sprite ya no lo saca del atlas. |
 | **Pestaña "Archivos" del panel inferior** | En preview se empujan nombres de metadata sin escribirlos (`crates/tp-core/src/pipeline.rs:731,753`) y las imágenes solo se listan al escribir (`pipeline.rs:633`) → lista ficheros que no existen y omite los PNG. **Pendiente** (fuera del orden acordado). |
 
@@ -102,9 +102,16 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
    variante» en los ajustes y 7 tests (`variant_*` en `pipeline_e2e.rs` y
    `variant_options_*`/`variant_filter_*` en `config.rs`).
 
-Pendientes fuera del orden acordado: **Align to grid** y la **pestaña "Archivos"**
-(§1), y el resto de la lista de §2/§3.
+7. **Align to grid** (que coloque las esquinas en múltiplos, como el original) —
+   **hecho**: `snap_pos` en `crates/tp-core/src/pack.rs` para todos los algoritmos
+   (MaxRects/Guillotine/Polygon, Grid, Basic, Manual) + `align_grid` en
+   `PackerOptions`, y `effective_divisors` ya no suma `align_to_grid` (así alinear
+   mueve los sprites y no los estira); tests `align_to_grid_snaps_every_corner_without_stretching`
+   y `effective_divisors_ignore_align_to_grid`.
 
-Puerta de calidad tras los puntos 1-6: `cargo fmt --all --check`,
+Pendientes fuera del orden acordado: la **pestaña "Archivos"** (§1), y el resto de la
+lista de §2/§3.
+
+Puerta de calidad tras los puntos 1-7: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (223 tests).
+`cargo test --workspace` en verde (224 tests).

@@ -548,6 +548,115 @@ fn lote5_align_to_grid_rounds_padding_and_positions() {
 }
 
 #[test]
+fn align_to_grid_snaps_every_corner_without_stretching() {
+    type Mutate = Box<dyn Fn(&mut ProjectConfig)>;
+    let fx = Fixture::new("align8");
+    let input = make_input_dir(&fx.dir, "in");
+
+    for (i, (w, h)) in [(7, 5), (11, 9), (6, 14), (9, 6), (13, 8)]
+        .iter()
+        .enumerate()
+    {
+        write_png(
+            &input.join(format!("cell_{i}.png")),
+            *w,
+            *h,
+            [(i * 40) as u8, 120, 200, 255],
+        );
+    }
+
+    let align = 8;
+    let cases: Vec<(&str, Mutate)> = vec![
+        ("maxrects", Box::new(|_| {})),
+        ("maxrects+rotación", Box::new(|c| c.allow_rotation = true)),
+        (
+            "maxrects sin padding",
+            Box::new(|c| {
+                c.padding = 0;
+                c.border_padding = 0;
+            }),
+        ),
+        ("basic", Box::new(|c| c.algorithm = PackingAlgorithm::Basic)),
+        ("grid", Box::new(|c| c.algorithm = PackingAlgorithm::Grid)),
+        (
+            "guillotine",
+            Box::new(|c| {
+                c.packing_strategy = PackingStrategy::Guillotine;
+            }),
+        ),
+        (
+            "manual con rejilla de 5",
+            Box::new(|c| {
+                c.algorithm = PackingAlgorithm::Manual;
+                c.manual_grid = Some(tp_core::config::ManualGrid::new(5, true));
+                c.padding = 1;
+                c.border_padding = 1;
+            }),
+        ),
+        (
+            "common divisor 3",
+            Box::new(|c| {
+                c.common_divisor_x = 3;
+                c.common_divisor_y = 3;
+            }),
+        ),
+    ];
+
+    for (name, mutate) in cases {
+        let mut cfg = ProjectConfig {
+            input_directory: input.clone(),
+            output_directory: fx.dir.join(format!("out_{name}")),
+            max_texture_size: 256,
+            align_to_grid: align,
+            padding: 1,
+            border_padding: 1,
+            enable_normal_maps: false,
+            ..ProjectConfig::default()
+        };
+        mutate(&mut cfg);
+        let out = pipeline::run_grouped_preview(&cfg).unwrap_or_else(|e| panic!("[{name}] {e}"));
+        for s in &out.result.sprites {
+            assert_eq!(
+                s.allocated_frame.x % align,
+                0,
+                "[{name}] {} x={} fuera de rejilla",
+                s.id,
+                s.allocated_frame.x
+            );
+            assert_eq!(
+                s.allocated_frame.y % align,
+                0,
+                "[{name}] {} y={} fuera de rejilla",
+                s.id,
+                s.allocated_frame.y
+            );
+            assert_eq!(
+                s.visible_frame.x % align,
+                0,
+                "[{name}] {} contenido x={} fuera de rejilla",
+                s.id,
+                s.visible_frame.x
+            );
+            // Alinear mueve los sprites, no los estira: el marco visible
+            // sigue midiendo lo que medía la imagen de origen. El common
+            // divisor sí estira (esa es su función), así que ahí se omite.
+            if cfg.common_divisor_x > 1 || cfg.common_divisor_y > 1 {
+                continue;
+            }
+            let mut got = [s.visible_frame.width, s.visible_frame.height];
+            let mut want = [s.raw_width, s.raw_height];
+            got.sort_unstable();
+            want.sort_unstable();
+            assert_eq!(
+                got, want,
+                "[{name}] {} cambió de tamaño ({:?} vs {:?})",
+                s.id, got, want
+            );
+        }
+    }
+}
+
+#[test]
 fn lote6_grid_constraints_and_fixed_size() {
     let fx = Fixture::new("lote6");
     let input = make_input_dir(&fx.dir, "in");

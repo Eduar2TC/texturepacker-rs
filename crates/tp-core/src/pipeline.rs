@@ -309,6 +309,7 @@ fn execute(
         manual_positions: config.manual_positions.clone(),
         manual_grid: config.manual_grid,
         word_align_mod: config.word_align_mod(),
+        align_grid: align,
         ..PackerOptions::new(
             config.packing_strategy,
             config.allow_rotation,
