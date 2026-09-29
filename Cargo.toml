@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = ["crates/tp-core", "crates/tp-app", "crates/tp-cli"]
+# winit parcheado fuera del workspace (ver [patch.crates-io] abajo).
+exclude = ["third_party/winit"]
 
 [workspace.package]
 version = "0.4.0"
@@ -44,3 +46,21 @@ all = { level = "deny", priority = -1 }
 # ~29 `chunks_exact(4)` del motor. Se permite para que `-D warnings` sea
 # estable entre versiones de toolchain (local 1.93 vs CI stable).
 chunks_exact_to_as_chunks = { level = "allow", priority = 1 }
+
+# winit 0.30.13 con drag-and-drop nativo en Wayland.
+#
+# winit 0.30 solo emite `HoveredFile`/`DroppedFile` vía XDND (X11); en Wayland
+# no hay API, así que eframe/egui nunca recibe `hovered_files`/`dropped_files`
+# y el soltar ficheros del gestor de archivos no funciona (el overlay azul de
+# `handle_global_file_drop` solo aparece bajo X11/XWayland).
+#
+# `third_party/winit` es winit 0.30.13 con aplicado el commit 988f0b8 de
+# github.com/IndigoCarmine/winit (rama `wayland-native-dnd`): 4 archivos,
+# +370 líneas, puramente aditivos sobre el backend Wayland (wl_data_device →
+# eventos clásicos de winit; no toca la API pública ni X11/Win32/macOS).
+#
+# Para eliminarlo: borrar `third_party/winit`, este bloque y `workspace.exclude`
+# cuando eframe publique sobre winit 0.31 (rust-lang/winit#4571, con DnD en
+# Wayland, ya está fusionada en master).
+[patch.crates-io]
+winit = { path = "third_party/winit" }

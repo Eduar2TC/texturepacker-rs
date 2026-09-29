@@ -398,6 +398,16 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
   BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp); otros
   formatos (ETC1, DXT, ASTC de otros tamaños de bloque, Basis Universal, ...)
   no están incluidos.
+- **winit parcheado (`third_party/winit`)**: winit 0.30 no implementa el
+  drag-and-drop de ficheros en Wayland (solo XDND en X11), de modo que en
+  sesiones Wayland los ficheros soltados desde el gestor de archivos no
+  llegaban a la app. La raíz declara un winit 0.30.13 vendoreado con aplicado
+  el commit `988f0b8` de `IndigoCarmine/winit` (rama `wayland-native-dnd`:
+  4 archivos, +370 líneas, solo el backend Wayland) mediante
+  `[patch.crates-io]`. Para eliminarlo cuando eframe publique sobre winit ≥
+  0.31 (DnD en Wayland incluido en `rust-lang/winit#4571`, ya fusionado):
+  borrar `third_party/winit`, la sección `[patch.crates-io]` y
+  `workspace.exclude` del `Cargo.toml` de la raíz.
 
 ## Pruebas
 

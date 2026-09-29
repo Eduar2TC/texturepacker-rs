@@ -1,8 +1,15 @@
 //! Utilidades para pruebas headless: generación de un proyecto de ejemplo
 //! (sprites PNG + `.tpproj`) que usan el autotest `tp-smoke` y los tests de
-//! integración que conducen la app real.
+//! integración que conducen la app real; y el bombeo de frames **como lo
+//! haría la ventana** (solo cuando egui pide repaint), que es lo que
+//! destapa fallos de programación del preview que los bucles manuales
+//! enmascaran.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use crate::App;
 
 /// Crea sprites de ejemplo en `sprites_dir` y un proyecto `demo.tpproj` en
 /// `tmp` (escrito con `ProjectConfig::to_toml()`, el mismo serializador de
@@ -44,4 +51,102 @@ pub fn create_example_project(tmp: &Path, sprites_dir: &Path) -> Result<PathBuf,
     save("hero_alt.png", base(32, 32, [220, 60, 60]))?;
     save("coin_alt.png", base(16, 16, [240, 200, 60]))?;
     Ok(project)
+}
+
+/// Resultado del bombeo bajo demanda: `stuck` = la app dejó de pedir
+/// repaints (la ventana real se quedaría quieta con la UI sin actualizar).
+#[derive(Debug, Clone, Copy)]
+pub struct PumpOutcome {
+    pub frames: usize,
+    pub stuck: bool,
+    pub idle_frames: usize,
+}
+
+/// Input de un frame con la geometría de la ventana nativa.
+pub fn idle_input() -> eframe::egui::RawInput {
+    eframe::egui::RawInput {
+        screen_rect: Some(eframe::egui::Rect::from_min_size(
+            eframe::egui::Pos2::ZERO,
+            eframe::egui::vec2(1360.0, 860.0),
+        )),
+        time: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64(),
+        ),
+        ..eframe::egui::RawInput::default()
+    }
+}
+
+/// Conduce la app como lo haría eframe: un frame solo cuando egui pide
+/// repaint (`set_request_repaint_callback`), durmiendo el delay pedido.
+/// Devuelve pronto cuando `stop` se cumple (típicamente `app.result().is_some()`).
+///
+/// A diferencia de los bucles manuales («run_frame + sleep(10 ms)»), este
+/// bombeo **no** mantiene viva a la app por su cuenta: si la app no
+/// programa repaints, el bucle se para y `stuck` queda en `true`.
+pub fn pump_on_demand(
+    app: &mut App,
+    ctx: &eframe::egui::Context,
+    stop: impl Fn(&App) -> bool,
+    max: Duration,
+) -> PumpOutcome {
+    let pending: Arc<Mutex<Option<Duration>>> = Arc::new(Mutex::new(None));
+    let slot = pending.clone();
+    ctx.set_request_repaint_callback(move |info| {
+        let mut g = slot.lock().unwrap();
+        *g = Some(match *g {
+            Some(prev) => prev.min(info.delay),
+            None => info.delay,
+        });
+    });
+
+    let deadline = std::time::Instant::now() + max;
+    let mut frames = 0usize;
+    let mut idle = 0usize;
+    loop {
+        if stop(app) {
+            return PumpOutcome {
+                frames,
+                stuck: false,
+                idle_frames: idle,
+            };
+        }
+        if std::time::Instant::now() > deadline {
+            return PumpOutcome {
+                frames,
+                stuck: true,
+                idle_frames: idle,
+            };
+        }
+        *pending.lock().unwrap() = None;
+        let _ = app.run_frame(ctx, idle_input());
+        frames += 1;
+        let wait = pending.lock().unwrap().take();
+        match wait {
+            Some(delay) => {
+                idle = 0;
+                std::thread::sleep(delay.max(Duration::from_millis(1)));
+            }
+            None => {
+                idle += 1;
+                if idle >= 3 {
+                    return PumpOutcome {
+                        frames,
+                        stuck: true,
+                        idle_frames: idle,
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            return PumpOutcome {
+                frames,
+                stuck: true,
+                idle_frames: idle,
+            };
+        }
+    }
 }

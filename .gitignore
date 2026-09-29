@@ -2,6 +2,13 @@
 /target/
 **/*.rs.bk
 
+# Compilación del winit vendoreado en third_party (no forma parte del código)
+/third_party/winit/target/
+
+# Publicaciones de prueba hechas desde la raíz del repo
+/atlas.json
+/atlas.png
+
 # Plantilla local de mensajes de commit (configurada vía commit.template)
 .gitmessage
 

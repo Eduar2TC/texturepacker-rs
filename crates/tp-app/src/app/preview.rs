@@ -216,12 +216,115 @@ pub(super) fn zoom_step(app: &mut App, dir: i32) {
     }
 }
 
+/// Diana grande de suelta: el objetivo del workspace vacío.
+fn drop_target(ui: &mut egui::Ui, hovering: bool) {
+    let tint = if hovering {
+        egui::Color32::from_rgba_unmultiplied(120, 200, 255, 45)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().min(520.0), 84.0),
+        egui::Sense::hover(),
+    );
+    ui.painter().rect_stroke(
+        rect,
+        8.0,
+        egui::Stroke::new(1.5_f32, tint),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "⤵  Arrastra aquí imágenes o carpetas",
+        egui::FontId::proportional(16.0),
+        if hovering {
+            egui::Color32::from_rgb(160, 215, 255)
+        } else {
+            egui::Color32::from_gray(150)
+        },
+    );
+    ui.weak("PNG · WebP · JPG · TGA · BMP · GIF · DDS · QOI");
+}
+
+/// Tira compacta de suelta: sigue visible mientras se calcula el atlas para
+/// poder seguir arrastrando sin perder el objetivo de encaje.
+fn drop_strip(ui: &mut egui::Ui, hovering: bool) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width().min(520.0), 44.0),
+        egui::Sense::hover(),
+    );
+    let tint = if hovering {
+        egui::Color32::from_rgba_unmultiplied(120, 200, 255, 60)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18)
+    };
+    ui.painter().rect_filled(rect, 8.0, tint);
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        if hovering {
+            "Suelta para añadir al workspace"
+        } else {
+            "⤵  Sigue soltando imágenes o carpetas"
+        },
+        egui::FontId::proportional(14.0),
+        if hovering {
+            egui::Color32::from_rgb(180, 225, 255)
+        } else {
+            egui::Color32::from_gray(150)
+        },
+    );
+}
+
 fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     app.preview_size = ui.available_size();
     app.canvas_rect = None;
     app.preview_zoom = app.zoom;
 
     let Some(out) = &app.result else {
+        let (hovered, _dropped) =
+            ui.input(|i| (i.raw.hovered_files.clone(), i.raw.dropped_files.clone()));
+        let hovering = !hovered.is_empty();
+
+        // Ya hay sprites pero todavía no hay atlas: el usuario acaba de
+        // soltar archivos y espera ver movimiento. Aquí manda el estado de
+        // cálculo («se está haciendo»), no el vacío: el vacío solo es
+        // honesto cuando el workspace está de verdad vacío.
+        if app.has_inputs() {
+            let elems = app.config.extra_inputs.len()
+                + usize::from(!app.config.input_directory.as_os_str().is_empty());
+            let frescos = app.just_added_names();
+            let resumen = if frescos.len() > 6 {
+                format!("{}, +{} más", frescos[..6].join(", "), frescos.len() - 6)
+            } else {
+                frescos.join(", ")
+            };
+            ui.centered_and_justified(|ui| {
+                ui.vertical_centered(|ui| {
+                    ui.spinner();
+                    ui.add_space(10.0);
+                    ui.heading("Preparando el sprite sheet…");
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{elems} elemento(s) en el workspace · la vista previa se calcula sola"
+                        ))
+                        .weak(),
+                    );
+                    if !resumen.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(format!("✓ Recién añadido: {resumen}"))
+                                .color(super::JUST_ADDED_COLOR),
+                        );
+                    }
+                    ui.add_space(16.0);
+                    drop_strip(ui, hovering);
+                });
+            });
+            return;
+        }
+
         // Primera experiencia: el vacío es accionable, no solo texto.
         ui.centered_and_justified(|ui| {
             ui.vertical_centered(|ui| {
@@ -239,35 +342,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 });
                 ui.add_space(18.0);
                 // Suelta de ficheros del SO sobre el espacio de trabajo.
-                let (hovered, _dropped) =
-                    ui.input(|i| (i.raw.hovered_files.clone(), i.raw.dropped_files.clone()));
-                let tint = if hovered.is_empty() {
-                    egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22)
-                } else {
-                    egui::Color32::from_rgba_unmultiplied(120, 200, 255, 45)
-                };
-                let (rect, _) = ui.allocate_exact_size(
-                    egui::vec2(ui.available_width().min(520.0), 84.0),
-                    egui::Sense::hover(),
-                );
-                ui.painter().rect_stroke(
-                    rect,
-                    8.0,
-                    egui::Stroke::new(1.5_f32, tint),
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().text(
-                    rect.center(),
-                    egui::Align2::CENTER_CENTER,
-                    "⤵  Arrastra aquí imágenes o carpetas",
-                    egui::FontId::proportional(16.0),
-                    if hovered.is_empty() {
-                        egui::Color32::from_gray(150)
-                    } else {
-                        egui::Color32::from_rgb(160, 215, 255)
-                    },
-                );
-                ui.weak("PNG · WebP · JPG · TGA · BMP · GIF · DDS · QOI");
+                drop_target(ui, hovering);
             });
         });
         return;
@@ -334,6 +409,16 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             // registrar geometría y consumir el drop (ver post-frame abajo).
             app.canvas_rect = Some(rect);
             let painter = ui.painter();
+            // Fondo y textura del lienzo ANTES que el resalte del arrastre:
+            // pintados después, el relleno gris y la imagen taparían el
+            // resalte y la fantasma de soltado del panel izquierdo.
+            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
+            painter.image(
+                tex.id(),
+                rect,
+                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                egui::Color32::WHITE,
+            );
             let panel_drag = crate::app::SpriteDrag::payload(ui.ctx());
             if panel_drag.is_some() && ui.rect_contains_pointer(rect) {
                 // Resalte del lienzo como zona de destino válida.

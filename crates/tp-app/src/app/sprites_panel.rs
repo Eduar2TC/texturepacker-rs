@@ -360,7 +360,13 @@ fn render_sheet(
         for p in &paths {
             let name = name_of(p);
             let selected = app.selected_paths.contains(p);
-            let resp = ui.selectable_label(selected, &name);
+            // Recién soltado: el color señala «aquí acaba de entrar».
+            let label = if app.is_just_added(p) {
+                egui::RichText::new(name.as_str()).color(super::JUST_ADDED_COLOR)
+            } else {
+                egui::RichText::new(name.as_str())
+            };
+            let resp = ui.selectable_label(selected, label);
             // Registro para pruebas: rect en pantalla de esta fila.
             walk.rows.push((p.clone(), resp.rect));
             if resp.clicked() {
@@ -458,7 +464,7 @@ fn render_node(
     force: Option<bool>,
 ) {
     if node.is_dir {
-        let name = match node.origin {
+        let mut name = match node.origin {
             Origin::Smart => egui::RichText::new(node.name.clone())
                 .strong()
                 .color(egui::Color32::from_rgb(230, 200, 60)),
@@ -467,6 +473,9 @@ fn render_node(
                 .color(egui::Color32::from_rgb(120, 170, 255)),
             Origin::Normal => egui::RichText::new(node.name.clone()).strong(),
         };
+        if app.is_just_added(&node.path) {
+            name = name.color(super::JUST_ADDED_COLOR);
+        }
         if let Some(open) = force {
             // CollapsingHeader::show() calcula su id dentro de un ui.vertical(...)
             // (hijo con salt por defecto); replicamos ese scope para que el id
@@ -499,7 +508,7 @@ fn render_node(
             walk.drop_target = Some(node.name.clone());
         }
     } else {
-        let name =
+        let mut name =
             match node.origin {
                 Origin::Smart => egui::RichText::new(node.name.clone())
                     .color(egui::Color32::from_rgb(230, 200, 60)),
@@ -507,6 +516,9 @@ fn render_node(
                     .color(egui::Color32::from_rgb(120, 170, 255)),
                 Origin::Normal => egui::RichText::new(node.name.clone()),
             };
+        if app.is_just_added(&node.path) {
+            name = name.color(super::JUST_ADDED_COLOR);
+        }
         let selected = app.selected_paths.contains(&node.path);
         let response = ui.selectable_label(selected, name);
         // Registro para pruebas: rect en pantalla de esta fila.

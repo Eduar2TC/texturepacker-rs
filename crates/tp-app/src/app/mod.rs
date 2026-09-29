@@ -24,6 +24,10 @@ use eframe::egui;
 const PREVIEW_DEBOUNCE_MS: u64 = 120;
 /// Cadencia de sondeo del snapshot (mtimes de los sprites en disco).
 const SNAPSHOT_POLL_MS: u64 = 150;
+/// Cuánto dura el resaltado de «recién añadido» (árbol y lienzo).
+const JUST_ADDED_HL: std::time::Duration = std::time::Duration::from_secs(8);
+/// Color compartido del resaltado «recién añadido».
+pub(crate) const JUST_ADDED_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 220, 160);
 
 /// Umbral (px) a partir del cual el panel inferior se considera abierto.
 const BOTTOM_OPEN_HEIGHT: f32 = 180.0;
@@ -199,6 +203,12 @@ pub struct App {
     preview_size: egui::Vec2,
     selected_paths: BTreeSet<PathBuf>,
     selected_sprite: Option<String>,
+    /// Rutas entradas por la última acción (suelta del SO o diálogo): el
+    /// árbol y el lienzo las señalan para responder «¿dónde acaba de ir mi
+    /// archivo?» mientras el atlas se calcula.
+    just_added: Vec<PathBuf>,
+    /// Instante de la última adición: el resaltado se apaga solo.
+    just_added_at: Option<std::time::Instant>,
     advanced_settings: bool,
     show_sprite_settings: bool,
     /// Whether the animation preview window is open.
@@ -299,6 +309,8 @@ impl App {
             preview_size: egui::Vec2::ZERO,
             selected_paths: BTreeSet::new(),
             selected_sprite: None,
+            just_added: Vec::new(),
+            just_added_at: None,
             advanced_settings: false,
             show_sprite_settings: false,
             show_animation: false,
@@ -336,6 +348,7 @@ impl App {
             "Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».".into(),
         );
         app.sync_paths();
+        app.sync_variants();
         app.start_watcher();
         if let Some(path) = initial_project {
             app.open_project(path);
@@ -467,8 +480,12 @@ impl App {
     /// immediately to added/removed sprites or changed settings. Files are
     /// only written by the explicit «Publicar» action.
     fn request_preview(&mut self, debounce: bool) {
-        // Un trabajo pendiente de exportación tiene prioridad.
+        // Un trabajo pendiente de exportación tiene prioridad. El marcador se
+        // retira: si queda puesto, `auto_repaint` pediría frames para un cambio
+        // que este camino ya no va a programar (lo retoma el sondeo del
+        // snapshot al terminar la exportación).
         if self.running.is_some() {
+            self.pending_seq = None;
             return;
         }
         if self.pending.is_some() {
@@ -483,6 +500,7 @@ impl App {
             if self.result.is_some() {
                 self.result = None;
             }
+            self.pending_seq = None;
             return;
         }
         let seq = self.change_seq;
@@ -503,6 +521,9 @@ impl App {
         // evitan el re-escaneo del disco aunque el slider tarde en parar.
         let force = std::mem::take(&mut self.pending_force);
         if !force && !self.snapshot_changed() {
+            // Nada que reempaquetar: retire el marcador para que
+            // `auto_repaint` deje de programar frames.
+            self.pending_seq = None;
             return;
         }
         self.pending_seq = None;
@@ -636,13 +657,20 @@ impl App {
                             LogKind::Info,
                             format!("Vista previa actualizada en {} ms.", msg.elapsed_ms),
                         );
-                        // ¿Cambió algo mientras empaquetaba? Reprogramar.
-                        if self.snapshot_changed() {
+                        // El resultado acabamos de aplicarlo: el indicador de
+                        // frescura solo sigue en «Desactualizado» si el disco
+                        // cambió mientras empaquetaba (y en ese caso hay que
+                        // reprogramar; si no, la app se quedaría quieta con la
+                        // bandera mintiendo hasta la próxima interacción).
+                        self.preview_stale = self.snapshot_changed();
+                        if self.preview_stale {
                             self.request_preview(false);
                         }
                     }
                     Err(e) => {
                         self.log(LogKind::Error, format!("Vista previa: {e}"));
+                        // El atlas en pantalla ya no refleja el workspace.
+                        self.preview_stale = true;
                         // Un único reintento: con autowatch el fichero pudo
                         // leerse a medio escribir; si vuelve a fallar, se
                         // espera una acción o un cambio nuevo en disco.
@@ -820,15 +848,17 @@ impl App {
         }
     }
 
-    /// Repaint soon while there is a pending preview job or debounce.
+    /// Keep the UI painting while a preview job or an unmet change is
+    /// outstanding. The change marker must outlive the debounce window: the
+    /// job is spawned by the snapshot poll (SNAPSHOT_POLL_MS), which needs
+    /// frames to run, so releasing the marker at PREVIEW_DEBOUNCE_MS would
+    /// freeze the atlas until the next user event («solo se ve al pulsar
+    /// Publicar»).
     fn auto_repaint(&self, ctx: &egui::Context) {
         let needs = self.pending.is_some()
             || self
                 .pending_seq
-                .map(|(s, at)| {
-                    s == self.change_seq
-                        && at.elapsed() < std::time::Duration::from_millis(PREVIEW_DEBOUNCE_MS)
-                })
+                .map(|(s, _)| s == self.change_seq)
                 .unwrap_or(false);
         if needs {
             ctx.request_repaint_after(std::time::Duration::from_millis(50));
@@ -999,8 +1029,7 @@ impl App {
             .map(|v| v.to_string())
             .collect::<Vec<_>>()
             .join(", ");
-        if self.variants_text.trim() != variants_joined {
-            self.parse_variants();
+        if self.variants_text.trim() != variants_joined && self.parse_variants() {
             self.after_workspace_change();
         }
         // El snapshot (mtimes incluidos) se recalcula como mucho cada
@@ -1013,10 +1042,18 @@ impl App {
                 self.request_preview(true);
             }
         }
+        if self
+            .just_added_at
+            .is_some_and(|at| at.elapsed() >= JUST_ADDED_HL)
+        {
+            self.just_added.clear();
+            self.just_added_at = None;
+            ctx.request_repaint();
+        }
         self.auto_repaint(ctx);
     }
 
-    fn parse_variants(&mut self) {
+    fn parse_variants(&mut self) -> bool {
         let parsed: Vec<f32> = self
             .variants_text
             .split([',', ';', ' '])
@@ -1024,8 +1061,14 @@ impl App {
             .filter_map(|s| s.trim().parse::<f32>().ok())
             .filter(|v| *v > 0.0 && *v <= 8.0)
             .collect();
-        if !parsed.is_empty() {
+        // `true` solo si cambia algo real: texto aún canónico distinto
+        // («1.0» vs «1») o inválido mientras se escribe no debe bumpear la
+        // secuencia, o `poll_changes` reprogramaría el preview sin fin.
+        if parsed.is_empty() || parsed == self.config.scale_variants {
+            false
+        } else {
             self.config.scale_variants = parsed;
+            true
         }
     }
 
@@ -1142,6 +1185,47 @@ impl App {
         }
     }
 
+    /// ¿Hay algo que empaquetar? Separa «workspace vacío» (lienzo accionable
+    /// con su diana de suelta) de «workspace con sprites, atlas aún sin
+    /// calcular» (estado de cálculo), que es donde el usuario percibe que
+    /// «no se actualiza».
+    pub(crate) fn has_inputs(&self) -> bool {
+        !self.config.input_directory.as_os_str().is_empty() || !self.config.extra_inputs.is_empty()
+    }
+
+    /// ¿`path` entró hace instantes? Resaltado temporal de feedback.
+    pub(crate) fn is_just_added(&self, path: &Path) -> bool {
+        let Some(at) = self.just_added_at else {
+            return false;
+        };
+        if at.elapsed() >= JUST_ADDED_HL {
+            return false;
+        }
+        let norm = tp_core::ingest::normalize_path(path);
+        self.just_added
+            .iter()
+            .any(|p| tp_core::ingest::normalize_path(p) == norm)
+    }
+
+    /// Nombres de lo recién añadido, para el estado de cálculo del lienzo.
+    pub(crate) fn just_added_names(&self) -> Vec<String> {
+        let fresh = self
+            .just_added_at
+            .map(|at| at.elapsed() < JUST_ADDED_HL)
+            .unwrap_or(false);
+        if !fresh {
+            return Vec::new();
+        }
+        self.just_added
+            .iter()
+            .map(|p| {
+                p.file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| p.display().to_string())
+            })
+            .collect()
+    }
+
     /// Add a dropped/picked file or folder to the sprite set.
     /// Returns `true` when the workspace changed and a repack is scheduled.
     fn add_input(&mut self, path: PathBuf) -> bool {
@@ -1177,6 +1261,12 @@ impl App {
                     .retain(|p| tp_core::ingest::normalize_path(p) != norm);
             }
         }
+        self.just_added.push(path.clone());
+        if self.just_added.len() > 32 {
+            let over = self.just_added.len() - 32;
+            self.just_added.drain(0..over);
+        }
+        self.just_added_at = Some(std::time::Instant::now());
         self.config.extra_inputs.push(path);
         self.start_watcher();
         self.change_seq += 1;
@@ -1784,10 +1874,14 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
             egui::FontId::proportional(13.0),
             egui::Color32::from_rgba_unmultiplied(180, 210, 235, 220),
         );
+        // El overlay solo existe si hay frames: el hover no pasa por
+        // `poll_changes`, así que el siguiente frame se pide aquí.
+        ctx.request_repaint();
     }
     if dropped.is_empty() {
         return;
     }
+    let total = dropped.len();
     let mut added = 0;
     for file in dropped {
         if let Some(path) = file.path {
@@ -1798,9 +1892,25 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
     }
     if added > 0 {
         app.log(LogKind::Info, format!("{added} sprite(s) añadido(s)."));
+        // Empaqueta ya, sin esperar al debounce: el lienzo arranca a
+        // calcular en el mismo gesto y no en el siguiente round-trip.
+        app.request_preview(false);
+        // Programa el frame que apagará el resaltado «recién añadido».
+        ctx.request_repaint_after(JUST_ADDED_HL);
     } else {
-        app.log(LogKind::Warning, "No se añadieron sprites nuevos.".into());
+        app.log(
+            LogKind::Warning,
+            format!(
+                "Nada nuevo en el workspace ({total} fichero(s) soltado(s): \
+                 ya estaban o no son imágenes)."
+            ),
+        );
     }
+    // `poll_changes` (que programa el repack) ya corrió AL INICIO de este
+    // frame, antes de procesar el drop: sin este repaint la cadena
+    // debounce → hilo → resultado moriría aquí y el atlas no se actualizaría
+    // hasta la próxima interacción (p. ej. pulsar Publicar).
+    ctx.request_repaint();
 }
 
 /// Atajos de teclado globales (estilo estándar de herramientas de escritorio):
@@ -1927,5 +2037,408 @@ mod drag_payload_tests {
             SpriteDrag::payload(&ctx).is_some(),
             "payload debe sobrevivir a un frame sin release"
         );
+    }
+}
+
+/// La ventana real solo pinta cuando egui lo pide; los tests que bombean
+/// frames a mano enmascaran fallos de programación del preview. Estas
+/// pruebas avanzan la app **bajo demanda**: si la app deja de pedir
+/// repaints, la UI queda congelada («solo se actualiza al pulsar Publicar»).
+#[cfg(test)]
+mod on_demand_tests {
+    use super::*;
+    use crate::testing::{create_example_project, pump_on_demand};
+    use std::time::Duration;
+
+    const TIMEOUT: Duration = Duration::from_secs(15);
+
+    type RepaintSlot = std::sync::Arc<std::sync::Mutex<Option<Duration>>>;
+
+    fn demo(tag: &str) -> (App, egui::Context, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_ondemand_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        let project = create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        let ctx = egui::Context::default();
+        let app = App::build(ctx.clone(), Some(project));
+        (app, ctx, tmp)
+    }
+
+    fn preview_updates(app: &App) -> usize {
+        app.log_texts()
+            .iter()
+            .filter(|t| t.starts_with("I Vista previa actualizada"))
+            .count()
+    }
+
+    /// Conduce hasta que el preview vuelve a estar al día (sin Publicar).
+    fn pump_until_fresh(app: &mut App, ctx: &egui::Context) -> crate::testing::PumpOutcome {
+        pump_on_demand(
+            app,
+            ctx,
+            |a| {
+                a.pending.is_none()
+                    && a.running.is_none()
+                    && !a.snapshot_changed()
+                    && !a.preview_stale
+            },
+            TIMEOUT,
+        )
+    }
+
+    #[test]
+    fn preview_refreshes_after_settings_change_without_publishing() {
+        let (mut app, ctx, tmp) = demo("settings");
+        let boot = pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(
+            app.result().is_some(),
+            "el preview de arranque debe llegar solo: {boot:?}"
+        );
+        let before = preview_updates(&app);
+
+        // Mismo camino que los widgets del panel de Ajustes.
+        app.config.padding += 4;
+        app.on_config_changed();
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(
+            !out.stuck,
+            "la app dejó de pedir repaints tras cambiar un ajuste \
+             (frames={}, idle={}): la UI solo se actualizaría con Publicar",
+            out.frames, out.idle_frames
+        );
+        assert!(
+            preview_updates(&app) > before,
+            "el preview debe reempaquetar tras cambiar un ajuste"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn preview_refreshes_after_adding_a_sprite_without_publishing() {
+        let (mut app, ctx, tmp) = demo("add");
+        let boot = pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(app.result().is_some(), "preview de arranque: {boot:?}");
+        let before = preview_updates(&app);
+        let total_before = app.result().unwrap().result.total_sprites;
+
+        let extra = tmp.join("sprites").join("extra.png");
+        let img = image::RgbaImage::from_pixel(20, 20, image::Rgba([10, 200, 30, 255]));
+        img.save(&extra).unwrap();
+        assert!(app.add_input(extra), "el sprite debe añadirse al workspace");
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(
+            !out.stuck,
+            "la app dejó de pedir repaints tras añadir un sprite \
+             (frames={}, idle={})",
+            out.frames, out.idle_frames
+        );
+        assert!(
+            preview_updates(&app) > before,
+            "el preview debe recalcularse al añadir un sprite"
+        );
+        let total_after = app.result().unwrap().result.total_sprites;
+        assert!(
+            total_after > total_before,
+            "el nuevo sprite debe aparecer en la vista ({total_before} → {total_after})"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn canvas_drop_repaints_without_publishing() {
+        let (mut app, ctx, tmp) = demo("drop");
+        let boot = pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(app.result().is_some(), "preview de arranque: {boot:?}");
+        let before = preview_updates(&app);
+
+        let ids: Vec<String> = app
+            .result()
+            .unwrap()
+            .result
+            .sprites
+            .iter()
+            .filter(|s| !s.is_alias)
+            .map(|s| s.id.clone())
+            .take(1)
+            .collect();
+        begin_sprite_drag(&app, &ctx, ids.clone());
+        let placed = app.drop_sprites_on_canvas(egui::pos2(120.0, 80.0));
+        assert_eq!(placed, 1, "el drop debe colocar el sprite");
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(
+            !out.stuck,
+            "la app dejó de pedir repaints tras soltar en el lienzo \
+             (frames={}, idle={}): el drop no se vería hasta Publicar",
+            out.frames, out.idle_frames
+        );
+        assert!(
+            preview_updates(&app) > before,
+            "el drop debe reempaquetar al instante"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Registra los `request_repaint` del `ctx` en un slot compartido.
+    fn record_repaints(ctx: &egui::Context) -> RepaintSlot {
+        let slot: RepaintSlot = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let record = slot.clone();
+        ctx.set_request_repaint_callback(move |info| {
+            let mut g = record.lock().unwrap();
+            *g = Some(match *g {
+                Some(prev) => prev.min(info.delay),
+                None => info.delay,
+            });
+        });
+        slot
+    }
+
+    /// Apaga el watcher de disco y corre frames hasta que dos seguidos no piden
+    /// repaint, dejando el slot registrado y a `None`. Así el único repaint que
+    /// se pueda ver en el frame siguiente es el que pida ese frame: sin esta
+    /// disciplina los eventos del watcher (incluso los `Open` que genera el
+    /// propio sondeo de mtimes) enmascararían cualquier regresión.
+    fn settle_until_quiet(app: &mut App, ctx: &egui::Context) -> RepaintSlot {
+        app.watcher = None;
+        std::thread::sleep(Duration::from_millis(600));
+        let slot = record_repaints(ctx);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut quiet = 0;
+        while std::time::Instant::now() < deadline {
+            let _ = app.run_frame(ctx, crate::testing::idle_input());
+            let mut g = slot.lock().unwrap();
+            if g.is_none() {
+                quiet += 1;
+                if quiet >= 2 {
+                    drop(g);
+                    return slot;
+                }
+            } else {
+                quiet = 0;
+                *g = None;
+            }
+        }
+        panic!("la app nunca deja de pedir repaints: no se puede aislar el frame");
+    }
+
+    /// Mientras el SO tiene ficheros sobre la ventana, el overlay solo se
+    /// pinta si cada frame programa el siguiente.
+    #[test]
+    fn hover_keeps_painting_while_files_are_over_the_window() {
+        let (mut app, ctx, tmp) = demo("hover");
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview de arranque: {boot:?}");
+
+        let slot = settle_until_quiet(&mut app, &ctx);
+
+        let mut input = crate::testing::idle_input();
+        input.hovered_files = vec![egui::HoveredFile {
+            path: Some(tmp.join("sprites").join("hero.png")),
+            mime: String::new(),
+        }];
+        let _ = app.run_frame(&ctx, input);
+        assert!(
+            slot.lock().unwrap().is_some(),
+            "el frame del hover no programó el siguiente repaint: el overlay \
+             «Suelta para añadir al workspace» no llegaría a verse"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Camino real de eframe: el `RawInput` del frame trae los ficheros
+    /// soltados por el SO y `handle_global_file_drop` los procesa DENTRO del
+    /// frame. `poll_changes` (que programa el repack) corre al inicio del
+    /// frame, antes que el drop, así que el frame del drop tiene que pedir él
+    /// mismo el siguiente repaint; si no, la ventana real se queda quieta y el
+    /// atlas solo cambia al pulsar Publicar.
+    #[test]
+    fn so_drop_schedules_next_frame_and_repaints_without_publishing() {
+        let (mut app, ctx, tmp) = demo("so_drop");
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview de arranque: {boot:?}");
+        let before = preview_updates(&app);
+        let total_before = app.result().unwrap().result.total_sprites;
+
+        // Fuera de los directorios vigilados: el hilo del watcher repinta con
+        // cada evento de disco y enmascararía el repaint del frame del drop.
+        let fuera = tmp.join("fuera");
+        std::fs::create_dir_all(&fuera).unwrap();
+        let extra = fuera.join("soltado_del_so.png");
+        image::RgbaImage::from_pixel(18, 18, image::Rgba([200, 40, 90, 255]))
+            .save(&extra)
+            .unwrap();
+        let rechazado = fuera.join("no_es_imagen.txt");
+        std::fs::write(&rechazado, "no soy un sprite").unwrap();
+
+        let slot = settle_until_quiet(&mut app, &ctx);
+
+        // Fichero rechazado: no añade nada ni arranca el watcher, así que el
+        // único repaint posible en su frame es el que pide el propio drop.
+        let mut input = crate::testing::idle_input();
+        input.dropped_files = vec![egui::DroppedFile {
+            path: Some(rechazado.clone()),
+            ..Default::default()
+        }];
+        let _ = app.run_frame(&ctx, input);
+        assert!(
+            !app.config.extra_inputs.iter().any(|p| p == &rechazado),
+            "un fichero que no es imagen no debe entrar al workspace"
+        );
+        assert!(
+            slot.lock().unwrap().is_some(),
+            "el frame del drop no programó el siguiente repaint: la ventana \
+             real se quedaría quieta y el atlas solo se vería con Publicar"
+        );
+
+        // Drop real: entra en el workspace.
+        let mut input = crate::testing::idle_input();
+        input.dropped_files = vec![egui::DroppedFile {
+            path: Some(extra.clone()),
+            ..Default::default()
+        }];
+        let _ = app.run_frame(&ctx, input);
+        assert!(
+            app.config.extra_inputs.iter().any(|p| p == &extra),
+            "el fichero soltado debe entrar en el workspace"
+        );
+
+        // Pasado el debounce, el marcador del cambio sigue vivo: sin eso,
+        // `auto_repaint` dejaría de pedir frames antes de que el sondeo del
+        // snapshot alcance a lanzar el repack.
+        std::thread::sleep(Duration::from_millis(PREVIEW_DEBOUNCE_MS + 80));
+        let probe = egui::Context::default();
+        let probe_slot = record_repaints(&probe);
+        app.auto_repaint(&probe);
+        assert!(
+            probe_slot.lock().unwrap().is_some(),
+            "pasado el debounce, con el cambio aún pendiente, auto_repaint \
+             dejó de programar frames: el repack no llegaría a lanzarse"
+        );
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(
+            !out.stuck,
+            "la app dejó de pedir repaints tras soltar ficheros del SO \
+             (frames={}, idle={})",
+            out.frames, out.idle_frames
+        );
+        assert!(
+            preview_updates(&app) > before,
+            "el preview debe recalcularse solo, sin pulsar Publicar"
+        );
+        let total_after = app.result().unwrap().result.total_sprites;
+        assert!(
+            total_after > total_before,
+            "el sprite soltado debe aparecer en la vista ({total_before} → {total_after})"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// El binario arranca **sin proyecto cargado**: `variants_text` nace como
+    /// `"1.0"` mientras `scale_variants` se serializa como `"1"`. Si la
+    /// comparación es textual, `poll_changes` repite `after_workspace_change`
+    /// en cada frame, `request_preview` renueva `pending_seq` antes de poder
+    /// leer el debounce y el repack **nunca** se lanza (a la vez, `auto_repaint`
+    /// mantiene la ventana repintando a 50 fps para siempre).
+    #[test]
+    fn arranque_sin_proyecto_no_satura_la_secuencia() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let seq0 = app.change_seq;
+        for _ in 0..8 {
+            let _ = app.run_frame(&ctx, crate::testing::idle_input());
+        }
+        assert_eq!(
+            app.change_seq, seq0,
+            "frames en reposo bumpearon change_seq ({seq0} → {}): la \
+             comparación de variantes es textual y se repite sin fin",
+            app.change_seq
+        );
+        assert!(
+            app.variants_text.trim()
+                == app
+                    .config
+                    .scale_variants
+                    .iter()
+                    .map(|v| v.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+                || app.variants_text != "1.0",
+            "el texto de variantes debe arrancar canónico para no desincronizarse"
+        );
+    }
+
+    /// Flujo real del usuario: abre el binario sin proyecto, suelta una
+    /// imagen del SO y espera a que el espacio de trabajo se pinte solo.
+    #[test]
+    fn drop_sin_proyecto_pinta_el_atlas_sin_publicar() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_noproject_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        let soltado = sprites.join("coin.png");
+
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let before = preview_updates(&app);
+
+        let mut input = crate::testing::idle_input();
+        input.dropped_files = vec![egui::DroppedFile {
+            path: Some(soltado.clone()),
+            ..Default::default()
+        }];
+        let _ = app.run_frame(&ctx, input);
+        assert!(
+            app.config.extra_inputs.iter().any(|p| p == &soltado),
+            "el fichero soltado debe entrar en el workspace"
+        );
+        assert!(
+            app.has_inputs() && app.result.is_none(),
+            "el lienzo debe estar en estado de cálculo (no en el vacío) tras el drop"
+        );
+        assert!(
+            app.is_just_added(&soltado),
+            "la ruta soltada debe quedar marcada como recién añadida (feedback)"
+        );
+        assert!(
+            app.pending.is_some(),
+            "el drop debe lanzar el empaquetado en el mismo frame, sin esperar \
+             al debounce: si no, el lienzo tarda ~300 ms en moverse"
+        );
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(
+            !out.stuck,
+            "el arranque sin proyecto dejó de pedir repaints (frames={}, idle={}): \
+             el espacio de trabajo se quedaría en «Aún no hay sprite sheet». Log: {:?}",
+            out.frames,
+            out.idle_frames,
+            app.log_texts()
+        );
+        assert!(
+            preview_updates(&app) > before,
+            "la vista previa debe calcularse sola sin proyecto y sin Publicar"
+        );
+        assert!(
+            app.result().is_some(),
+            "el lienzo debe dejar de mostrar el estado vacío tras el drop"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
