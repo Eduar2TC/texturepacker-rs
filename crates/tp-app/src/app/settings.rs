@@ -295,18 +295,30 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 app.config.algorithm,
                 PackingAlgorithm::MaxRects | PackingAlgorithm::Guillotine
             ) {
+                // Las heurísticas de colocación son comunes; con Guillotine
+                // no van prefijadas por "MaxRects" y desaparece la entrada
+                // legacy (que `resolve()` traduciría en BSSF).
+                let guillotine = app.config.algorithm == PackingAlgorithm::Guillotine;
+                let prefix = if guillotine { "" } else { "MaxRects " };
+                let shown = strategy_display(app.config.packing_strategy, guillotine);
                 enum_combo(
                     ui,
                     "Heurística",
-                    strategy_display(app.config.packing_strategy),
+                    &shown,
                     |ui, v| {
-                        ui.selectable_value(v, PackingStrategy::Bssf, "MaxRects BSSF");
-                        ui.selectable_value(v, PackingStrategy::Baf, "MaxRects BAF");
-                        ui.selectable_value(v, PackingStrategy::Blsf, "MaxRects BLSF");
+                        ui.selectable_value(v, PackingStrategy::Bssf, format!("{prefix}BSSF"));
+                        ui.selectable_value(v, PackingStrategy::Baf, format!("{prefix}BAF"));
+                        ui.selectable_value(v, PackingStrategy::Blsf, format!("{prefix}BLSF"));
                         ui.selectable_value(v, PackingStrategy::Best, "Best (probar todas)");
                         ui.selectable_value(v, PackingStrategy::BottomLeft, "BottomLeft");
                         ui.selectable_value(v, PackingStrategy::ContactPoint, "ContactPoint");
-                        ui.selectable_value(v, PackingStrategy::Guillotine, "Guillotine (legacy)");
+                        if !guillotine {
+                            ui.selectable_value(
+                                v,
+                                PackingStrategy::Guillotine,
+                                "Guillotine (legacy)",
+                            );
+                        }
                     },
                     &mut app.config.packing_strategy,
                 );
@@ -847,15 +859,20 @@ fn enum_combo<T: PartialEq + Clone>(
         });
 }
 
-fn strategy_display(s: PackingStrategy) -> &'static str {
+fn strategy_display(s: PackingStrategy, guillotine: bool) -> String {
+    if guillotine && s == PackingStrategy::Guillotine {
+        // `resolve()` traduce la entrada legacy en la heurística BSSF.
+        return "BSSF".to_string();
+    }
+    let prefix = if guillotine { "" } else { "MaxRects " };
     match s {
-        PackingStrategy::Bssf => "MaxRects BSSF",
-        PackingStrategy::Baf => "MaxRects BAF",
-        PackingStrategy::Blsf => "MaxRects BLSF",
-        PackingStrategy::Guillotine => "Guillotine (legacy)",
-        PackingStrategy::Best => "Best (probar todas)",
-        PackingStrategy::BottomLeft => "BottomLeft",
-        PackingStrategy::ContactPoint => "ContactPoint",
+        PackingStrategy::Bssf => format!("{prefix}BSSF"),
+        PackingStrategy::Baf => format!("{prefix}BAF"),
+        PackingStrategy::Blsf => format!("{prefix}BLSF"),
+        PackingStrategy::Guillotine => "Guillotine (legacy)".to_string(),
+        PackingStrategy::Best => "Best (probar todas)".to_string(),
+        PackingStrategy::BottomLeft => "BottomLeft".to_string(),
+        PackingStrategy::ContactPoint => "ContactPoint".to_string(),
     }
 }
 

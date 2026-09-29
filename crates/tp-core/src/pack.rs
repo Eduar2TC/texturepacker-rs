@@ -244,6 +244,9 @@ fn place_and_size(
     Ok(finalize(pages, opts, cw, ch))
 }
 
+/// Signature shared by the MaxRects and Guillotine placement runners.
+type PlaceFn = fn(&[PackItem], &PackerOptions, i32, i32) -> Result<Vec<PageState>>;
+
 /// Place every item, dispatching on the algorithm. Returns raw pages still
 /// sized to the canvas (final sizing happens in [`finalize`]).
 fn place_all(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Result<Vec<PageState>> {
@@ -255,13 +258,18 @@ fn place_all(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
         // sprites: MaxRects placement with polygon occupancy support.
         PackingAlgorithm::Polygon => pack_maxrects(items, opts, cw, ch),
         PackingAlgorithm::MaxRects | PackingAlgorithm::Guillotine => {
+            let runner: PlaceFn = if opts.algorithm == PackingAlgorithm::Guillotine {
+                pack_guillotine
+            } else {
+                pack_maxrects
+            };
             if opts.strategy == PackingStrategy::Best {
                 // `Best` tries every heuristic and keeps the tightest.
                 let mut best: Option<(i64, i64, Vec<PageState>)> = None;
                 for strategy in PackingStrategy::all_heuristics() {
                     let mut sub = opts.clone();
                     sub.strategy = strategy;
-                    let pages = pack_maxrects(items, &sub, cw, ch)?;
+                    let pages = runner(items, &sub, cw, ch)?;
                     let better = match &best {
                         None => true,
                         Some((b_pages, b_area, _)) => {
@@ -274,7 +282,7 @@ fn place_all(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
                 }
                 Ok(best.map(|(_, _, p)| p).unwrap_or_default())
             } else {
-                pack_maxrects(items, opts, cw, ch)
+                runner(items, opts, cw, ch)
             }
         }
     }
@@ -594,17 +602,110 @@ fn pack_maxrects(
         let item = &items[item_idx];
         let mut placed: Option<Placement> = None;
         if let Some(page) = pages.last_mut() {
-            placed = try_place(page, item, w, h, opts)?;
+            placed = try_place(page, item, w, h, opts, false)?;
         }
         if placed.is_none() {
             let mut page = PageState::new(pages.len(), cw, ch, bp);
-            placed = try_place(&mut page, item, w, h, opts)
+            placed = try_place(&mut page, item, w, h, opts, false)
                 .map_err(|e| TpError::Pack(format!("{e} (página {})", page.index)))?;
             pages.push(page);
         }
         pages.last_mut().unwrap().placements.push(placed.unwrap());
     }
     Ok(pages)
+}
+
+/// Guillotine placement: the free list is a **disjoint partition** of the
+/// canvas (one rectangle at first; every cut replaces one rectangle with two
+/// children that tile it exactly). Each sprite takes the top-left of the free
+/// rectangle chosen by the heuristic, so unlike MaxRects no free rectangle is
+/// ever split against a sprite placed in a *different* one — that is what
+/// gives the algorithm its name and its characteristic long strips.
+///
+/// As in MaxRects, only the axis-aligned bounding box is packed (polygon
+/// mode validates the mesh against the occupancy grid afterwards).
+fn pack_guillotine(
+    items: &[PackItem],
+    opts: &PackerOptions,
+    cw: i32,
+    ch: i32,
+) -> Result<Vec<PageState>> {
+    let pad = opts.padding.max(0);
+    let bp = opts.border_padding.max(0);
+
+    let mut sorted: Vec<(usize, i32, i32)> = items
+        .iter()
+        .enumerate()
+        .map(|(i, it)| (i, it.width + 2 * pad, it.height + 2 * pad))
+        .collect();
+    sorted.sort_by_key(|(_, w, h)| std::cmp::Reverse((w * h) as i64));
+
+    let mut pages: Vec<PageState> = Vec::new();
+    for (item_idx, w, h) in sorted {
+        let item = &items[item_idx];
+        let mut placed = None;
+        if let Some(page) = pages.last_mut() {
+            placed = try_place(page, item, w, h, opts, true)?;
+        }
+        let placed = match placed {
+            Some(p) => p,
+            None => {
+                let mut page = PageState::new(pages.len(), cw, ch, bp);
+                let p = try_place(&mut page, item, w, h, opts, true)?.ok_or_else(|| {
+                    TpError::Pack(format!(
+                        "El sprite '{}' ({}x{}) no cabe en un atlas de {cw}x{ch} \
+                         (padding {pad} + borde {bp})",
+                        item.id, item.width, item.height,
+                    ))
+                })?;
+                pages.push(page);
+                p
+            }
+        };
+        pages.last_mut().unwrap().placements.push(placed);
+    }
+    Ok(pages)
+}
+
+/// Guillotine cut: only the chosen free rectangle is split, into two children
+/// that tile it exactly (so the free list stays a disjoint partition and no
+/// space is wasted by the split itself). The cut runs along the axis that
+/// keeps the larger child, which is what preserves usable rectangles for the
+/// next sprites. `placed` must sit at the top-left corner of `free[ri]`,
+/// which is where [`try_place`] always puts it.
+fn split_guillotine(free: &mut Vec<Rect>, ri: usize, placed: Rect) {
+    let fr = free[ri];
+    free.remove(ri);
+
+    // El sprite ocupa la esquina superior izquierda del rectángulo, así que
+    // los dos hijos que tilingean el resto son siempre el «derecha»
+    // (a la derecha del sprite) y el «debajo» (bajo el sprite); el corte
+    // decide cuánto ancho/alto lleva cada uno:
+    //   · vertical (corte a lo ancho): la derecha gana toda la altura y lo
+    //     de debajo solo la columna del sprite;
+    //   · horizontal (corte a lo alto): lo de debajo gana todo el ancho y la
+    //     derecha solo la fila del sprite.
+    let w = placed.width.max(0);
+    let h = placed.height.max(0);
+    let right = (fr.width - w).max(0);
+    let bottom = (fr.height - h).max(0);
+
+    // Se elige el corte que deja el hijo de mayor área (más rectángulo
+    // usable para los próximos sprites).
+    let vertical = (w * bottom).max(right * fr.height) >= (fr.width * bottom).max(right * h);
+
+    let push = |free: &mut Vec<Rect>, r: Rect| {
+        if r.width > 0 && r.height > 0 {
+            free.push(r);
+        }
+    };
+    if vertical {
+        push(free, Rect::new(fr.x, fr.y + h, w, bottom));
+        push(free, Rect::new(fr.x + w, fr.y, right, fr.height));
+    } else {
+        push(free, Rect::new(fr.x, fr.y + h, fr.width, bottom));
+        push(free, Rect::new(fr.x + w, fr.y, right, h));
+    }
 }
 
 /// Grid placement: the largest sprite defines the cell size.
@@ -903,6 +1004,7 @@ fn try_place(
     w: i32,
     h: i32,
     opts: &PackerOptions,
+    guillotine: bool,
 ) -> Result<Option<Placement>> {
     // Collect all candidate placements, ranked by score.
     let mut candidates: Vec<(usize, bool, Score)> = Vec::new();
@@ -940,7 +1042,11 @@ fn try_place(
         }
 
         // Commit: split free rects and update occupancy.
-        split_rects(&mut page.free_rects, frame);
+        if guillotine {
+            split_guillotine(&mut page.free_rects, ri, frame);
+        } else {
+            split_rects(&mut page.free_rects, frame);
+        }
         prune_contained(&mut page.free_rects);
         page.placed.push(frame);
 
@@ -1582,6 +1688,193 @@ mod tests {
         for i in 0..frames.len() {
             for j in (i + 1)..frames.len() {
                 assert!(!frames[i].intersects(&frames[j]));
+            }
+        }
+    }
+
+    // -------------------------------------------------------------------
+    // Guillotine
+    // -------------------------------------------------------------------
+
+    /// Resultado válido: cada frame dentro de su página y sin solapes.
+    fn assert_valid(out: &PackOutput) {
+        for p in &out.pages {
+            for (i, a) in p.placements.iter().enumerate() {
+                assert!(
+                    a.frame.x >= 0
+                        && a.frame.y >= 0
+                        && a.frame.x + a.frame.width <= p.width
+                        && a.frame.y + a.frame.height <= p.height,
+                    "{} sale de la página {}x{}: {:?}",
+                    a.id,
+                    p.width,
+                    p.height,
+                    a.frame
+                );
+                for b in p.placements.iter().skip(i + 1) {
+                    assert!(!a.frame.intersects(&b.frame), "{} solapa a {}", a.id, b.id);
+                }
+            }
+        }
+    }
+
+    /// (páginas, área total) — para comparar heurísticas.
+    fn size_metric(out: &PackOutput) -> (usize, i64) {
+        (
+            out.pages.len(),
+            out.pages
+                .iter()
+                .map(|p| (p.width as i64) * (p.height as i64))
+                .sum(),
+        )
+    }
+
+    fn guillotine_opts(strategy: PackingStrategy, max: i32) -> PackerOptions {
+        let mut opts = PackerOptions::new(strategy, false, max, 4, 2, false);
+        opts.algorithm = PackingAlgorithm::Guillotine;
+        opts.pack_mode = PackMode::Fast;
+        opts
+    }
+
+    fn mixed_items() -> Vec<PackItem> {
+        [
+            ("a", 40, 40),
+            ("b", 70, 20),
+            ("c", 20, 70),
+            ("d", 30, 30),
+            ("e", 15, 45),
+            ("f", 45, 15),
+            ("g", 10, 10),
+            ("h", 60, 60),
+            ("i", 33, 17),
+            ("j", 17, 33),
+        ]
+        .iter()
+        .map(|(id, w, h)| item(id, *w, *h))
+        .collect()
+    }
+
+    #[test]
+    fn guillotine_places_every_sprite_without_overlaps() {
+        let items = mixed_items();
+        let out = pack(&items, &guillotine_opts(PackingStrategy::Bssf, 256)).unwrap();
+        assert_eq!(out.pages.len(), 1, "todo cabe en 256");
+        assert_eq!(out.pages[0].placements.len(), items.len());
+        assert_valid(&out);
+        // El borde de 2 px se respeta en los cuatro lados.
+        for p in &out.pages {
+            for s in &p.placements {
+                assert!(
+                    s.frame.x >= 2 && s.frame.y >= 2,
+                    "sin margen: {:?}",
+                    s.frame
+                );
+                assert!(
+                    s.frame.x + s.frame.width <= p.width - 2
+                        && s.frame.y + s.frame.height <= p.height - 2,
+                    "sin margen inferior/derecho: {:?}",
+                    s.frame
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn guillotine_opens_a_second_page_when_nothing_fits() {
+        let mut items = mixed_items();
+        items.push(item("huge", 200, 200));
+        let out = pack(&items, &guillotine_opts(PackingStrategy::Baf, 256)).unwrap();
+        assert!(out.pages.len() >= 2, "el sprite grande fuerza otra página");
+        assert_valid(&out);
+        let total: usize = out.pages.iter().map(|p| p.placements.len()).sum();
+        assert_eq!(
+            total,
+            items.len(),
+            "todos los sprites acaban en alguna página"
+        );
+    }
+
+    #[test]
+    fn guillotine_best_is_never_worse_than_a_single_heuristic() {
+        let items = mixed_items();
+        let best = pack(&items, &guillotine_opts(PackingStrategy::Best, 256)).unwrap();
+        assert_valid(&best);
+        for strategy in PackingStrategy::all_heuristics() {
+            let one = pack(&items, &guillotine_opts(strategy, 256)).unwrap();
+            assert_valid(&one);
+            assert!(
+                size_metric(&best) <= size_metric(&one),
+                "Best {:?} peor que {:?}: {:?} vs {:?}",
+                PackingStrategy::Best,
+                strategy,
+                size_metric(&best),
+                size_metric(&one)
+            );
+        }
+    }
+
+    #[test]
+    fn guillotine_honours_rotation_when_allowed() {
+        // `a` deja una banda de 44 px: `b` (20x60) solo cabe girada.
+        let items = vec![item("a", 60, 20), item("b", 20, 60)];
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, true, 64, 0, 0, false);
+        opts.algorithm = PackingAlgorithm::Guillotine;
+        opts.pack_mode = PackMode::Fast;
+        let out = pack(&items, &opts).unwrap();
+        assert_valid(&out);
+        assert_eq!(out.pages.len(), 1, "girando, todo cabe en una página");
+        let b = out.pages[0]
+            .placements
+            .iter()
+            .find(|p| p.id == "b")
+            .unwrap();
+        assert!(b.rotated, "b debería haberse girado 90°");
+
+        // Sin rotación la misma pareja necesita dos páginas.
+        opts.allow_rotation = false;
+        let out2 = pack(&items, &opts).unwrap();
+        assert_valid(&out2);
+        assert_eq!(out2.pages.len(), 2, "sin rotación, b desborda la página");
+    }
+
+    #[test]
+    fn guillotine_beats_the_grid_layout_on_a_mixed_set() {
+        let items = mixed_items();
+        let mut grid = PackerOptions::new(PackingStrategy::Bssf, false, 256, 4, 2, false);
+        grid.algorithm = PackingAlgorithm::Grid;
+        grid.pack_mode = PackMode::Fast;
+        let g = pack(&items, &grid).unwrap();
+        let u = pack(&items, &guillotine_opts(PackingStrategy::Best, 256)).unwrap();
+        assert_valid(&g);
+        assert!(
+            size_metric(&u) <= size_metric(&g),
+            "guillotine: {:?} vs rejilla {:?}",
+            size_metric(&u),
+            size_metric(&g)
+        );
+    }
+
+    #[test]
+    fn guillotine_free_list_stays_a_partition() {
+        // El corte guillotina parte SOLO el rectángulo elegido en dos hijos:
+        // entre el sprite y ellos tilingean el padre, sin solapes.
+        let mut free = vec![Rect::new(0, 0, 100, 100)];
+        let placed = Rect::new(0, 0, 60, 10);
+        split_guillotine(&mut free, 0, placed);
+        let area: i64 = free.iter().map(|r| r.area()).sum();
+        assert_eq!(
+            area + placed.area(),
+            (100 * 100) as i64,
+            "sprite + hijos deben cubrir el padre al completo"
+        );
+        assert_eq!(free.len(), 2);
+        for i in 0..free.len() {
+            assert!(!free[i].intersects(&placed), "ningún hijo pisa al sprite");
+            for j in (i + 1)..free.len() {
+                assert!(
+                    !free[i].intersects(&free[j]),
+                    "los hijos deben ser disjuntos"
+                );
             }
         }
     }
