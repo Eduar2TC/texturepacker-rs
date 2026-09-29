@@ -93,12 +93,24 @@ fn output_view(app: &App, ui: &mut egui::Ui) {
         .id_salt("output_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.strong("Archivos generados");
-                for f in &result.output_files {
-                    ui.monospace(f);
-                }
-            });
+            let (title, hint) = if app.files_written {
+                (
+                    "Archivos generados",
+                    "Escritos en el disco durante la última publicación.",
+                )
+            } else {
+                (
+                    "Archivos que se publicarán",
+                    "Vista previa: aún no existen; esta es la lista exacta que                      escribirá «Publicar».",
+                )
+            };
+            ui.label(egui::RichText::new(title).strong()).on_hover_text(hint);
+            if result.output_files.is_empty() {
+                ui.label("(ninguno: añade sprites y publica)");
+            }
+            for f in &result.output_files {
+                ui.monospace(format!("  \u{2192} {f}"));
+            }
             ui.horizontal(|ui| {
                 ui.strong("Tiempos por etapa");
                 for (stage, ms) in &result.stage_times_ms {

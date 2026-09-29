@@ -647,7 +647,7 @@ fn execute(
     // publicar y los data files las cotejan, haya o no una variante de esa
     // escala entre las que se exportan.
     let base_scale = variant.map(|v| v.scale).unwrap_or(1.0);
-    let base_page_infos: Vec<PageInfo> = page_infos_at(config, &pages, base_scale, write_to_disk);
+    let base_page_infos: Vec<PageInfo> = page_infos_at(config, &pages, base_scale);
 
     for scale in &export_scales {
         // Una corrida de variante empaqueta ya a su escala: sus páginas se
@@ -744,9 +744,25 @@ fn execute(
                     fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
                 });
             } else {
-                // Vista previa: sin codificar ni escribir; solo el nombre que
-                // tendría la hoja.
-                variant_image_files.push(file_name.clone());
+                // Vista previa: sin codificar ni escribir, pero con los
+                // mismos nombres que escribiría la publicación (incluido el
+                // `.tpenc` y la hoja de normales), para que la pestaña
+                // «Archivos» liste lo que de verdad se va a generar.
+                let encrypt = |n: String| match &config.encryption_key {
+                    Some(_) => format!("{n}.tpenc"),
+                    None => n,
+                };
+                let final_name = encrypt(file_name.clone());
+                let normal_file = page
+                    .normal_pixels
+                    .as_ref()
+                    .map(|_| normal_page_file_name(config, page.index, &variant_name))
+                    .map(encrypt);
+                output_files.push(final_name.clone());
+                if let Some(n) = &normal_file {
+                    output_files.push(n.clone());
+                }
+                variant_image_files.push(final_name);
                 variant_page_infos.push(PageInfo {
                     index: page.index,
                     width: sw as i32,
@@ -754,7 +770,7 @@ fn execute(
                     file_name,
                     format: config.gpu_format.as_str().to_string(),
                     has_normals: page.has_normals,
-                    normal_file_name: None,
+                    normal_file_name: normal_file,
                     encrypted: config.encryption_key.is_some(),
                     fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
                 });
@@ -988,12 +1004,7 @@ fn scale_variant_geometry(config: &mut ProjectConfig, scale: f32) {
 /// `PageInfo` of every page at `scale`, with the file names this run really
 /// writes (`.tpenc` included when encryption is on; names only while
 /// previewing).
-fn page_infos_at(
-    config: &ProjectConfig,
-    pages: &[AtlasPage],
-    scale: f32,
-    write_to_disk: bool,
-) -> Vec<PageInfo> {
+fn page_infos_at(config: &ProjectConfig, pages: &[AtlasPage], scale: f32) -> Vec<PageInfo> {
     let variant = variant_suffix_for(config, scale);
     pages
         .iter()
@@ -1003,16 +1014,13 @@ fn page_infos_at(
                 Some(_) => format!("{n}.tpenc"),
                 None => n,
             };
-            let (file_name, normal_file_name) = if write_to_disk {
-                let normal = page
-                    .normal_pixels
+            let (file_name, normal_file_name) = (
+                encrypt(name),
+                page.normal_pixels
                     .as_ref()
                     .map(|_| normal_page_file_name(config, page.index, &variant))
-                    .map(encrypt);
-                (encrypt(name), normal)
-            } else {
-                (name, None)
-            };
+                    .map(encrypt),
+            );
             PageInfo {
                 index: page.index,
                 width: page.width,

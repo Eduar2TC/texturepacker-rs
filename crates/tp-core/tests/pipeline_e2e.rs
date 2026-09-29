@@ -1969,6 +1969,39 @@ fn variant_passes_only_run_when_writing_to_disk() {
 }
 
 #[test]
+fn preview_lists_exactly_the_files_publish_writes() {
+    let (_fx, output, mut cfg) = variant_fixture("preview_files");
+    cfg.encryption_key = Some("clave-secreta".into());
+
+    let preview = pipeline::run_preview(&cfg).unwrap();
+    assert!(
+        !output.exists(),
+        "la vista previa no debe crear ficheros ni directorios"
+    );
+
+    let published = pipeline::run(&cfg).unwrap();
+    let mut listed: Vec<String> = preview.result.output_files.clone();
+    listed.sort();
+    let mut written: Vec<String> = published.result.output_files.clone();
+    written.sort();
+    assert_eq!(
+        listed, written,
+        "la vista previa debe predecir exactamente los ficheros de la publicación"
+    );
+    for f in &written {
+        assert!(output.join(f).exists(), "falta el fichero {f}");
+    }
+    // La lista no se queda solo con los metadatos: también las hojas,
+    // con el sufijo de cifrado que tendrán al escribirse (los metadatos
+    // se guardan en claro).
+    assert!(
+        written.iter().any(|f| f.ends_with(".png.tpenc")),
+        "{written:?}"
+    );
+    assert!(written.iter().any(|f| f.ends_with(".json")), "{written:?}");
+}
+
+#[test]
 fn identical_layout_scales_the_base_sheet_by_default() {
     let (_fx, output, _cfg) = variant_fixture("variant_identical");
     let out = pipeline::run(&_cfg).unwrap();

@@ -25,7 +25,7 @@ corrección» al final.
 | **"▶ Animación: vista previa de animación de los sprites seleccionados"** (`crates/tp-app/src/app/toolbar.rs:93`) **[RESUELTO]** | `collect_frames` (`crates/tp-app/src/app/animation.rs`) filtra por `selected_paths` cuando hay selección; sin selección reproduce todos. El grupo elegido se recalcula con `effective_group` cuando la selección lo deja fuera. |
 | **"Align to grid"** (`align_to_grid`) **[RESUELTO]** | Ahora el packer sube cada origen de frame al múltiplo (`snap_pos` en `crates/tp-core/src/pack.rs`, aplicado en MaxRects/Guillotine/Polygon, Grid, Basic y Manual) y `align_to_grid` dejó de entrar en `effective_divisors`: a la par que el original, alinea **sin estirar** los sprites (solo el *common divisor* los estira). Tests `align_to_grid_snaps_every_corner_without_stretching` (8 casos) y `lote5_align_to_grid_rounds_padding_and_positions`. |
 | **Hoja principal: "← Selección" / arrastrar al nodo `(hoja principal)`** **[RESUELTO]** | `run_groups` (`crates/tp-core/src/pipeline.rs`) lleva un `owner` por id: el primer grupo que lista un sprite es su dueño y el grupo por defecto recoge los suyos propios y los no listados, así que asignar un sprite ya no lo saca del atlas. |
-| **Pestaña "Archivos" del panel inferior** | En preview se empujan nombres de metadata sin escribirlos (`crates/tp-core/src/pipeline.rs:731,753`) y las imágenes solo se listan al escribir (`pipeline.rs:633`) → lista ficheros que no existen y omite los PNG. **Pendiente** (fuera del orden acordado). |
+| **Pestaña "Archivos" del panel inferior** **[RESUELTO]** | La vista previa lista ahora **exactamente** los ficheros que escribirá la publicación — hojas, normales y metadatos, con el `.tpenc` cuando hay cifrado (`execute` en `crates/tp-core/src/pipeline.rs`) — y la pestaña distingue «Archivos que se publicarán» de «Archivos generados» según `App::files_written`. Test `preview_lists_exactly_the_files_publish_writes`. |
 
 ## 2) Parciales — existen, pero muy por debajo del original
 
@@ -109,9 +109,13 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
    mueve los sprites y no los estira); tests `align_to_grid_snaps_every_corner_without_stretching`
    y `effective_divisors_ignore_align_to_grid`.
 
-Pendientes fuera del orden acordado: la **pestaña "Archivos"** (§1), y el resto de la
-lista de §2/§3.
+8. **Pestaña "Archivos"** (lista mentirosa en vista previa) — **hecho**: la
+   preview predice los mismos nombres que escribe la publicación (imagen,
+   normales, metadatos y `.tpenc`) y la pestaña indica si los ficheros están
+   escritos o por escribir; test `preview_lists_exactly_the_files_publish_writes`.
 
-Puerta de calidad tras los puntos 1-7: `cargo fmt --all --check`,
+Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
+
+Puerta de calidad tras los puntos 1-8: `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (224 tests).
+`cargo test --workspace` en verde (225 tests).

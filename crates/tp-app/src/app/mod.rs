@@ -275,6 +275,10 @@ pub struct App {
     last_title: String,
     /// One automatic preview retry per successful cycle (mid-write reads).
     preview_retry_used: bool,
+    /// El último resultado aplicado salió de una publicación (ficheros en
+    /// disco) o de la vista previa (solo nombres predichos): manda en cómo
+    /// etiqueta la pestaña «Archivos».
+    files_written: bool,
 }
 
 impl App {
@@ -345,6 +349,7 @@ impl App {
             bottom_collapsed: false,
             last_title: String::new(),
             preview_retry_used: false,
+            files_written: false,
             bottom_height: BOTTOM_OPEN_HEIGHT,
             canvas_rect: None,
             preview_zoom: 1.0,
@@ -671,7 +676,7 @@ impl App {
                 self.pending = None;
                 match msg.result {
                     Ok(out) => {
-                        self.apply_output(ctx, out);
+                        self.apply_output(ctx, out, false);
                         self.log(
                             LogKind::Info,
                             format!("Vista previa actualizada en {} ms.", msg.elapsed_ms),
@@ -842,8 +847,9 @@ impl App {
     /// Apply a pipeline result: refresh textures and keep the selection
     /// stable. Pivots and 9-patch borders already come from the project
     /// (`pivot_overrides` / `border_overrides`), so nothing is reapplied here.
-    fn apply_output(&mut self, ctx: &egui::Context, out: PipelineOutput) {
+    fn apply_output(&mut self, ctx: &egui::Context, out: PipelineOutput, files_written: bool) {
         self.selected_page = self.selected_page.min(out.pages.len().saturating_sub(1));
+        self.files_written = files_written;
         self.result = Some(out);
         self.preview_retry_used = false;
         self.rebuild_textures(ctx);
@@ -1184,7 +1190,7 @@ impl App {
                 for f in &out.result.output_files {
                     self.log(LogKind::Info, format!("  → {f}"));
                 }
-                self.apply_output(ctx, out);
+                self.apply_output(ctx, out, true);
                 self.fit_zoom();
             }
             Err(e) => {
