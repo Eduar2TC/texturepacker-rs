@@ -7,7 +7,7 @@ license.workspace = true
 description = "TexturePacker-RS command-line interface"
 
 [dependencies]
-tp-core = { path = "../tp-core" }
+tp-core = { path = "../tp-core", features = ["gpu-formats"] }
 serde_json.workspace = true
 
 [lints]
