@@ -27,6 +27,7 @@ pub mod etc2;
 pub mod export;
 pub mod hash;
 pub mod ingest;
+pub mod keys;
 pub mod pack;
 pub mod pipeline;
 pub mod pixels;

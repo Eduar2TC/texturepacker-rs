@@ -74,6 +74,11 @@ fn execute(
     variant: Option<&VariantRun>,
 ) -> Result<PipelineOutput> {
     config.validate()?;
+    // Clave global: si el proyecto solo nombra una clave guardada, se
+    // resuelve aquí — en la publicación, si no existe, se falla antes de
+    // escribir nada.
+    let resolved_key = crate::keys::resolve_config(config, write_to_disk)?;
+    let config: &ProjectConfig = &resolved_key;
     let mut stage_times: Vec<(String, u64)> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 

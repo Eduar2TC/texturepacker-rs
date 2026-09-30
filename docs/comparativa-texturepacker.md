@@ -110,8 +110,19 @@ corrección» al final.
   DXT_LINEAR|DXT_PERCEPTUAL`. Compresores propios: BC1/BC3 (`dxt.rs`), PVRTC1 2/4bpp
   (`pvrtc.rs`), ETC1/ETC2 con esfuerzo escalonado (`etc2.rs`) y ASTC con `astcenc-rs`.
   Solo queda BASIS/BasisU (§3).
-- **Content protection**: AES-GCM propio (más general que el original, que es solo
-  Cocos2D + `pvr.ccz`), pero sin gestor de clave global reutilizable.
+- **Content protection — hecho**: AES-GCM propio (más general que el original, que es
+  solo Cocos2D + `pvr.ccz`) más el gestor de clave global que faltaba: `tp_core::keys`
+  guarda `nombre -> clave` en `keys.toml` dentro del directorio de configuración del
+  usuario (`TEXTUREPACKER_KEYS_FILE`/`_DIR` apuntan a otro sitio, que es lo que usan los
+  tests), el proyecto guarda `encryption_key_name` y la publicación resuelve la clave
+  antes de escribir nada — la clave explícita `encryption_key` gana, y si el nombre no
+  existe solo falla al publicar: la vista previa sigue listando los mismos nombres.
+  Flags `--key-name` y `--save-key` (con `--key`), y «Clave global» con combo +
+  Guardar/Borrar en Ajustes. Tests: `stored_keys_roundtrip_and_are_sorted`,
+  `empty_names_and_keys_are_rejected_and_broken_files_are_ignored`,
+  `resolve_prefers_the_explicit_key_and_fails_on_a_missing_name`,
+  `global_key_name_roundtrip_and_legacy_default`, `global_key_flags_parse` y el e2e
+  `global_key_name_publishes_encrypted_files`.
 
 ## 3) Prácticamente inexistentes
 
@@ -183,7 +194,7 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
-272 tras el quinto, **279 tras el sexto**).
+272 tras el quinto, 279 tras el sexto, **285 tras el séptimo**).
 
 ---
 
@@ -232,3 +243,13 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    (`export.rs`, Bresenham con recorte al lienzo) aplicado sobre las páginas justo después
    de montar los `SpriteAsset` — así lo ven la vista previa y la publicación —, flags CLI
    validados y la sección «Extras del data format» en la GUI.
+
+7. **Gestor de clave global** — **hecho** (ver §2 «Content protection»): `tp_core::keys`
+   con `list`/`get`/`put`/`remove` (y sus variantes con ruta explícita para los tests),
+   fichero `keys.toml` con permisos 600 y directorio de configuración por plataforma;
+   `ProjectConfig::encryption_key_name` (con `serde(default)`), resolución al inicio de
+   `pipeline::execute` vía `keys::resolve_config` (estricta al publicar, tolerante en la
+   vista previa), flags `--key-name`/`--save-key` en el CLI y combo «Clave global» con
+   Guardar/Borrar en Ajustes. Tests: los tres de `tp_core::keys`,
+   `global_key_name_roundtrip_and_legacy_default`, `global_key_flags_parse` y el e2e
+   `global_key_name_publishes_encrypted_files`.

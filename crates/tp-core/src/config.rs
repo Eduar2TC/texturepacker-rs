@@ -1212,7 +1212,12 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub flip_vertical: bool,
     /// Optional AES-256-GCM key; texture files are encrypted when set.
+    #[serde(default)]
     pub encryption_key: Option<String>,
+    /// Nombre de una clave del almacén global (`--key-name`): se usa solo
+    /// cuando `encryption_key` está vacía.
+    #[serde(default)]
+    pub encryption_key_name: Option<String>,
     /// Path to a custom Mustache template; when `None` a built-in is used
     /// according to `template_format`.
     pub export_template: Option<PathBuf>,
@@ -1470,6 +1475,7 @@ impl Default for ProjectConfig {
             shape_debug: false,
             flip_vertical: false,
             encryption_key: None,
+            encryption_key_name: None,
             export_template: None,
             template_format: TemplateFormat::Json,
             class_file: String::new(),
@@ -2236,6 +2242,31 @@ mod tests {
         assert!(!legacy.cache_busting);
         assert!(!legacy.shape_debug);
         assert_eq!(legacy.gdx_filter, GdxFilter::Linear);
+        assert!(legacy.validate().is_ok());
+    }
+
+    #[test]
+    fn global_key_name_roundtrip_and_legacy_default() {
+        let cfg = ProjectConfig {
+            encryption_key_name: Some("proyecto".into()),
+            ..ProjectConfig::default()
+        };
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert_eq!(back.encryption_key_name.as_deref(), Some("proyecto"));
+        assert!(back.validate().is_ok());
+
+        // Un `.tpproj` anterior a este campo sigue cargando: sin clave global.
+        let mut text = ProjectConfig::default().to_toml().unwrap();
+        if let Some(line) = text
+            .lines()
+            .find(|l| l.starts_with("encryption_key_name"))
+            .map(str::to_string)
+        {
+            text = text.replace(&line, "");
+        }
+        assert!(!text.contains("encryption_key_name"));
+        let legacy = ProjectConfig::from_toml(&text).unwrap();
+        assert_eq!(legacy.encryption_key_name, None);
         assert!(legacy.validate().is_ok());
     }
 

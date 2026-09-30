@@ -75,6 +75,8 @@ fn usage() -> ! {
          \x20 --gdx-filter T       Filtro del data format de LibGDX: linear | nearest\n\
          \x20 --shape-debug        Dibuja los contornos de los sprites sobre la hoja\n\
          \x20 --key CLAVE           Cifrar texturas con AES-256-GCM\n\
+         \x20 --key-name NOMBRE     Usar la clave global guardada con ese nombre\n\
+         \x20 --save-key NOMBRE     Guardar --key en el almacén global y usarla\n\
          \x20 --no-normals          No empaquetar mapas de normales\n\
          \x20 --normalmap-suffix T  Sufijo del mapa de normales (defecto _normal)\n\
          \x20 --normalmap-filter T  Ficheros con esta subcadena en la ruta son normales\n\
@@ -423,6 +425,18 @@ fn cmd_pack(args: &[String]) {
     }
     if let Some(v) = val("key") {
         cfg.encryption_key = if v.is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = val("key-name") {
+        cfg.encryption_key_name = if v.trim().is_empty() { None } else { Some(v) };
+    }
+    if let Some(v) = val("save-key") {
+        let key = cfg
+            .encryption_key
+            .clone()
+            .unwrap_or_else(|| fail("--save-key requiere --key CLAVE".into()));
+        tp_core::keys::put(&v, &key)
+            .unwrap_or_else(|e| fail(format!("No se pudo guardar la clave: {e}")));
+        cfg.encryption_key_name = Some(v);
     }
     if let Some(v) = val("base-name") {
         cfg.base_file_name = v;
@@ -820,6 +834,22 @@ mod tests {
             DxtMode::parse(val("dxt-mode").as_deref().unwrap()),
             Some(DxtMode::Perceptual)
         ));
+    }
+
+    #[test]
+    fn global_key_flags_parse() {
+        let (_, values, _) = parse_args(&args(&[
+            "--key-name",
+            "juego",
+            "--save-key",
+            "otra",
+            "--key",
+            "clave-secreta",
+        ]));
+        let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+        assert_eq!(val("key-name").as_deref(), Some("juego"));
+        assert_eq!(val("save-key").as_deref(), Some("otra"));
+        assert_eq!(val("key").as_deref(), Some("clave-secreta"));
     }
 
     #[test]

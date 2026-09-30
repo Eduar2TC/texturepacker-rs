@@ -2242,3 +2242,63 @@ fn cache_busting_and_shape_debug_reach_the_published_files() {
     let pink = sheet.pixels().filter(|p| p.0 == [255, 0, 255, 255]).count();
     assert!(pink > 0, "shape debug no pintó ningún contorno");
 }
+
+#[test]
+fn global_key_name_publishes_encrypted_files() {
+    let fx = Fixture::new("global_key");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+    write_png(&input.join("a.png"), 8, 8, [100, 150, 200, 255]);
+
+    // Almacén de claves aislado para este test.
+    let keys_file = fx.dir.join("keys.toml");
+    std::env::set_var("TEXTUREPACKER_KEYS_FILE", &keys_file);
+    tp_core::keys::put("juego", "clave-secreta").unwrap();
+    assert_eq!(tp_core::keys::list(), vec!["juego".to_string()]);
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        encryption_key_name: Some("juego".into()),
+        ..ProjectConfig::default()
+    };
+    let out = pipeline::run(&cfg).unwrap();
+
+    // El proyecto solo nombra la clave: la hoja sale cifrada con ella.
+    let enc_files: Vec<&String> = out
+        .result
+        .output_files
+        .iter()
+        .filter(|f| f.ends_with(".tpenc"))
+        .collect();
+    assert!(!enc_files.is_empty());
+    for f in &enc_files {
+        let bytes = std::fs::read(output.join(f)).unwrap();
+        let plain = export::decrypt_bytes(&bytes, "clave-secreta").unwrap();
+        image::load_from_memory(&plain).expect("descifrada con la clave global");
+    }
+    assert!(out.result.output_files.iter().any(|f| f.ends_with(".json")));
+
+    // Nombre inexistente: la publicación falla y no escribe nada.
+    std::fs::remove_dir_all(&output).unwrap();
+    let bad = ProjectConfig {
+        encryption_key_name: Some("no-existe".into()),
+        ..cfg.clone()
+    };
+    let err = pipeline::run(&bad)
+        .err()
+        .expect("debe fallar sin la clave global")
+        .to_string();
+    assert!(err.contains("no-existe"), "mensaje inesperado: {err}");
+    assert!(!output.exists());
+
+    // La vista previa no falla: solo necesita los nombres de fichero.
+    let preview = pipeline::run_preview(&cfg).unwrap();
+    assert!(preview
+        .result
+        .output_files
+        .iter()
+        .any(|f| f.ends_with(".tpenc")));
+
+    std::env::remove_var("TEXTUREPACKER_KEYS_FILE");
+}

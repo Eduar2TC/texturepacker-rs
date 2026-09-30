@@ -271,6 +271,91 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.config.encryption_key = if key.is_empty() { None } else { Some(key) };
             }
+            // Clave global: se guarda una sola vez y se reutiliza en
+            // cualquier proyecto, como en el original.
+            ui.label("Clave global (guardada una vez y reutilizable)");
+            let names = tp_core::keys::list();
+            let mut name = app.config.encryption_key_name.clone().unwrap_or_default();
+            ui.horizontal(|ui| {
+                let selected = if name.is_empty() {
+                    "— ninguna —".to_string()
+                } else {
+                    name.clone()
+                };
+                egui::ComboBox::from_id_salt("global_key_name")
+                    .selected_text(selected)
+                    .show_ui(ui, |ui| {
+                        if ui
+                            .selectable_value(&mut name, String::new(), "— ninguna —")
+                            .clicked()
+                        {
+                            app.config.encryption_key_name = None;
+                            app.on_config_changed();
+                        }
+                        for n in &names {
+                            if ui
+                                .selectable_value(&mut name, n.clone(), n)
+                                .on_hover_text("Usa esta clave en el proyecto")
+                                .clicked()
+                            {
+                                app.config.encryption_key_name = Some(n.clone());
+                                // La clave escrita a mano tiene prioridad:
+                                // se limpia para que la global surta efecto.
+                                app.config.encryption_key = None;
+                                app.on_config_changed();
+                            }
+                        }
+                    });
+                if ui
+                    .button("Guardar")
+                    .on_hover_text("Guarda la clave escrita arriba con este nombre")
+                    .clicked()
+                {
+                    let key = app.config.encryption_key.clone().unwrap_or_default();
+                    match tp_core::keys::put(&name, &key) {
+                        Ok(()) => {
+                            app.config.encryption_key_name = Some(name.clone());
+                            app.log(
+                                super::LogKind::Info,
+                                format!("Clave global «{name}» guardada."),
+                            );
+                        }
+                        Err(e) => app.log(super::LogKind::Warning, e.to_string()),
+                    }
+                }
+                if ui
+                    .button("Borrar")
+                    .on_hover_text("Borra la clave global seleccionada")
+                    .clicked()
+                    && !name.is_empty()
+                {
+                    match tp_core::keys::remove(&name) {
+                        Ok(true) => {
+                            app.config.encryption_key_name = None;
+                            app.log(
+                                super::LogKind::Info,
+                                format!("Clave global «{name}» borrada."),
+                            );
+                        }
+                        Ok(false) => {}
+                        Err(e) => app.log(super::LogKind::Warning, e.to_string()),
+                    }
+                }
+            });
+            if ui
+                .add(
+                    egui::TextEdit::singleline(&mut name)
+                        .desired_width(190.0)
+                        .hint_text("nombre de la clave global"),
+                )
+                .changed()
+            {
+                app.config.encryption_key_name = if name.trim().is_empty() {
+                    None
+                } else {
+                    Some(name)
+                };
+            }
         });
 }
 
