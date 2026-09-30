@@ -60,6 +60,10 @@ fn usage() -> ! {
          \x20 --variant E:NOMBRE    Variante con nombre, p.ej. 1.0:-ipadhd,0.5:-hd\n\
          \x20 --variants LIST       Escalas, p.ej. 2,0.5 (sufijos @2x, -hd)\n\
          \x20 --template-format T   json | xml | plist | cpp | tsv | text\n\
+         \x20 --class-file F       Fichero de clase Swift extra (spritekit-swift)\n\
+         \x20 --header-file F      Cabecera C++/ObjC extra (cocos2d-x)\n\
+         \x20 --source-file F      Código fuente C++ extra (cocos2d-x)\n\
+         \x20 --spriteids-file F   Lista de ids de sprites extra (amethyst)\n\
          \x20 --key CLAVE           Cifrar texturas con AES-256-GCM\n\
          \x20 --no-normals          No empaquetar mapas de normales\n\
          \x20 --normalmap-suffix T  Sufijo del mapa de normales (defecto _normal)\n\
@@ -354,6 +358,18 @@ fn cmd_pack(args: &[String]) {
     }
     if let Some(v) = val("template") {
         cfg.export_template = Some(PathBuf::from(v));
+    }
+    if let Some(v) = val("class-file") {
+        cfg.class_file = v;
+    }
+    if let Some(v) = val("header-file") {
+        cfg.header_file = v;
+    }
+    if let Some(v) = val("source-file") {
+        cfg.source_file = v;
+    }
+    if let Some(v) = val("spriteids-file") {
+        cfg.spriteids_file = v;
     }
     if let Some(v) = val("key") {
         cfg.encryption_key = if v.is_empty() { None } else { Some(v) };
@@ -681,6 +697,25 @@ mod tests {
         assert_eq!(val("normalmap-sheet").as_deref(), Some("norms"));
         assert!(flags.iter().any(|f| f == "normalmap-detect"));
         assert!(flags.iter().any(|f| f == "no-normals"));
+    }
+
+    #[test]
+    fn extra_data_file_flags_parse() {
+        let (_, values, _) = parse_args(&args(&[
+            "--class-file",
+            "Sprites.swift",
+            "--header-file",
+            "Sprites.h",
+            "--source-file",
+            "Sprites.cpp",
+            "--spriteids-file",
+            "spriteids.txt",
+        ]));
+        let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+        assert_eq!(val("class-file").as_deref(), Some("Sprites.swift"));
+        assert_eq!(val("header-file").as_deref(), Some("Sprites.h"));
+        assert_eq!(val("source-file").as_deref(), Some("Sprites.cpp"));
+        assert_eq!(val("spriteids-file").as_deref(), Some("spriteids.txt"));
     }
 
     #[test]

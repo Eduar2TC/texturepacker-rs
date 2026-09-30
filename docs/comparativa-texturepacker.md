@@ -29,10 +29,20 @@ corrección» al final.
 
 ## 2) Parciales — existen, pero muy por debajo del original
 
-- **Exportadores**: 6 plantillas nativas (JSON, XML, Plist, C++ header, TSV, PlainText —
-  `crates/tp-core/src/config.rs:621-630`) + plantilla Mustache propia, frente a los 60+ del
-  original; sin ficheros extra por framework (`--class-file`, `--header-file`,
-  `--source-file`, `--spriteids-file`) ni botón de conversión de formato de datos.
+- **Exportadores** **[PARCIAL]**: 6 plantillas nativas (JSON, XML, Plist, C++ header, TSV,
+  PlainText — `crates/tp-core/src/config.rs:621-630`) + plantilla Mustache propia, frente a
+  los 60+ del original, y sigue sin existir el botón de conversión de formato de datos.
+  **Los ficheros extra por framework ya están**: `class_file`, `header_file`, `source_file`
+  y `spriteids_file` en el `.tpproj` (vacío = no escribir), generados por
+  `templates::extra_files` (`crates/tp-core/src/templates.rs`) — ids C++/Swift saneados
+  (ruta y signos → `_`, dígito inicial con prefijo `_`, colisiones con `_` extra), cabecera
+  con guard `ATLAS_SPRITES_H`, fuente con `#include` de la cabecera configurada o
+  `<ns>.h`, enum Swift `public enum` con `public static let` y lista de ids una por línea —,
+  escritos junto a los metadatos y anunciados en la vista previa (pestaña «Archivos»), con
+  sección «Ficheros extra por framework» en la GUI y flags `--class-file`, `--header-file`,
+  `--source-file` y `--spriteids-file`. Tests: `extra_files_generate_cpp_swift_and_id_list`,
+  `extra_data_file_settings_roundtrip_and_default_empty`, `extra_data_file_flags_parse` y el
+  e2e `lote10_extra_data_files_export`.
 - **Formatos de textura de salida** **[PARCIAL]**: 16 de los 19 del original. A PNG/PNG8/
   JPG/WebP/ETC2/PVRTC se les han sumado **BMP, TGA y TIFF** (codificador de `image`),
   **DDS** (cabecera legacy de 124 bytes con máscaras de canal y payload crudo),
@@ -155,7 +165,7 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (246 tests tras el tercer punto de §2/§3).
+`cargo test --workspace` en verde (246 tests tras el tercer punto, **250 tras el cuarto**).
 
 ---
 
@@ -182,5 +192,8 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    [PARCIAL] 16/19»): BMP/TGA/TIFF/DDS/ZKTX/PVR3GZ/PVR3CCZ/ETC1(PKM)/ETC1(KTX) nuevos,
    con `GpuFormat::parse`, combo de la GUI, `--format` ampliado y e2e propio. Faltan
    `ktx2` y `basis`.
-4. **Exportadores** — pendiente.
+4. **Exportadores (ficheros extra)** — **hecho** (ver §2 «Exportadores [PARCIAL]»): los cuatro
+   campos del `.tpproj`, `templates::extra_files` + `ident`, escritura junto a los metadatos
+   con anuncio en la vista previa, flags CLI y sección de la GUI. Quedan sin cubrir los 60+
+   presets de plantilla del original y la conversión de formato de datos.
 5. **Calidades y pixel formats GPU** — pendiente.

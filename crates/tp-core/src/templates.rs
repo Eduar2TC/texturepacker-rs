@@ -7,8 +7,9 @@
 
 use crate::config::{ProjectConfig, TemplateFormat, TrimMode};
 use crate::error::Result;
-use crate::types::{PackResult, PageInfo};
+use crate::types::{PackResult, PageInfo, SpriteAsset};
 use serde_json::{json, Value};
+use std::collections::HashSet;
 
 /// Extension for the metadata file of a template format.
 /// File extension of the data file for each built-in format: LibGDX uses an
@@ -323,6 +324,97 @@ pub fn render_mustache(template: &str, ctx: &Value) -> Result<String> {
     reg.render_template(template, ctx).map_err(Into::into)
 }
 
+/// Extra data files for frameworks, like the original's `--class-file`,
+/// `--header-file`, `--source-file` and `--spriteids-file`. Each entry is
+/// `(file name, contents)`; options left empty are skipped.
+///
+/// The identifier sanitiser maps every non-ASCII-alphanumeric character to
+/// `_` (`hero/idle.png` → `hero_idle_png`) and prefixes digits, and names are
+/// de-duplicated so the generated C++/Swift always compiles.
+pub fn extra_files(config: &ProjectConfig, sprites: &[SpriteAsset]) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let ns = ident(&config.base_file_name);
+    let mut used: std::collections::HashSet<String> = HashSet::new();
+    let ids: Vec<(&str, String)> = sprites
+        .iter()
+        .map(|s| {
+            let mut name = ident(&s.id);
+            while !used.insert(name.clone()) {
+                name.push('_');
+            }
+            (s.id.as_str(), name)
+        })
+        .collect();
+
+    if !config.spriteids_file.trim().is_empty() {
+        let mut list = String::new();
+        for (id, _) in &ids {
+            list.push_str(id);
+            list.push('\n');
+        }
+        out.push((config.spriteids_file.clone(), list));
+    }
+    if !config.header_file.trim().is_empty() {
+        let guard = format!("{}_SPRITES_H", ns.to_uppercase());
+        let mut h = String::new();
+        h.push_str("// Generado por TexturePacker-RS — no editar.\n");
+        h.push_str(&format!("#ifndef {guard}\n#define {guard}\n\n"));
+        h.push_str(&format!("namespace {ns} {{\n"));
+        for (id, name) in &ids {
+            h.push_str(&format!("extern const char* const {name}; // {id}\n"));
+        }
+        h.push_str(&format!("}} // namespace {ns}\n\n#endif // {guard}\n"));
+        out.push((config.header_file.clone(), h));
+    }
+    if !config.source_file.trim().is_empty() {
+        let include = if !config.header_file.trim().is_empty() {
+            config
+                .header_file
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&config.header_file)
+                .to_string()
+        } else {
+            format!("{ns}.h")
+        };
+        let mut src = String::new();
+        src.push_str("// Generado por TexturePacker-RS — no editar.\n");
+        src.push_str(&format!("#include \"{include}\"\n\n"));
+        src.push_str(&format!("namespace {ns} {{\n"));
+        for (id, name) in &ids {
+            src.push_str(&format!("const char* const {name} = \"{id}\";\n"));
+        }
+        src.push_str(&format!("}} // namespace {ns}\n"));
+        out.push((config.source_file.clone(), src));
+    }
+    if !config.class_file.trim().is_empty() {
+        let mut cls = String::new();
+        cls.push_str("// Generado por TexturePacker-RS — no editar.\n");
+        cls.push_str(&format!("public enum {ns} {{\n"));
+        for (id, name) in &ids {
+            cls.push_str(&format!("  public static let {name} = \"{id}\"\n"));
+        }
+        cls.push_str("}\n");
+        out.push((config.class_file.clone(), cls));
+    }
+    out
+}
+
+/// C/C++/Swift identifier for a sprite id or base file name.
+fn ident(raw: &str) -> String {
+    let mut out: String = raw
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    if out.is_empty() {
+        return "_".to_string();
+    }
+    if out.chars().next().is_some_and(|c| c.is_ascii_digit()) {
+        out.insert(0, '_');
+    }
+    out
+}
+
 fn builtin_template(format: TemplateFormat) -> &'static str {
     match format {
         TemplateFormat::Xml => r#"<TextureAtlas imagePath="{{meta.image}}">
@@ -449,6 +541,73 @@ mod tests {
             got[0].frames,
             vec!["f_9".to_string(), "f_10".to_string(), "f_11".to_string()]
         );
+    }
+
+    #[test]
+    fn extra_files_generate_cpp_swift_and_id_list() {
+        let mut cfg = ProjectConfig {
+            base_file_name: "atlas".into(),
+            class_file: "Sprites.swift".into(),
+            header_file: "Sprites.h".into(),
+            source_file: "Sprites.cpp".into(),
+            spriteids_file: "spriteids.txt".into(),
+            ..ProjectConfig::default()
+        };
+        let mut sprites = sample_result().sprites;
+        sprites[0].id = "1up/idle.png".into();
+        let mut twin = sprites[0].clone();
+        twin.id = "1up-idle.png".into(); // mismo identificador: se deduplica
+        sprites.push(twin);
+
+        let files = extra_files(&cfg, &sprites);
+        assert_eq!(files.len(), 4);
+        let get = |name: &str| -> String {
+            files
+                .iter()
+                .find(|(n, _)| n == name)
+                .unwrap_or_else(|| panic!("falta {name}"))
+                .1
+                .clone()
+        };
+
+        assert_eq!(get("spriteids.txt"), "1up/idle.png\n1up-idle.png\n");
+
+        let header = get("Sprites.h");
+        assert!(header.contains("#ifndef ATLAS_SPRITES_H"), "{header}");
+        assert!(header.contains("namespace atlas {"), "{header}");
+        assert!(
+            header.contains("extern const char* const _1up_idle_png; // 1up/idle.png"),
+            "{header}"
+        );
+        assert!(header.contains("_1up_idle_png_; "), "sin dedupe: {header}");
+        assert!(header.contains("#endif // ATLAS_SPRITES_H"), "{header}");
+
+        let source = get("Sprites.cpp");
+        assert!(source.contains("#include \"Sprites.h\""), "{source}");
+        assert!(
+            source.contains("const char* const _1up_idle_png = \"1up/idle.png\";"),
+            "{source}"
+        );
+
+        let swift = get("Sprites.swift");
+        assert!(swift.contains("public enum atlas {"), "{swift}");
+        assert!(
+            swift.contains("public static let _1up_idle_png = \"1up/idle.png\""),
+            "{swift}"
+        );
+
+        // Vacío = no se escribe ese fichero.
+        cfg.class_file.clear();
+        cfg.header_file.clear();
+        let files = extra_files(&cfg, &sprites);
+        assert_eq!(files.len(), 2);
+        let source = files
+            .iter()
+            .find(|(n, _)| n == "Sprites.cpp")
+            .map(|(_, c)| c.clone())
+            .unwrap();
+        // Sin cabecera configurada se incluye la derivada del nombre base.
+        assert!(source.contains("#include \"atlas.h\""), "{source}");
     }
 
     fn sample_result() -> PackResult {

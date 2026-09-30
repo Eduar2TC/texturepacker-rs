@@ -2135,3 +2135,72 @@ fn identical_layout_scales_the_base_sheet_by_default() {
         "sin opciones la variante es la hoja base reescalada"
     );
 }
+
+#[test]
+fn lote10_extra_data_files_export() {
+    let fx = Fixture::new("lote10_extra_files");
+    let input = make_input_dir(&fx.dir, "in");
+    write_png(&input.join("hero.png"), 8, 8, [10, 20, 30, 255]);
+    write_png(&input.join("1up-idle.png"), 8, 8, [40, 50, 60, 255]);
+
+    let output = fx.dir.join("out");
+    let cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        base_file_name: "atlas".into(),
+        class_file: "Sprites.swift".into(),
+        header_file: "Sprites.h".into(),
+        source_file: "Sprites.cpp".into(),
+        spriteids_file: "spriteids.txt".into(),
+        ..ProjectConfig::default()
+    };
+
+    let preview = pipeline::run_preview(&cfg).unwrap();
+    let out = pipeline::run(&cfg).unwrap();
+
+    let extras = ["Sprites.swift", "Sprites.h", "Sprites.cpp", "spriteids.txt"];
+    for f in extras {
+        assert!(
+            out.result.output_files.iter().any(|x| x == f),
+            "falta {f} en {:?}",
+            out.result.output_files
+        );
+        assert!(
+            preview.result.output_files.iter().any(|x| x == f),
+            "la vista previa no anuncia {f}"
+        );
+        assert!(output.join(f).exists(), "no se escribió {f}");
+    }
+
+    let ids = std::fs::read_to_string(output.join("spriteids.txt")).unwrap();
+    assert_eq!(ids.lines().count(), 2, "{ids:?}");
+    assert!(ids.contains("hero\n"), "{ids:?}");
+    assert!(ids.contains("1up-idle\n"), "{ids:?}");
+
+    let header = std::fs::read_to_string(output.join("Sprites.h")).unwrap();
+    assert!(header.contains("#ifndef ATLAS_SPRITES_H"), "{header}");
+    assert!(header.contains("namespace atlas {"), "{header}");
+    assert!(
+        header.contains("extern const char* const hero; // hero"),
+        "{header}"
+    );
+    // Id que empieza por dígito: el identificador lleva prefijo "_".
+    assert!(
+        header.contains("extern const char* const _1up_idle; // 1up-idle"),
+        "{header}"
+    );
+
+    let source = std::fs::read_to_string(output.join("Sprites.cpp")).unwrap();
+    assert!(source.contains("#include \"Sprites.h\""), "{source}");
+    assert!(
+        source.contains("const char* const hero = \"hero\";"),
+        "{source}"
+    );
+
+    let swift = std::fs::read_to_string(output.join("Sprites.swift")).unwrap();
+    assert!(swift.contains("public enum atlas {"), "{swift}");
+    assert!(
+        swift.contains("public static let hero = \"hero\""),
+        "{swift}"
+    );
+}

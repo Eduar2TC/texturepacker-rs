@@ -100,6 +100,40 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             if !advanced {
                 return;
             }
+            // Ficheros de datos extra, como los --class-file/--header-file/…
+            // del original (se escriben junto a los metadatos).
+            let mut extras_changed = false;
+            let extra_fields: [(&str, &mut String); 4] = [
+                ("Class file (Swift)", &mut app.config.class_file),
+                ("Header file (C++/ObjC)", &mut app.config.header_file),
+                ("Source file (C++)", &mut app.config.source_file),
+                ("Sprite ids file", &mut app.config.spriteids_file),
+            ];
+            egui::CollapsingHeader::new("Ficheros extra por framework")
+                .default_open(false)
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(
+                            "Vacío = no escribir. Alias CLI: --class-file, --header-file, \
+                             --source-file y --spriteids-file.",
+                        )
+                        .weak(),
+                    );
+                    for (label, value) in extra_fields {
+                        ui.horizontal(|ui| {
+                            ui.label(label);
+                            if ui
+                                .add(egui::TextEdit::singleline(value).desired_width(200.0))
+                                .changed()
+                            {
+                                extras_changed = true;
+                            }
+                        });
+                    }
+                });
+            if extras_changed {
+                app.on_config_changed();
+            }
             if ui
                 .checkbox(&mut app.config.recursive, "Buscar en subdirectorios")
                 .changed()

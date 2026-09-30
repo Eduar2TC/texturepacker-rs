@@ -864,6 +864,18 @@ fn execute(
             output_files.push(meta_name);
         }
     }
+
+    // Ficheros de datos extra por framework (class/header/source/spriteids).
+    // Solo en la corrida base: las variantes comparten los mismos nombres.
+    if variant.is_none() {
+        for (name, content) in templates::extra_files(config, &sprite_assets) {
+            if write_to_disk {
+                write_file(&output_dir.join(&name), content.as_bytes())?;
+            }
+            output_files.push(name);
+        }
+    }
+
     // Ficheros escritos por las variantes con empaquetado propio: los
     // reporta la misma corrida para que la GUI los liste.
     output_files.extend(variant_files);

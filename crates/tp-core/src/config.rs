@@ -937,6 +937,19 @@ pub struct ProjectConfig {
     pub export_template: Option<PathBuf>,
     /// Metadata output language.
     pub template_format: TemplateFormat,
+    /// Extra *class* file (Swift, `--class-file`, spritekit-swift). Empty
+    /// disables it.
+    #[serde(default)]
+    pub class_file: String,
+    /// Extra C++/ObjC *header* file (`--header-file`). Empty disables it.
+    #[serde(default)]
+    pub header_file: String,
+    /// Extra C++ *source* file (`--source-file`). Empty disables it.
+    #[serde(default)]
+    pub source_file: String,
+    /// Extra sprite id list (`--spriteids-file`, amethyst/Rust).
+    #[serde(default)]
+    pub spriteids_file: String,
     /// Packing algorithm / heuristic.
     pub packing_strategy: PackingStrategy,
     /// Packing algorithm family. `enable_polygon` takes
@@ -1154,6 +1167,10 @@ impl Default for ProjectConfig {
             encryption_key: None,
             export_template: None,
             template_format: TemplateFormat::Json,
+            class_file: String::new(),
+            header_file: String::new(),
+            source_file: String::new(),
+            spriteids_file: String::new(),
             packing_strategy: PackingStrategy::Bssf,
             algorithm: PackingAlgorithm::default(),
             pack_mode: PackMode::default(),
@@ -1854,6 +1871,42 @@ mod tests {
                 "mensaje raro: {err}"
             );
         }
+    }
+
+    #[test]
+    fn extra_data_file_settings_roundtrip_and_default_empty() {
+        let cfg = ProjectConfig {
+            class_file: "Sprites.swift".into(),
+            header_file: "Sprites.h".into(),
+            source_file: "Sprites.cpp".into(),
+            spriteids_file: "spriteids.txt".into(),
+            ..ProjectConfig::default()
+        };
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert_eq!(back.class_file, "Sprites.swift");
+        assert_eq!(back.header_file, "Sprites.h");
+        assert_eq!(back.source_file, "Sprites.cpp");
+        assert_eq!(back.spriteids_file, "spriteids.txt");
+        assert!(back.validate().is_ok());
+
+        // Un `.tpproj` anterior a estos campos sigue cargando: vacío = no escribir.
+        let mut text = ProjectConfig::default().to_toml().unwrap();
+        for field in ["class_file", "header_file", "source_file", "spriteids_file"] {
+            if let Some(line) = text
+                .lines()
+                .find(|l| l.starts_with(field))
+                .map(str::to_string)
+            {
+                text = text.replace(&line, "");
+            }
+        }
+        assert!(!text.contains("spriteids_file"));
+        let legacy = ProjectConfig::from_toml(&text).unwrap();
+        assert_eq!(legacy.class_file, "");
+        assert_eq!(legacy.header_file, "");
+        assert_eq!(legacy.source_file, "");
+        assert_eq!(legacy.spriteids_file, "");
+        assert!(legacy.validate().is_ok());
     }
 
     #[test]
