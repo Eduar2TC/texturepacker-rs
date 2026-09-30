@@ -2302,3 +2302,80 @@ fn global_key_name_publishes_encrypted_files() {
 
     std::env::remove_var("TEXTUREPACKER_KEYS_FILE");
 }
+
+#[test]
+fn variant_common_divisor_keeps_the_base_sheet_on_integer_coordinates() {
+    let fx = Fixture::new("variant_div");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+    write_png(&input.join("a.png"), 7, 5, [10, 20, 30, 255]);
+    write_png(&input.join("b.png"), 11, 9, [200, 100, 50, 255]);
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        scale_variants: vec![1.0, 0.5],
+        padding: 1,
+        ..ProjectConfig::default()
+    };
+    let out = pipeline::run(&cfg).unwrap();
+
+    // El común divisor de las variantes idénticas (0.5 → 2) estira los
+    // tamaños impares y alinea los orígenes: todo sale par, escalar la hoja
+    // a 0.5 no redondea nada.
+    let frames_of = |file: &str| -> Vec<(String, [i64; 4])> {
+        let text = std::fs::read_to_string(output.join(file)).unwrap();
+        let atlas: serde_json::Value = serde_json::from_str(&text).unwrap();
+        atlas["frames"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| {
+                let frame = &f["frame"];
+                (
+                    f["filename"].as_str().unwrap().to_string(),
+                    [
+                        frame["x"].as_i64().unwrap(),
+                        frame["y"].as_i64().unwrap(),
+                        frame["w"].as_i64().unwrap(),
+                        frame["h"].as_i64().unwrap(),
+                    ],
+                )
+            })
+            .collect()
+    };
+    let base = frames_of("atlas.json");
+    assert_eq!(base.len(), 2);
+    for (name, rect) in &base {
+        for (i, v) in rect.iter().enumerate() {
+            assert_eq!(
+                v % 2,
+                0,
+                "el frame {name} sale con {} no par en el eje {i}",
+                v
+            );
+        }
+    }
+
+    // La variante idéntica es exactamente la mitad, sin redondeos.
+    let half: std::collections::HashMap<String, [i64; 4]> =
+        frames_of("atlas-hd.json").into_iter().collect();
+    assert_eq!(half.len(), base.len());
+    for (name, full) in &base {
+        let scaled = half
+            .get(name)
+            .unwrap_or_else(|| panic!("falta el frame {name} en la hoja a 0.5"));
+        for (f, s) in full.iter().zip(scaled) {
+            assert_eq!(*s, f / 2, "el frame {name} a 0.5 no es la mitad exacta");
+        }
+    }
+    // Aviso de que el padding 1 se subió a la rejilla de 2 px.
+    assert!(
+        out.result
+            .warnings
+            .iter()
+            .any(|w| w.contains("rejilla de 2 px")),
+        "falta el aviso de padding ajustado: {:?}",
+        out.result.warnings
+    );
+}

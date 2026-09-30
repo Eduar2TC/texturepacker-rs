@@ -12,7 +12,9 @@
 //! 10. Cifrar si hay clave.
 //! 11. Guardar imágenes + renderizar plantilla de metadatos.
 
-use crate::config::{AlphaHandling, FolderGroup, ProjectConfig, ScaleMode, VariantOptions};
+use crate::config::{
+    scale_denominator, AlphaHandling, FolderGroup, ProjectConfig, ScaleMode, VariantOptions,
+};
 use crate::error::{Result, TpError};
 use crate::export;
 use crate::ingest::{self, IngestedSprite};
@@ -87,7 +89,13 @@ fn execute(
     // Alinear obliga a que el padding sea múltiplo del valor; los
     // tamaños de los sprites se estiran hasta el múltiplo común en la ingesta.
     // ------------------------------------------------------------------
-    let align = config.align_to_grid.max(0);
+    // Además de *Align to grid*, el común divisor de las variantes idénticas
+    // alinea los orígenes: sin eso, un frame en posición impar no sería
+    // entero al escalarlo a 0.5 y la hoja idéntica perdería su proporción.
+    let align = config
+        .align_to_grid
+        .max(config.variant_common_divisor())
+        .max(0);
     let align_up = |v: i32| {
         let v = v.max(0);
         if align > 0 {
@@ -1024,6 +1032,34 @@ fn plan_variants(
         } else {
             identical.push(scale);
         }
+    }
+
+    // Hoja idéntica redondeada: la escala no queda entera con el común
+    // divisor (fraccionario pedido, denominador no representable o tope de
+    // 2048). En el original esos frames se guardan con decimales; aquí se
+    // redondean, así que se avisa.
+    let div = config.variant_common_divisor();
+    for &scale in &identical {
+        if scale_denominator(scale).is_some_and(|d| d > 0 && div % d == 0) {
+            continue;
+        }
+        let suffix = variant_suffix_for(config, scale);
+        let msg = if config
+            .variant_options_for(scale)
+            .is_some_and(|o| o.accept_fractional)
+        {
+            format!(
+                "Variante {suffix}: «aceptar valores fraccionarios» la deja fuera del común \
+                 divisor, así que su hoja idéntica se redondea al píxel."
+            )
+        } else {
+            format!(
+                "Variante {suffix}: su escala {scale} no encaja en el común divisor {div} y su \
+                 hoja idéntica se redondea al píxel (activa «aceptar valores fraccionarios» si \
+                 quieres que se asuma)."
+            )
+        };
+        warnings.push(msg);
     }
     (identical, passes, warnings)
 }

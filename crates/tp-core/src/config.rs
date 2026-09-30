@@ -1028,7 +1028,101 @@ pub struct VariantOptions {
     /// either way: neither can be honoured by scaling the base sheet.
     #[serde(default = "default_true")]
     pub force_identical_layout: bool,
+    /// «Identical layout — accept fractional values» del original: la
+    /// variante se queda **fuera** del común divisor, así que su hoja
+    /// idéntica admite subpíxeles (aquí se redondean) a cambio de no
+    /// estirar el resto de variantes para encajar su denominador.
+    #[serde(default)]
+    pub accept_fractional: bool,
 }
+
+/// Smallest denominator `q <= 64` such that `scale` is (almost) `p/q` — the
+/// factor the base sheet has to be divisible by so rescaling it to this
+/// scale stays on integers. `None` when the scale is not representable
+/// (e.g. `0.999`), which is the case the original solves with «accept
+/// fractional values».
+pub fn scale_denominator(scale: f32) -> Option<i32> {
+    if !scale.is_finite() || scale <= 0.0 {
+        return None;
+    }
+    (1..=64).find(|&q| {
+        let p = (scale * q as f32).round();
+        p >= 1.0 && (p / q as f32 - scale).abs() <= 5e-4
+    })
+}
+
+/// `lcm(a, b)` when it fits in `cap`, `cap` otherwise (a divisor bigger than
+/// the validated maximum would only be rejected downstream).
+fn lcm_capped(a: i32, b: i32, cap: i32) -> i32 {
+    if a <= 0 || b <= 0 {
+        return a.max(b).max(1);
+    }
+    let gcd = |mut x: i32, mut y: i32| {
+        while y != 0 {
+            let t = x % y;
+            x = y;
+            y = t;
+        }
+        x.abs()
+    };
+    let l = a as i64 * b as i64 / gcd(a, b) as i64;
+    if l > cap as i64 {
+        cap
+    } else {
+        l as i32
+    }
+}
+
+/// Preset of the scaling variants dialog: a name plus the scale/suffix
+/// pairs it applies (`fractional` marks the scales that must opt out of the
+/// common divisor).
+#[derive(Debug, Clone, Copy)]
+pub struct VariantPreset {
+    pub name: &'static str,
+    pub variants: &'static [(f32, &'static str)],
+    pub fractional: &'static [f32],
+}
+
+/// Presets shipped with the scaling variants dialog. `apply` overwrites the
+/// current variants, exactly like pressing *Apply* on the original.
+pub const VARIANT_PRESETS: &[VariantPreset] = &[
+    VariantPreset {
+        name: "Ninguna",
+        variants: &[(1.0, "")],
+        fractional: &[],
+    },
+    VariantPreset {
+        name: "iPad + iPhone (documentación)",
+        variants: &[(1.0, "-ipadhd"), (0.5, "-hd"), (0.25, "")],
+        fractional: &[],
+    },
+    VariantPreset {
+        name: "Retina @1x / @2x / @3x",
+        variants: &[(1.0, ""), (2.0, "@2x"), (3.0, "@3x")],
+        fractional: &[],
+    },
+    VariantPreset {
+        name: "Android mdpi … xxxhdpi",
+        variants: &[
+            (1.0, "-mdpi"),
+            (1.5, "-hdpi"),
+            (2.0, "-xhdpi"),
+            (3.0, "-xxhdpi"),
+            (4.0, "-xxxhdpi"),
+        ],
+        fractional: &[],
+    },
+    VariantPreset {
+        name: "Descuentos 1/2, 1/3 y 1/4",
+        variants: &[
+            (1.0, ""),
+            (0.5, "-half"),
+            (1.0 / 3.0, "-third"),
+            (0.25, "-quarter"),
+        ],
+        fractional: &[1.0 / 3.0],
+    },
+];
 
 impl Default for VariantOptions {
     fn default() -> Self {
@@ -1037,6 +1131,7 @@ impl Default for VariantOptions {
             sprite_filter: String::new(),
             max_texture_size: None,
             force_identical_layout: true,
+            accept_fractional: false,
         }
     }
 }
@@ -1542,8 +1637,102 @@ impl ProjectConfig {
     /// Effective per-axis divisor: only *Common divisor* extends sprite
     /// sizes. *Align to grid* moves the sprites instead of resizing them
     /// (the packer snaps every frame origin), so it plays no part here.
+    ///
+    /// To that this adds the **common factor the scaling variants need**:
+    /// the base sheet must be divisible by the denominator of every
+    /// identical-layout scale, so rescaling it keeps integer sizes and
+    /// coordinates (the original derives the very same factor from the
+    /// variant list).
     pub fn effective_divisors(&self) -> (i32, i32) {
-        (self.common_divisor_x.max(1), self.common_divisor_y.max(1))
+        let v = self.variant_common_divisor();
+        (
+            lcm_capped(self.common_divisor_x.max(1), v, 2048),
+            lcm_capped(self.common_divisor_y.max(1), v, 2048),
+        )
+    }
+
+    /// Common factor (0 = none) the identical-layout variants demand from
+    /// the base sheet: the LCM of their scale denominators, capped at the
+    /// 2048 the `Common divisor` validation allows. Variants that accept
+    /// fractional values, pack on their own (sprite filter / own texture
+    /// cap) or have no representable denominator are left out, exactly like
+    /// the original excludes them from the common divisor calculation.
+    pub fn variant_common_divisor(&self) -> i32 {
+        let mut div = 1;
+        for &scale in &self.scale_variants {
+            if !self.variant_shares_base_sheet(scale) {
+                continue;
+            }
+            if self
+                .variant_options_for(scale)
+                .is_some_and(|o| o.accept_fractional)
+            {
+                continue;
+            }
+            if let Some(d) = scale_denominator(scale) {
+                div = lcm_capped(div, d, 2048);
+            }
+        }
+        if div > 1 {
+            div
+        } else {
+            0
+        }
+    }
+
+    /// True when this scale reuses the base sheet scaled (no filter, no
+    /// texture cap of its own, identical layout requested) — i.e. when its
+    /// geometry comes from rounding the base sheet instead of being packed
+    /// at its own scale. Mirrors `plan_variants` before the sprites are
+    /// ingested.
+    pub fn variant_shares_base_sheet(&self, scale: f32) -> bool {
+        let Some(opts) = self.variant_options_for(scale) else {
+            return true;
+        };
+        opts.force_identical_layout
+            && opts.sprite_filter.trim().is_empty()
+            && opts
+                .max_texture_size
+                .is_none_or(|m| m == self.max_texture_size)
+    }
+
+    /// Scales whose identical sheet needs fractional values: their
+    /// denominator is not covered by the common divisor (no representable
+    /// denominator, a cap or another variant opted out with
+    /// `accept_fractional`). Their frames get rounded on export.
+    pub fn variant_fractional_scales(&self) -> Vec<f32> {
+        let div = self.variant_common_divisor();
+        self.scale_variants
+            .iter()
+            .copied()
+            .filter(|&scale| self.variant_shares_base_sheet(scale))
+            .filter(|&scale| !scale_denominator(scale).is_some_and(|d| d > 0 && div % d == 0))
+            .collect()
+    }
+
+    /// Applies a [`VARIANT_PRESETS`] entry by name, overwriting the current
+    /// scale list, suffixes and per-variant options (as the original's
+    /// preset dialog does). Returns `false` when the name is unknown.
+    pub fn apply_variant_preset(&mut self, name: &str) -> bool {
+        let Some(preset) = VARIANT_PRESETS.iter().find(|p| p.name == name) else {
+            return false;
+        };
+        self.scale_variants = preset.variants.iter().map(|(s, _)| *s).collect();
+        self.variant_names = preset
+            .variants
+            .iter()
+            .map(|(s, n)| (*s, (*n).to_string()))
+            .collect();
+        self.variant_options = preset
+            .variants
+            .iter()
+            .map(|(s, _)| VariantOptions {
+                scale: *s,
+                accept_fractional: preset.fractional.iter().any(|f| (f - s).abs() < 1e-6),
+                ..VariantOptions::default()
+            })
+            .collect();
+        true
     }
 
     /// Algorithm actually used by the packer. Selecting the *Polygon* trim
@@ -2268,6 +2457,121 @@ mod tests {
         let legacy = ProjectConfig::from_toml(&text).unwrap();
         assert_eq!(legacy.encryption_key_name, None);
         assert!(legacy.validate().is_ok());
+    }
+
+    #[test]
+    fn scale_denominator_covers_the_usual_and_rejects_the_odd() {
+        assert_eq!(scale_denominator(1.0), Some(1));
+        assert_eq!(scale_denominator(2.0), Some(1));
+        assert_eq!(scale_denominator(4.0), Some(1));
+        assert_eq!(scale_denominator(0.5), Some(2));
+        assert_eq!(scale_denominator(1.5), Some(2));
+        assert_eq!(scale_denominator(0.25), Some(4));
+        assert_eq!(scale_denominator(0.75), Some(4));
+        assert_eq!(scale_denominator(0.333), Some(3));
+        assert_eq!(scale_denominator(0.999), None);
+        assert_eq!(scale_denominator(0.0), None);
+    }
+
+    #[test]
+    fn variants_extend_the_common_divisor_unless_they_opt_out() {
+        let mut cfg = ProjectConfig {
+            scale_variants: vec![1.0, 0.5, 0.25],
+            ..ProjectConfig::default()
+        };
+        // 0.5 → 2 y 0.25 → 4: el común divisor del proyecto pasa a 4 en los
+        // dos ejes, que es lo que hace entera la hoja idéntica.
+        assert_eq!(cfg.variant_common_divisor(), 4);
+        assert_eq!(cfg.effective_divisors(), (4, 4));
+
+        // «Accept fractional values» la saca del cómputo: vuelve a 2 y esa
+        // es la única escala que queda con valores fraccionarios.
+        cfg.variant_options = vec![VariantOptions {
+            scale: 0.25,
+            accept_fractional: true,
+            ..VariantOptions::default()
+        }];
+        assert_eq!(cfg.variant_common_divisor(), 2);
+        assert_eq!(cfg.effective_divisors(), (2, 2));
+        assert_eq!(cfg.variant_fractional_scales(), vec![0.25]);
+
+        // Un filtro la empaqueta sola: tampoco cuenta, y no redondea nada.
+        cfg.variant_options = vec![VariantOptions {
+            scale: 0.25,
+            sprite_filter: "hero*".into(),
+            ..VariantOptions::default()
+        }];
+        assert_eq!(cfg.variant_common_divisor(), 2);
+        assert!(cfg.variant_fractional_scales().is_empty());
+
+        // El common divisor explícito del proyecto sigue mandando si es mayor.
+        cfg.common_divisor_x = 8;
+        assert_eq!(cfg.effective_divisors(), (8, 2));
+
+        // Escala sin denominador representable: no estira nada por su culpa.
+        cfg.scale_variants = vec![1.0, 0.999];
+        cfg.variant_options.clear();
+        cfg.common_divisor_x = 1;
+        assert_eq!(cfg.variant_common_divisor(), 0);
+        assert_eq!(cfg.variant_fractional_scales(), vec![0.999]);
+    }
+
+    #[test]
+    fn variant_presets_overwrite_the_variant_list() {
+        let mut cfg = ProjectConfig::default();
+        assert!(cfg.apply_variant_preset("iPad + iPhone (documentación)"));
+        assert_eq!(cfg.scale_variants, vec![1.0, 0.5, 0.25]);
+        assert_eq!(cfg.variant_names[0], (1.0, "-ipadhd".to_string()));
+        assert_eq!(cfg.variant_names[2], (0.25, String::new()));
+        assert!(cfg.validate().is_ok());
+
+        // El preset fraccionario marca la variante 1/3 como «accept
+        // fractional values» y las demás no.
+        assert!(cfg.apply_variant_preset("Descuentos 1/2, 1/3 y 1/4"));
+        let third = 1.0 / 3.0;
+        assert!(cfg.variant_options_for(third).unwrap().accept_fractional);
+        assert!(!cfg.variant_options_for(0.5).unwrap().accept_fractional);
+        assert!(cfg.validate().is_ok());
+
+        assert!(!cfg.apply_variant_preset("no existe"));
+
+        // Preset de una sola variante y todos los presets validan.
+        assert!(cfg.apply_variant_preset("Ninguna"));
+        assert_eq!(cfg.scale_variants, vec![1.0]);
+        assert!(cfg.validate().is_ok());
+        for preset in VARIANT_PRESETS {
+            let mut c = ProjectConfig::default();
+            assert!(c.apply_variant_preset(preset.name), "{}", preset.name);
+            assert!(c.validate().is_ok(), "{}", preset.name);
+        }
+    }
+
+    #[test]
+    fn accept_fractional_roundtrips_and_defaults_off() {
+        let cfg = ProjectConfig {
+            scale_variants: vec![1.0, 0.5],
+            variant_options: vec![VariantOptions {
+                scale: 0.5,
+                accept_fractional: true,
+                ..VariantOptions::default()
+            }],
+            ..ProjectConfig::default()
+        };
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert!(back.variant_options_for(0.5).unwrap().accept_fractional);
+        assert!(back.validate().is_ok());
+
+        // Un `.tpproj` anterior al campo sigue cargando: apagado.
+        let mut text = ProjectConfig::default().to_toml().unwrap();
+        for line in text
+            .clone()
+            .lines()
+            .filter(|l| l.starts_with("accept_fractional"))
+        {
+            text = text.replace(line, "");
+        }
+        let legacy = ProjectConfig::from_toml(&text).unwrap();
+        assert!(legacy.variant_options.iter().all(|o| !o.accept_fractional));
     }
 
     #[test]

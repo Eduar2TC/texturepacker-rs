@@ -68,8 +68,24 @@ corrección» al final.
   comodines, `max_texture_size` propio y `force_identical_layout`. `plan_variants`
   (`crates/tp-core/src/pipeline.rs`) decide qué variantes reescalan la hoja base y cuáles
   empaquetan por su cuenta (con su filtro y su tope), y la GUI lo edita en «Opciones por
-  variante» (`crates/tp-app/src/app/settings.rs`). Siguen sin existir los presets del
-  original y «accept fractional values».
+  variante» (`crates/tp-app/src/app/settings.rs`). Están también los **presets** del
+  original — `VARIANT_PRESETS` + `ProjectConfig::apply_variant_preset` (Ninguna,
+  iPad+iPhone del ejemplo de la documentación, Retina @1x/@2x/@3x, Android
+  mdpi…xxxhdpi y Descuentos 1/2-1/3-1/4) con combo y «Aplicar» que sobrescribe la
+  lista, como el diálogo original — y **«accept fractional values»**:
+  `accept_fractional` por variante la deja **fuera del común divisor**,
+  `variant_common_divisor` (LCM de los denominadores de las escalas idénticas vía
+  `scale_denominator`, tope 2048) lo suma en `effective_divisors` y `execute` alinea con
+  ese valor los orígenes, de modo que una hoja idéntica a 0.5 sale exactamente a la
+  mitad sin redondeos. La CLI entiende ya la sintaxis completa del original
+  `--variant <escala>[:<nombre>[:<filtro>[:allowfraction[:<ancho>:<alto>]]]]`
+  (repetible o por comas; un filtro con comas no se parte). Desviación conocida: una
+  escala fraccionaria se **redondea** al píxel y se avisa, mientras que el original
+  guarda coordenadas con decimales. Tests: `scale_denominator_covers_the_usual_and_rejects_the_odd`,
+  `variants_extend_the_common_divisor_unless_they_opt_out`,
+  `variant_presets_overwrite_the_variant_list`,
+  `accept_fractional_roundtrips_and_defaults_off`, `variant_flag_parses_filter_allowfraction_and_size`
+  y el e2e `variant_common_divisor_keeps_the_base_sheet_on_integer_coordinates`.
 - **Dithering** **[RESUELTO]**: los 9 `--dither-type` del original están cubiertos:
   `None`, `NearestNeighbour` (redondeo por píxel sin difusión) y `Linear` (el error
   viaja al píxel de la derecha, distribución lineal con más contraste) en
@@ -194,7 +210,7 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
-272 tras el quinto, 279 tras el sexto, **285 tras el séptimo**).
+272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, **291 tras el octavo**).
 
 ---
 
@@ -253,3 +269,12 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    Guardar/Borrar en Ajustes. Tests: los tres de `tp_core::keys`,
    `global_key_name_roundtrip_and_legacy_default`, `global_key_flags_parse` y el e2e
    `global_key_name_publishes_encrypted_files`.
+8. **Presets de variantes + fractional values** — **hecho** (ver §2 «Scaling variants»):
+   `VARIANT_PRESETS`/`apply_variant_preset` con los cinco presets y «Aplicar» en Ajustes,
+   `accept_fractional` en `VariantOptions` (serde default), el común divisor derivado de
+   las escalas idénticas (`scale_denominator`, `variant_common_divisor`,
+   `variant_fractional_scales`, `effective_divisors`) con los orígenes alineados a ese
+   valor en `pipeline::execute`, avisos cuando la hoja idéntica se redondea y la sintaxis
+   completa de `--variant` (filtro, `allowfraction`, tamaño) en el CLI, con
+   `apply_variant_flags` extraído para poder testearlo. Tests: 4 de config, 1 de CLI y el
+   e2e.

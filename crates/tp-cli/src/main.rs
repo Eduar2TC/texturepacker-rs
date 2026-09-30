@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use tp_core::config::{
     AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GdxFilter, GpuFormat,
     PackMode, PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ProjectConfig, ScaleMode,
-    SizeConstraint, SortOrder, TemplateFormat, TrimMode,
+    SizeConstraint, SortOrder, TemplateFormat, TrimMode, VariantOptions,
 };
 
 fn usage() -> ! {
@@ -64,7 +64,8 @@ fn usage() -> ! {
          \x20 --size-constraints T  any | pot | multiple-of-4 | word-aligned\n\
          \x20 --force-squared       Atlas cuadrado\n\
          \x20 --width N             Ancho fijo del atlas (0 = automático)\n\
-         \x20 --variant E:NOMBRE    Variante con nombre, p.ej. 1.0:-ipadhd,0.5:-hd\n\
+         \x20 --variant E[:N[:F[:allowfraction[:W:H]]]]  Variante (repetible o por comas),\n\
+         \x20                        p.ej. 0.5:-hd, 1.0:-ipadhd::*, 0.25:::allowfraction:1024:1024\n\
          \x20 --variants LIST       Escalas, p.ej. 2,0.5 (sufijos @2x, -hd)\n\
          \x20 --template-format T   json | xml | plist | cpp | tsv | text\n\
          \x20 --class-file F       Fichero de clase Swift extra (spritekit-swift)\n\
@@ -140,6 +141,107 @@ fn parse_args(args: &[String]) -> (Option<PathBuf>, Vec<(String, String)>, Vec<S
     }
     let project = positional.first().map(PathBuf::from);
     (project, values, flags)
+}
+
+/// `--variant <escala>[:<nombre>[:<filtro>[:allowfraction[:<ancho>:<alto>]]]]`,
+/// como en el original: se acepta repetida o separada por comas. Los trozos
+/// que no empiezan por una escala vuelven al filtro anterior, así que un
+/// filtro con comas escribe bien. Fija también `scale_variants`.
+fn apply_variant_flags(values: &[(String, String)], cfg: &mut ProjectConfig) {
+    let variant_values: Vec<String> = values
+        .iter()
+        .filter(|(k, _)| k == "variant")
+        .map(|(_, v)| v.clone())
+        .collect();
+    if variant_values.is_empty() {
+        return;
+    }
+    let mut segments: Vec<String> = Vec::new();
+    for value in &variant_values {
+        for part in value.split(',') {
+            let part = part.trim();
+            if part.is_empty() {
+                continue;
+            }
+            let starts_with_scale = part
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .parse::<f32>()
+                .is_ok();
+            if starts_with_scale {
+                segments.push(part.to_string());
+            } else if let Some(last) = segments.last_mut() {
+                last.push(',');
+                last.push_str(part);
+            }
+        }
+    }
+    let mut names: Vec<(f32, String)> = Vec::new();
+    let mut options: Vec<VariantOptions> = Vec::new();
+    for segment in &segments {
+        let fields: Vec<&str> = segment.split(':').collect();
+        let scale: f32 = fields[0]
+            .trim()
+            .parse()
+            .unwrap_or_else(|_| fail(format!("--variant inválido: {segment}")));
+        if !(0.0..=8.0).contains(&scale) {
+            fail(format!(
+                "--variant inválido (escala fuera de rango): {segment}"
+            ));
+        }
+        let name = fields
+            .get(1)
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
+        let filter = fields
+            .get(2)
+            .map(|v| v.trim().to_string())
+            .unwrap_or_default();
+        let fourth = fields.get(3).map(|v| v.trim()).unwrap_or("");
+        if !fourth.is_empty() && !fourth.eq_ignore_ascii_case("allowfraction") {
+            fail(format!(
+                "--variant: cuarto campo desconocido (use allowfraction): {segment}"
+            ));
+        }
+        let accept_fractional = fourth.eq_ignore_ascii_case("allowfraction");
+        let max_texture_size = match (fields.get(4), fields.get(5)) {
+            (Some(w), Some(h)) => {
+                let number = |raw: &str, what: &str| -> i32 {
+                    raw.trim()
+                        .parse()
+                        .unwrap_or_else(|_| fail(format!("--variant {what} inválido: {segment}")))
+                };
+                let (w, h) = (number(w, "ancho"), number(h, "alto"));
+                if w <= 0 || h <= 0 || w != h {
+                    fail(format!(
+                        "--variant: el tamaño máximo debe ser un cuadrado > 0: {segment}"
+                    ));
+                }
+                Some(w)
+            }
+            (None, None) => None,
+            _ => fail(format!(
+                "--variant: faltan el ancho o el alto del tamaño máximo: {segment}"
+            )),
+        };
+        names.push((scale, name));
+        if !filter.is_empty() || accept_fractional || max_texture_size.is_some() {
+            options.push(VariantOptions {
+                scale,
+                sprite_filter: filter,
+                max_texture_size,
+                accept_fractional,
+                ..VariantOptions::default()
+            });
+        }
+    }
+    if !names.is_empty() {
+        cfg.variant_names = names;
+        cfg.scale_variants = cfg.variant_names.iter().map(|(s, _)| *s).collect();
+        cfg.variant_options = options;
+    }
 }
 
 fn cmd_pack(args: &[String]) {
@@ -348,34 +450,8 @@ fn cmd_pack(args: &[String]) {
             .parse()
             .unwrap_or_else(|_| fail("--height inválido".into()));
     }
-    // --variant <escala>[:<nombre>]; acepta varios separados por
-    // coma. El nombre se usa tal cual como sufijo {v}.
-    if let Some(v) = val("variant") {
-        let mut names: Vec<(f32, String)> = Vec::new();
-        for part in v.split(',') {
-            let part = part.trim();
-            if part.is_empty() {
-                continue;
-            }
-            let mut fields = part.split(':');
-            let scale: f32 = fields
-                .next()
-                .unwrap_or_default()
-                .trim()
-                .parse()
-                .unwrap_or_else(|_| fail(format!("--variant inválido: {part}")));
-            if !(0.0..=8.0).contains(&scale) {
-                fail(format!(
-                    "--variant inválido (escala fuera de rango): {part}"
-                ));
-            }
-            let name = fields.next().unwrap_or("").trim().to_string();
-            names.push((scale, name));
-        }
-        if !names.is_empty() {
-            cfg.variant_names = names;
-        }
-    }
+    apply_variant_flags(&values, &mut cfg);
+
     if let Some(v) = val("variants") {
         let parsed: Vec<f32> = v
             .split([',', ';', ' '])
@@ -850,6 +926,36 @@ mod tests {
         assert_eq!(val("key-name").as_deref(), Some("juego"));
         assert_eq!(val("save-key").as_deref(), Some("otra"));
         assert_eq!(val("key").as_deref(), Some("clave-secreta"));
+    }
+
+    #[test]
+    fn variant_flag_parses_filter_allowfraction_and_size() {
+        let (_, values, _) = parse_args(&args(&[
+            "--variant",
+            "1.0:-ipadhd",
+            "--variant",
+            "0.5:-hd:hero*,coin:allowfraction:1024:1024",
+        ]));
+        let mut cfg = ProjectConfig::default();
+        apply_variant_flags(&values, &mut cfg);
+        assert_eq!(cfg.scale_variants, vec![1.0, 0.5]);
+        assert_eq!(
+            cfg.variant_names,
+            vec![(1.0, "-ipadhd".to_string()), (0.5, "-hd".to_string())]
+        );
+        let opts = cfg.variant_options_for(0.5).unwrap();
+        assert_eq!(opts.sprite_filter, "hero*,coin");
+        assert!(opts.accept_fractional);
+        assert_eq!(opts.max_texture_size, Some(1024));
+        assert!(cfg.variant_options_for(1.0).is_none());
+        assert!(cfg.validate().is_ok());
+
+        // Un filtro con comas no se parte: los trozos que no empiezan por
+        // escala vuelven al segmento anterior.
+        let (_, values, _) = parse_args(&args(&["--variant", "0.5::a,b"]));
+        let mut cfg = ProjectConfig::default();
+        apply_variant_flags(&values, &mut cfg);
+        assert_eq!(cfg.variant_options_for(0.5).unwrap().sprite_filter, "a,b");
     }
 
     #[test]

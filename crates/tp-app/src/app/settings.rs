@@ -237,6 +237,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             {
                 app.on_config_changed();
             }
+            variant_presets_ui(app, ui);
             variant_options_ui(app, ui);
             ui.label("Plantilla Mustache personalizada (opcional)");
             ui.horizontal(|ui| {
@@ -1158,6 +1159,46 @@ const SETTINGS_CHANGED_FLAG: &str = "tp_settings_changed";
 
 /// Opciones de cada escala listada en «Scaling variants»: filtro de sprites,
 /// tamaño máximo de textura y si la variante reutiliza la hoja base.
+/// Presets del diálogo de variantes del original: se eligen y se aplican de
+/// una vez, sobrescribiendo escalas, sufijos y opciones de cada variante.
+fn variant_presets_ui(app: &mut App, ui: &mut egui::Ui) {
+    let id = egui::Id::new("variant_preset_selected");
+    let mut selected = ui
+        .ctx()
+        .data(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| tp_core::config::VARIANT_PRESETS[0].name.to_string());
+    ui.horizontal(|ui| {
+        ui.label("Presets de variantes");
+        egui::ComboBox::from_id_salt("variant_preset")
+            .selected_text(selected.clone())
+            .show_ui(ui, |ui| {
+                for preset in tp_core::config::VARIANT_PRESETS {
+                    let detail = preset
+                        .variants
+                        .iter()
+                        .map(|(scale, suffix)| format!("{scale}{suffix}"))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    ui.selectable_value(&mut selected, preset.name.to_string(), preset.name)
+                        .on_hover_text(detail);
+                }
+            });
+        if ui
+            .button("Aplicar")
+            .on_hover_text(
+                "Sobrescribe las variantes actuales por las del preset, igual que el \
+                 botón Apply del original.",
+            )
+            .clicked()
+            && app.config.apply_variant_preset(&selected)
+        {
+            app.sync_variants();
+            app.on_config_changed();
+        }
+    });
+    ui.ctx().data_mut(|d| d.insert_temp(id, selected));
+}
+
 fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
     let scales = app.config.scale_variants.clone();
     if scales.len() < 2 && app.config.variant_options.is_empty() {
@@ -1175,7 +1216,7 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
         );
         ui.add_space(3.0);
         egui::Grid::new("variant_options_grid")
-            .num_columns(5)
+            .num_columns(6)
             .spacing([8.0, 4.0])
             .striped(true)
             .min_col_width(56.0)
@@ -1184,6 +1225,7 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
                 ui.strong("filtro de sprites");
                 ui.strong("máx. px");
                 ui.strong("idéntico");
+                ui.strong("fracc.");
                 ui.strong("qué hace");
                 ui.end_row();
                 for scale in scales {
@@ -1238,6 +1280,14 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
                         .on_hover_text(
                             "Sin marcar, la variante se empaqueta de nuevo con su escala en \
                              vez de reutilizar la hoja base.",
+                        )
+                        .changed();
+                    changed |= ui
+                        .checkbox(&mut opts.accept_fractional, "")
+                        .on_hover_text(
+                            "«Accept fractional values»: la variante queda fuera del común \
+                             divisor, así que su hoja idéntica se redondea al píxel y no \
+                             obliga a estirar las demás para caber en su denominador.",
                         )
                         .changed();
 
