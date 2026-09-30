@@ -8,8 +8,8 @@
 
 use std::path::PathBuf;
 use tp_core::config::{
-    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GpuFormat, PackMode,
-    PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ProjectConfig, ScaleMode,
+    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GdxFilter, GpuFormat,
+    PackMode, PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ProjectConfig, ScaleMode,
     SizeConstraint, SortOrder, TemplateFormat, TrimMode,
 };
 
@@ -71,6 +71,9 @@ fn usage() -> ! {
          \x20 --header-file F      Cabecera C++/ObjC extra (cocos2d-x)\n\
          \x20 --source-file F      Código fuente C++ extra (cocos2d-x)\n\
          \x20 --spriteids-file F   Lista de ids de sprites extra (amethyst)\n\
+         \x20 --cache-busting      Añade ?v=<hash> a la textura citada en los metadatos\n\
+         \x20 --gdx-filter T       Filtro del data format de LibGDX: linear | nearest\n\
+         \x20 --shape-debug        Dibuja los contornos de los sprites sobre la hoja\n\
          \x20 --key CLAVE           Cifrar texturas con AES-256-GCM\n\
          \x20 --no-normals          No empaquetar mapas de normales\n\
          \x20 --normalmap-suffix T  Sufijo del mapa de normales (defecto _normal)\n\
@@ -408,6 +411,16 @@ fn cmd_pack(args: &[String]) {
     if let Some(v) = val("spriteids-file") {
         cfg.spriteids_file = v;
     }
+    if flags.iter().any(|f| f == "cache-busting") {
+        cfg.cache_busting = true;
+    }
+    if flags.iter().any(|f| f == "shape-debug") {
+        cfg.shape_debug = true;
+    }
+    if let Some(v) = val("gdx-filter") {
+        cfg.gdx_filter = GdxFilter::parse(&v)
+            .unwrap_or_else(|| fail(format!("--gdx-filter inválido: {v} (linear | nearest)")));
+    }
     if let Some(v) = val("key") {
         cfg.encryption_key = if v.is_empty() { None } else { Some(v) };
     }
@@ -675,6 +688,35 @@ mod tests {
             parse_pixel_format("Alpha-Intensity8"),
             PixelFormat::AlphaIntensity8
         ));
+    }
+
+    #[test]
+    fn data_format_extra_flags_parse() {
+        let (path, values, flags) = parse_args(&args(&[
+            "--cache-busting",
+            "--shape-debug",
+            "--gdx-filter",
+            "Nearest",
+        ]));
+        assert!(path.is_none());
+        assert!(flags.iter().any(|f| f == "cache-busting"));
+        assert!(flags.iter().any(|f| f == "shape-debug"));
+        assert_eq!(
+            values
+                .iter()
+                .find(|(k, _)| k == "gdx-filter")
+                .map(|(_, v)| v.as_str()),
+            Some("Nearest")
+        );
+        assert!(matches!(
+            GdxFilter::parse("NEAREST"),
+            Some(GdxFilter::Nearest)
+        ));
+        assert!(matches!(
+            GdxFilter::parse("linear"),
+            Some(GdxFilter::Linear)
+        ));
+        assert!(GdxFilter::parse("bilinear").is_none());
     }
 
     #[test]

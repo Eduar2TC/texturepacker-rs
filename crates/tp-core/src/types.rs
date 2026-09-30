@@ -186,4 +186,7 @@ pub struct PageInfo {
     pub normal_file_name: Option<String>,
     pub encrypted: bool,
     pub fill_ratio: f32,
+    /// Hash corto del fichero de imagen para el cache busting del data
+    /// format (`?v=<hash>`); vacío cuando la opción está apagada.
+    pub cache_version: String,
 }

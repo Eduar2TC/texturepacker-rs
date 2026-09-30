@@ -117,8 +117,18 @@ corrección» al final.
 
 - **Entrada de imágenes**: faltan `psd, svg, ktx, ktx2, pbm, pgm, ppm, xbm, xpm, astc, basis`
   (`crates/tp-core/src/ingest.rs:135-144`); el original lista ~29 formatos.
-- **Extras de data format**: cache busting (Pixi/Phaser), filtering (LibGDX), `shape-debug`
-  (contorno de shapes dibujado en la hoja resultante).
+- **Extras de data format — hecho**: `cache_busting` añade `?v=<hash>` a la textura citada
+  en los metadatos (hash de 8 hex del fichero publicado, `hash::hash_bytes_short`), igual
+  que los data formats de Pixi/Phaser; `gdx_filter` declara `filter: Linear, Linear` /
+  `Nearest, Nearest` en el atlas XML de LibGDX; `shape_debug` dibuja el rectángulo visible
+  y los polígonos de cada sprite en magenta sobre la hoja, con la misma rotación 90° CW
+  que `polygon::compute_uvs`, así la vista previa y el fichero publicado salen idénticos.
+  Flags `--cache-busting`, `--gdx-filter linear|nearest` y `--shape-debug`, y la sección
+  «Extras del data format» en Ajustes. Tests: `data_format_extras_roundtrip_and_default_off`,
+  `cache_busting_appends_the_file_version_to_the_texture_reference`,
+  `gdx_filter_is_declared_on_the_xml_atlas`, `shape_debug_draws_the_borders_and_keeps_the_interior`,
+  `shape_debug_clips_out_of_canvas_shapes`, `data_format_extra_flags_parse` y el e2e
+  `cache_busting_and_shape_debug_reach_the_published_files`.
 - **Tutoriales**: el botón de la toolbar del original no existe aquí (menor).
 
 ## 4) Verificado como completo y bien cableado
@@ -173,7 +183,7 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
-**272 tras el quinto**).
+272 tras el quinto, **279 tras el sexto**).
 
 ---
 
@@ -215,3 +225,10 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    `--pvr-quality --etc1-quality --etc2-quality --astc-quality --dxt-mode` con rangos y
    compatibilidad validados, y GUI con combo filtrado, calidades por formato y modo DXT.
    Queda BASIS/BasisU (§3).
+6. **Extras de data format** — **hecho** (ver §3): `cache_busting`/`gdx_filter`/`shape_debug`
+   en `ProjectConfig` (con `serde(default)`, así un `.tpproj` anterior sigue cargando),
+   `PageInfo::cache_version` para que los metadatos citen el hash del fichero recién
+   escrito, `GdxFilter` con `filter` en el contexto de la plantilla, `draw_shape_debug`
+   (`export.rs`, Bresenham con recorte al lienzo) aplicado sobre las páginas justo después
+   de montar los `SpriteAsset` — así lo ven la vista previa y la publicación —, flags CLI
+   validados y la sección «Extras del data format» en la GUI.

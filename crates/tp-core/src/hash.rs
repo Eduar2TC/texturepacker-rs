@@ -11,6 +11,12 @@ pub fn hash_pixels_rgba(pixels: &[u8]) -> String {
     format!("{:016x}", xxh3_64(pixels))
 }
 
+/// Hash corto (8 hex) de unos bytes, para el cache busting del data format:
+/// cambia de valor cuando cambia el fichero publicado.
+pub fn hash_bytes_short(bytes: &[u8]) -> String {
+    format!("{:08x}", (xxh3_64(bytes) & 0xFFFF_FFFF) as u32)
+}
+
 /// A global table mapping pixel-hash -> first-seen sprite id.
 ///
 /// The pipeline keeps one of these across all sprites so duplicates are

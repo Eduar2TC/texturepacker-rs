@@ -5,7 +5,7 @@
 //! (libgdx TextureAtlas), Plist (cocos2d), C++ header, TSV and plain text.
 //! Users can supply their own `.hbs` template via `export_template`.
 
-use crate::config::{ProjectConfig, TemplateFormat, TrimMode};
+use crate::config::{GdxFilter, ProjectConfig, TemplateFormat, TrimMode};
 use crate::error::Result;
 use crate::types::{PackResult, PageInfo, SpriteAsset};
 use serde_json::{json, Value};
@@ -205,6 +205,15 @@ pub fn build_context(
         Some(prefix) => format!("{prefix}/{file}"),
         None => file,
     };
+    // Cache busting (`--cache-busting`): `atlas.png?v=<hash>` en las
+    // referencias de la textura, como los data formats de Pixi/Phaser.
+    let bust = |file: String, version: &str| {
+        if result.config.cache_busting && !version.is_empty() {
+            format!("{file}?v={version}")
+        } else {
+            file
+        }
+    };
 
     // Auto-detect animations — group `walk_001..00N` into `walk`.
     let animations: Vec<Value> = if result.config.enable_auto_detect_animations {
@@ -222,7 +231,13 @@ pub fn build_context(
         Vec::new()
     };
 
-    let first_image = with_texture_path(image_files.first().cloned().unwrap_or_default());
+    let first_image = bust(
+        with_texture_path(image_files.first().cloned().unwrap_or_default()),
+        &page_infos
+            .first()
+            .map(|p| p.cache_version.clone())
+            .unwrap_or_default(),
+    );
     let meta_pages: Vec<Value> = page_infos
         .iter()
         .enumerate()
@@ -231,14 +246,24 @@ pub fn build_context(
                 "index": p.index,
                 "width": p.width,
                 "height": p.height,
-                "file": with_texture_path(image_files.get(i).cloned().unwrap_or_default()),
+                "file": bust(
+                    with_texture_path(image_files.get(i).cloned().unwrap_or_default()),
+                    &p.cache_version,
+                ),
                 "fillRatio": round4(p.fill_ratio),
             })
         })
         .collect();
 
+    // Filtro que el data format de LibGDX declara en la hoja.
+    let filter = match result.config.gdx_filter {
+        GdxFilter::Linear => "Linear, Linear",
+        GdxFilter::Nearest => "Nearest, Nearest",
+    };
+
     json!({
         "animations": animations,
+        "filter": filter,
         "meta": {
             "app": "TexturePacker-RS",
             "version": env!("CARGO_PKG_VERSION"),
@@ -417,7 +442,7 @@ fn ident(raw: &str) -> String {
 
 fn builtin_template(format: TemplateFormat) -> &'static str {
     match format {
-        TemplateFormat::Xml => r#"<TextureAtlas imagePath="{{meta.image}}">
+        TemplateFormat::Xml => r#"<TextureAtlas imagePath="{{meta.image}}" filter="{{filter}}">
 {{#each frames}}	<sprite n="{{this.filename}}" x="{{this.frame.x}}" y="{{this.frame.y}}" w="{{this.frame.w}}" h="{{this.frame.h}}" oX="{{this.spriteSourceSize.x}}" oY="{{this.spriteSourceSize.y}}" oW="{{this.sourceSize.w}}" oH="{{this.sourceSize.h}}"{{#if this.rotated}} r="y"{{/if}}{{#if this.trimmed}} t="y"{{/if}}/>
 {{/each}}</TextureAtlas>
 "#,
@@ -659,6 +684,7 @@ mod tests {
             normal_file_name: None,
             encrypted: false,
             fill_ratio: 0.5,
+            cache_version: String::new(),
         }]
     }
 
@@ -670,6 +696,43 @@ mod tests {
         assert_eq!(v["frames"][0]["filename"], "hero");
         assert_eq!(v["frames"][0]["frame"]["x"], 10);
         assert_eq!(v["meta"]["image"], "atlas.png");
+    }
+
+    #[test]
+    fn cache_busting_appends_the_file_version_to_the_texture_reference() {
+        let mut r = sample_result();
+        r.config.cache_busting = true;
+        r.config.texture_path = Some("/assets".into());
+        let mut ps = pages();
+        ps[0].cache_version = "ab12cd34".into();
+
+        let out = render(&r, &ps, &["atlas.png".into()], 1.0, &r.config).unwrap();
+        assert!(
+            out.contains("/assets/atlas.png?v=ab12cd34"),
+            "falta el sufijo de cache busting:\n{out}"
+        );
+
+        // Apagado: la referencia vuelve a ser el nombre limpio.
+        r.config.cache_busting = false;
+        let out = render(&r, &ps, &["atlas.png".into()], 1.0, &r.config).unwrap();
+        assert!(out.contains("/assets/atlas.png\""), "sobra ?v:\n{out}");
+    }
+
+    #[test]
+    fn gdx_filter_is_declared_on_the_xml_atlas() {
+        let mut r = sample_result();
+        r.config.template_format = TemplateFormat::Xml;
+
+        r.config.gdx_filter = GdxFilter::Nearest;
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        assert!(
+            out.contains(r#"filter="Nearest, Nearest""#),
+            "filtro ausente:\n{out}"
+        );
+
+        r.config.gdx_filter = GdxFilter::Linear;
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        assert!(out.contains(r#"filter="Linear, Linear""#), "{out}");
     }
 
     #[test]

@@ -3,8 +3,8 @@
 use super::App;
 use eframe::egui;
 use tp_core::config::{
-    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GpuFormat, PackMode,
-    PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ScaleMode, SizeConstraint,
+    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GdxFilter, GpuFormat,
+    PackMode, PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ScaleMode, SizeConstraint,
     SortOrder, TemplateFormat, TrimMode, VariantOptions,
 };
 
@@ -132,6 +132,46 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     }
                 });
             if extras_changed {
+                app.on_config_changed();
+            }
+            // Extras de data format: cache busting (Pixi/Phaser), filtro
+            // (LibGDX) y shape debug (contorno dibujado en la hoja).
+            let mut data_extras_changed = false;
+            egui::CollapsingHeader::new("Extras del data format")
+                .default_open(false)
+                .show(ui, |ui| {
+                    data_extras_changed |= ui
+                        .checkbox(
+                            &mut app.config.cache_busting,
+                            "Cache busting (?v= en la textura citada)",
+                        )
+                        .on_hover_text(
+                            "Añade ?v=<hash del fichero> a la imagen que los metadatos \
+                             referencian, como los data formats de Pixi/Phaser.",
+                        )
+                        .changed();
+                    enum_combo(
+                        ui,
+                        "Filtro (LibGDX)",
+                        app.config.gdx_filter.as_str(),
+                        |ui, v| {
+                            ui.selectable_value(v, GdxFilter::Linear, "Linear");
+                            ui.selectable_value(v, GdxFilter::Nearest, "Nearest");
+                        },
+                        &mut app.config.gdx_filter,
+                    );
+                    data_extras_changed |= ui
+                        .checkbox(
+                            &mut app.config.shape_debug,
+                            "Shape debug (contornos en la hoja)",
+                        )
+                        .on_hover_text(
+                            "Dibuja el rectángulo visible y los polígonos de cada sprite \
+                             sobre la hoja, en magenta.",
+                        )
+                        .changed();
+                });
+            if data_extras_changed {
                 app.on_config_changed();
             }
             if ui

@@ -72,6 +72,35 @@ impl DitheringAlgorithm {
     }
 }
 
+/// Filtro de muestreo que el data format de LibGDX declara en la hoja
+/// (`filter: Linear, Linear` / `filter: Nearest, Nearest`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum GdxFilter {
+    #[default]
+    #[serde(rename = "Linear")]
+    Linear,
+    #[serde(rename = "Nearest")]
+    Nearest,
+}
+
+impl GdxFilter {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GdxFilter::Linear => "Linear",
+            GdxFilter::Nearest => "Nearest",
+        }
+    }
+
+    /// Acepta el token del original en cualquier mayúscula.
+    pub fn parse(v: &str) -> Option<Self> {
+        Some(match v.to_ascii_lowercase().as_str() {
+            "linear" => GdxFilter::Linear,
+            "nearest" => GdxFilter::Nearest,
+            _ => return None,
+        })
+    }
+}
+
 /// How transparent borders are handled before packing (trim mode).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TrimMode {
@@ -1165,6 +1194,19 @@ pub struct ProjectConfig {
     /// Cuantización DXT1/DXT5 (`--dxt-mode`).
     #[serde(default)]
     pub dxt_mode: DxtMode,
+    /// Cache busting del data format (`--cache-busting`): añade `?v=<hash>`
+    /// a las referencias de la textura en los metadatos, como los data
+    /// formats de Pixi/Phaser.
+    #[serde(default)]
+    pub cache_busting: bool,
+    /// Filtro de muestreo declarado en el data format de LibGDX
+    /// (`--gdx-filter`).
+    #[serde(default)]
+    pub gdx_filter: GdxFilter,
+    /// Dibuja el contorno de cada sprite sobre la hoja publicada
+    /// (`--shape-debug`), para depurar reparto y polígonos.
+    #[serde(default)]
+    pub shape_debug: bool,
     /// Voltear la textura verticalmente (`--flip-y`); solo formatos
     /// de hardware (ASTC/ETC2/ETC1/PVRTC).
     #[serde(default)]
@@ -1423,6 +1465,9 @@ impl Default for ProjectConfig {
             etc2_quality: default_etc2_quality(),
             astc_quality: default_astc_quality(),
             dxt_mode: DxtMode::default(),
+            cache_busting: false,
+            gdx_filter: GdxFilter::default(),
+            shape_debug: false,
             flip_vertical: false,
             encryption_key: None,
             export_template: None,
@@ -2160,6 +2205,38 @@ mod tests {
                 "mensaje raro: {err}"
             );
         }
+    }
+
+    #[test]
+    fn data_format_extras_roundtrip_and_default_off() {
+        let cfg = ProjectConfig {
+            cache_busting: true,
+            gdx_filter: GdxFilter::Nearest,
+            shape_debug: true,
+            ..ProjectConfig::default()
+        };
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert!(back.cache_busting);
+        assert_eq!(back.gdx_filter, GdxFilter::Nearest);
+        assert!(back.shape_debug);
+        assert!(back.validate().is_ok());
+
+        // Un `.tpproj` anterior a estos campos sigue cargando: apagados.
+        let mut text = ProjectConfig::default().to_toml().unwrap();
+        for field in ["cache_busting", "gdx_filter", "shape_debug"] {
+            if let Some(line) = text
+                .lines()
+                .find(|l| l.starts_with(field))
+                .map(str::to_string)
+            {
+                text = text.replace(&line, "");
+            }
+        }
+        let legacy = ProjectConfig::from_toml(&text).unwrap();
+        assert!(!legacy.cache_busting);
+        assert!(!legacy.shape_debug);
+        assert_eq!(legacy.gdx_filter, GdxFilter::Linear);
+        assert!(legacy.validate().is_ok());
     }
 
     #[test]

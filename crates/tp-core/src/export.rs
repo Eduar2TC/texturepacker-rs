@@ -791,6 +791,103 @@ pub fn flip_vertical_rgba(rgba: &mut [u8], width: usize, height: usize) {
     }
 }
 
+/// Contorno que dibuja `--shape-debug` sobre la hoja publicada.
+#[derive(Debug, Clone, Default)]
+pub struct DebugShape {
+    /// Rectángulo visible del sprite `[x, y, w, h]` en píxeles del lienzo.
+    pub rect: [i32; 4],
+    /// Contornos poligonales ya proyectados al lienzo (píxeles).
+    pub contours: Vec<Vec<[f32; 2]>>,
+}
+
+/// Lienzo RGBA sobre el que dibuja `--shape-debug`, recortando al tamaño
+/// de la hoja.
+struct ShapeCanvas<'a> {
+    rgba: &'a mut [u8],
+    width: usize,
+    height: usize,
+}
+
+impl ShapeCanvas<'_> {
+    fn put(&mut self, x: i32, y: i32, color: [u8; 4]) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let (x, y) = (x as usize, y as usize);
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let i = (y * self.width + x) * 4;
+        if let Some(px) = self.rgba.get_mut(i..i + 4) {
+            px.copy_from_slice(&color);
+        }
+    }
+
+    /// Línea de Bresenham de 1 px.
+    fn line(&mut self, x0: i32, y0: i32, x1: i32, y1: i32, color: [u8; 4]) {
+        let dx = (x1 - x0).abs();
+        let dy = -(y1 - y0).abs();
+        let sx = if x0 < x1 { 1 } else { -1 };
+        let sy = if y0 < y1 { 1 } else { -1 };
+        let mut err = dx + dy;
+        let (mut x, mut y) = (x0, y0);
+        loop {
+            self.put(x, y, color);
+            if x == x1 && y == y1 {
+                break;
+            }
+            let e2 = 2 * err;
+            if e2 >= dy {
+                err += dy;
+                x += sx;
+            }
+            if e2 <= dx {
+                err += dx;
+                y += sy;
+            }
+        }
+    }
+}
+
+/// Dibuja el contorno de cada sprite (rectángulo visible + polígonos) en
+/// magenta a 1 px sobre la hoja, para depurar el reparto. Los trazos fuera
+/// del lienzo se recortan.
+pub fn draw_shape_debug(rgba: &mut [u8], width: usize, height: usize, shapes: &[DebugShape]) {
+    const PINK: [u8; 4] = [255, 0, 255, 255];
+    let mut canvas = ShapeCanvas {
+        rgba,
+        width,
+        height,
+    };
+    for shape in shapes {
+        let [x, y, w, h] = shape.rect;
+        if w <= 0 || h <= 0 {
+            continue;
+        }
+        let (x2, y2) = (x + w - 1, y + h - 1);
+        canvas.line(x, y, x2, y, PINK);
+        canvas.line(x, y2, x2, y2, PINK);
+        canvas.line(x, y, x, y2, PINK);
+        canvas.line(x2, y, x2, y2, PINK);
+        for contour in &shape.contours {
+            if contour.len() < 2 {
+                continue;
+            }
+            for i in 0..contour.len() {
+                let a = contour[i];
+                let b = contour[(i + 1) % contour.len()];
+                canvas.line(
+                    a[0].round() as i32,
+                    a[1].round() as i32,
+                    b[0].round() as i32,
+                    b[1].round() as i32,
+                    PINK,
+                );
+            }
+        }
+    }
+}
+
 fn encode_webp_lossless(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     let mut buf = Vec::new();
     image::codecs::webp::WebPEncoder::new_lossless(&mut buf)
@@ -2501,6 +2598,54 @@ mod tests {
             mean_channel_error(&rgba, &buf) < 64.0,
             "error {}",
             mean_channel_error(&rgba, &buf)
+        );
+    }
+
+    #[test]
+    fn shape_debug_draws_the_borders_and_keeps_the_interior() {
+        let (w, h) = (16, 16);
+        let mut rgba = vec![0u8; w * h * 4];
+        let shapes = vec![DebugShape {
+            rect: [4, 4, 6, 6],
+            contours: vec![vec![[6.0, 6.0], [9.0, 6.0], [9.0, 9.0]]],
+        }];
+        draw_shape_debug(&mut rgba, w, h, &shapes);
+        let at = |x: usize, y: usize| rgba[(y * w + x) * 4..][..4].to_vec();
+        // Esquinas y bordes del rectángulo: magenta.
+        assert_eq!(at(4, 4), [255, 0, 255, 255]);
+        assert_eq!(at(9, 9), [255, 0, 255, 255]);
+        assert_eq!(at(7, 4), [255, 0, 255, 255]);
+        // Contorno poligonal (arista horizontal en y=6).
+        assert_eq!(at(7, 6), [255, 0, 255, 255]);
+        // Interior libre: sigue transparente.
+        assert_eq!(at(5, 5), [0, 0, 0, 0]);
+        // Fuera del sprite: intacto.
+        assert_eq!(at(12, 12), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn shape_debug_clips_out_of_canvas_shapes() {
+        let (w, h) = (8, 8);
+        let mut rgba = vec![0u8; w * h * 4];
+        let shapes = vec![
+            // Rectángulo que se sale por la izquierda y por arriba.
+            DebugShape {
+                rect: [-4, -3, 10, 8],
+                contours: vec![vec![[-20.0, -20.0], [30.0, 30.0]]],
+            },
+            // Rect degenerado: no dibuja ni panic.
+            DebugShape {
+                rect: [0, 0, 0, 5],
+                contours: vec![],
+            },
+        ];
+        draw_shape_debug(&mut rgba, w, h, &shapes);
+        assert_eq!(&rgba[..4], &[255, 0, 255, 255], "recorte en el borde");
+        // La parte del rectángulo dentro del lienzo se pinta.
+        assert_eq!(
+            &rgba[(5 * w + 5) * 4..][..4],
+            &[255, 0, 255, 255],
+            "centro del rect recortado"
         );
     }
 

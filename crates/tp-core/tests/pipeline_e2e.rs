@@ -2204,3 +2204,41 @@ fn lote10_extra_data_files_export() {
         "{swift}"
     );
 }
+
+#[test]
+fn cache_busting_and_shape_debug_reach_the_published_files() {
+    let fx = Fixture::new("data_format_extras");
+    let input = make_input_dir(&fx.dir, "in");
+    for i in 0..4 {
+        write_png(
+            &input.join(format!("s{i}.png")),
+            8,
+            8,
+            [(i * 40) as u8, 120, 200, 255],
+        );
+    }
+    let output = fx.dir.join("out");
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        cache_busting: true,
+        shape_debug: true,
+        ..ProjectConfig::default()
+    };
+    pipeline::run(&cfg).expect("pipeline should succeed");
+
+    // Cache busting: la textura citada lleva ?v=<hash del fichero publicado>.
+    let png = std::fs::read(output.join("atlas.png")).unwrap();
+    let version = tp_core::hash::hash_bytes_short(&png);
+    let meta = std::fs::read_to_string(output.join("atlas.json")).unwrap();
+    assert!(
+        meta.contains(&format!("atlas.png?v={version}")),
+        "cache busting ausente:\n{meta}"
+    );
+
+    // Shape debug: la hoja publicada lleva contornos magenta.
+    let sheet = image::open(output.join("atlas.png")).unwrap().to_rgba8();
+    let pink = sheet.pixels().filter(|p| p.0 == [255, 0, 255, 255]).count();
+    assert!(pink > 0, "shape debug no pintó ningún contorno");
+}

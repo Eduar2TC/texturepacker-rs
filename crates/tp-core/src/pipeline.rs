@@ -655,6 +655,21 @@ fn execute(
         });
     }
 
+    // Shape debug: dibuja el contorno de cada sprite (rectángulo visible y
+    // polígonos) sobre la hoja, así la vista previa y el fichero publicado
+    // enseñan el mismo reparto.
+    if config.shape_debug {
+        for (pi, page) in pages.iter_mut().enumerate() {
+            let shapes = debug_shapes(&sprite_assets, pi);
+            export::draw_shape_debug(
+                &mut page.pixels,
+                page.width as usize,
+                page.height as usize,
+                &shapes,
+            );
+        }
+    }
+
     // ------------------------------------------------------------------
     // PASO 10 + 11: export images (+ variants), encryption, metadata
     // ------------------------------------------------------------------
@@ -720,6 +735,13 @@ fn execute(
                     export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?
                 };
 
+                // Cache busting: el data format lleva `?v=<hash>` de este
+                // mismo fichero, así que cambia cuando cambia la hoja.
+                let cache_version = if config.cache_busting {
+                    crate::hash::hash_bytes_short(&bytes)
+                } else {
+                    String::new()
+                };
                 let (final_name, final_bytes) = match &config.encryption_key {
                     Some(key) => (
                         format!("{file_name}.tpenc"),
@@ -772,6 +794,7 @@ fn execute(
                     normal_file_name: normal_name,
                     encrypted: config.encryption_key.is_some(),
                     fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                    cache_version,
                 });
             } else {
                 // Vista previa: sin codificar ni escribir, pero con los
@@ -803,6 +826,9 @@ fn execute(
                     normal_file_name: normal_file,
                     encrypted: config.encryption_key.is_some(),
                     fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                    // Sin codificar no hay hash posible; la vista previa
+                    // solo lista nombres, que no cambian con el hash.
+                    cache_version: String::new(),
                 });
             }
         }
@@ -1043,6 +1069,40 @@ fn scale_variant_geometry(config: &mut ProjectConfig, scale: f32) {
     }
 }
 
+/// Contornos que `--shape-debug` dibuja en la página `page_index`: el
+/// rectángulo visible de cada sprite y sus polígonos proyectados al lienzo
+/// con la misma rotación 90° CW que `polygon::compute_uvs`.
+fn debug_shapes(sprites: &[SpriteAsset], page_index: usize) -> Vec<export::DebugShape> {
+    sprites
+        .iter()
+        .filter(|s| s.atlas_page_index == page_index as i32)
+        .map(|s| {
+            let frame = s.visible_frame;
+            let contours = s
+                .contours
+                .iter()
+                .map(|c| {
+                    c.points
+                        .iter()
+                        .map(|p| {
+                            let local = if s.is_rotated {
+                                polygon::rotate_90_cw(*p, frame.height as f32)
+                            } else {
+                                *p
+                            };
+                            [frame.x as f32 + local.x, frame.y as f32 + local.y]
+                        })
+                        .collect()
+                })
+                .collect();
+            export::DebugShape {
+                rect: [frame.x, frame.y, frame.width, frame.height],
+                contours,
+            }
+        })
+        .collect()
+}
+
 /// `PageInfo` of every page at `scale`, with the file names this run really
 /// writes (`.tpenc` included when encryption is on; names only while
 /// previewing).
@@ -1073,6 +1133,7 @@ fn page_infos_at(config: &ProjectConfig, pages: &[AtlasPage], scale: f32) -> Vec
                 normal_file_name,
                 encrypted: config.encryption_key.is_some(),
                 fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                cache_version: String::new(),
             }
         })
         .collect()
