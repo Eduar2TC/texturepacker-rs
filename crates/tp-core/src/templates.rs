@@ -17,12 +17,27 @@ use std::collections::HashSet;
 /// C++/ObjC exporters write a *header*.
 pub fn metadata_extension(format: TemplateFormat) -> &'static str {
     match format {
-        TemplateFormat::Json => "json",
-        TemplateFormat::Xml => "xml",
-        TemplateFormat::Plist => "plist",
+        TemplateFormat::Json | TemplateFormat::Phaser | TemplateFormat::PixiJson => "json",
+        TemplateFormat::JsonHash => "json",
+        TemplateFormat::Xml | TemplateFormat::Starling => "xml",
+        TemplateFormat::Plist | TemplateFormat::UIKitPlist => "plist",
+        TemplateFormat::LibgdxAtlas | TemplateFormat::SpineAtlas => "atlas",
+        TemplateFormat::Css => "css",
         TemplateFormat::CppHeader => "h",
         TemplateFormat::Tsv => "tsv",
         TemplateFormat::PlainText => "txt",
+        // «spritesheet-only»: no se escribe fichero de datos.
+        TemplateFormat::SpriteSheetOnly => "",
+    }
+}
+
+/// Extensión del fichero de datos de un proyecto: la del preset de formato
+/// de datos (`crate::dataformats`, que replica la del original) cuando el
+/// proyecto declara uno, y la de la familia en caso contrario.
+pub fn data_file_extension(config: &ProjectConfig) -> &'static str {
+    match config.data_format_preset() {
+        Some(preset) if !preset.extension.is_empty() => preset.extension,
+        _ => metadata_extension(config.template_format),
     }
 }
 
@@ -174,6 +189,22 @@ pub fn build_context(
             _ => (None, None),
         };
 
+        // Starling/Sparrow escribe el marco recortado como `frameX`/`frameY`
+        // negativos (desplazamiento desde el borde del sprite original) más
+        // el tamaño original completo.
+        let frame_x = -sss_x;
+        let frame_y = -sss_y;
+        // Offset del centro del recorte respecto al centro del original
+        // (semántica de `offset` de los plist de Cocos2D/SpriteKit): se
+        // publica como cadena «x,y», como hace el formato plist.
+        let center_x = sss_x as f32 + sss_w as f32 / 2.0 - src_w as f32 / 2.0;
+        let center_y = sss_y as f32 + sss_h as f32 / 2.0 - src_h as f32 / 2.0;
+        // Offset desde el borde izquierdo/inferior del original (semántica de
+        // `offset` de los atlas de libGDX y Spine: «whitespace stripped from
+        // the left and bottom edges»).
+        let bottom_left_x = sss_x;
+        let bottom_left_y = src_h - sss_y - sss_h;
+
         frames.push(json!({
             "filename": sprite.id,
             "frame": {"x": frame.x, "y": frame.y, "w": frame.width, "h": frame.height},
@@ -189,6 +220,16 @@ pub fn build_context(
             "polygon": polygon,
             "mesh": mesh,
             "hasNormalMap": sprite.normal_source_path.is_some(),
+            "frameX": frame_x,
+            "frameY": frame_y,
+            "frameWidth": src_w,
+            "frameHeight": src_h,
+            "offset": format!("{},{}", fmt_offset(center_x), fmt_offset(center_y)),
+            "offsetBottomLeft": {"x": bottom_left_x, "y": bottom_left_y},
+            // Nombre usable como clase/selector CSS (`.hero.png` no es un
+            // identificador válido): reutiliza el saneador de los ficheros
+            // extra (`hero/idle.png` → `hero_idle_png`).
+            "cssClass": ident(&sprite.id),
         }));
     }
 
@@ -261,6 +302,29 @@ pub fn build_context(
         GdxFilter::Nearest => "Nearest, Nearest",
     };
 
+    // Las páginas con sus frames agrupados: lo consumen los exportadores
+    // multi-hoja (Phaser escribe una textura por página en el mismo fichero).
+    let sheets: Vec<Value> = page_infos
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            json!({
+                "index": p.index,
+                "file": bust(
+                    with_texture_path(image_files.get(i).cloned().unwrap_or_default()),
+                    &p.cache_version,
+                ),
+                "width": p.width,
+                "height": p.height,
+                "frames": frames
+                    .iter()
+                    .filter(|f| f["page"].as_i64() == Some(p.index as i64))
+                    .cloned()
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
     json!({
         "animations": animations,
         "filter": filter,
@@ -274,6 +338,7 @@ pub fn build_context(
             "pages": meta_pages,
         },
         "frames": frames,
+        "sheets": sheets,
     })
 }
 
@@ -302,6 +367,16 @@ fn round4(v: f32) -> f32 {
     (v * 10000.0).round() / 10000.0
 }
 
+/// Offset de plist sin colas de cero: `4` → `"4"`, `-1.5` → `"-1.5"`.
+fn fmt_offset(v: f32) -> String {
+    let r = round2(v);
+    if r.fract().abs() < 1e-6 {
+        format!("{}", r as i64)
+    } else {
+        format!("{r}")
+    }
+}
+
 /// Render the metadata for a packing result.
 ///
 /// - `TemplateFormat::Json`: the context serialized as pretty JSON.
@@ -323,8 +398,46 @@ pub fn render(
     );
 
     match config.template_format {
+        // «spritesheet-only»: el pipeline no llama a `render`, pero por si
+        // acaso no se dibuja nada.
+        TemplateFormat::SpriteSheetOnly => Ok(String::new()),
         TemplateFormat::Json => {
-            serde_json::to_string_pretty(&ctx).map_err(crate::error::TpError::Json)
+            // El JSON con `frames` en lista expone solo su contrato de
+            // siempre: `sheets` y los offsets nuevos son internos de los
+            // otros exportadores, y por frame se descartan (los recortes de
+            // Starling, el `offset` de los atlas y las clases CSS).
+            const EXTRA_FRAME_KEYS: [&str; 7] = [
+                "frameX",
+                "frameY",
+                "frameWidth",
+                "frameHeight",
+                "offset",
+                "offsetBottomLeft",
+                "cssClass",
+            ];
+            let frames: Vec<Value> = ctx
+                .get("frames")
+                .and_then(Value::as_array)
+                .map(|frames| {
+                    frames
+                        .iter()
+                        .map(|frame| {
+                            let mut frame = frame.as_object().cloned().unwrap_or_default();
+                            for key in EXTRA_FRAME_KEYS {
+                                frame.remove(key);
+                            }
+                            Value::Object(frame)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let out = json!({
+                "animations": ctx.get("animations").cloned().unwrap_or(Value::Null),
+                "filter": ctx.get("filter").cloned().unwrap_or(Value::Null),
+                "meta": ctx.get("meta").cloned().unwrap_or(Value::Null),
+                "frames": Value::Array(frames),
+            });
+            serde_json::to_string_pretty(&out).map_err(crate::error::TpError::Json)
         }
         other => {
             let template = match &config.export_template {
@@ -440,7 +553,7 @@ fn ident(raw: &str) -> String {
     out
 }
 
-fn builtin_template(format: TemplateFormat) -> &'static str {
+pub(crate) fn builtin_template(format: TemplateFormat) -> &'static str {
     match format {
         TemplateFormat::Xml => r#"<TextureAtlas imagePath="{{meta.image}}" filter="{{filter}}">
 {{#each frames}}	<sprite n="{{this.filename}}" x="{{this.frame.x}}" y="{{this.frame.y}}" w="{{this.frame.w}}" h="{{this.frame.h}}" oX="{{this.spriteSourceSize.x}}" oY="{{this.spriteSourceSize.y}}" oW="{{this.sourceSize.w}}" oH="{{this.sourceSize.h}}"{{#if this.rotated}} r="y"{{/if}}{{#if this.trimmed}} t="y"{{/if}}/>
@@ -457,7 +570,7 @@ fn builtin_template(format: TemplateFormat) -> &'static str {
 			<key>frame</key>
 			<string>{{this.frame.x}},{{this.frame.y}},{{this.frame.w}},{{this.frame.h}}</string>
 			<key>offset</key>
-			<string>{{this.spriteSourceSize.x}},{{this.spriteSourceSize.y}}</string>
+			<string>{{this.offset}}</string>
 			<key>rotated</key>
 			{{#if this.rotated}}<true/>{{else}}<false/>{{/if}}
 			<key>sourceSize</key>
@@ -465,6 +578,9 @@ fn builtin_template(format: TemplateFormat) -> &'static str {
 			{{#if this.trimmed}}<key>trimmed</key>
 			<true/>{{else}}<key>trimmed</key>
 			<false/>{{/if}}
+			{{#if this.aliased}}<key>alias</key>
+			<string>{{this.aliasTarget}}</string>
+			{{/if}}
 		</dict>
 {{/each}}	</dict>
 	<key>metadata</key>
@@ -488,6 +604,182 @@ fn builtin_template(format: TemplateFormat) -> &'static str {
 </dict>
 </plist>
 "#,
+        // JSON con `frames` como mapa por nombre (el `json` del original).
+        TemplateFormat::JsonHash => r#"{
+  "frames": {
+{{#each frames}}    "{{this.filename}}": {
+      "frame": {"x": {{this.frame.x}}, "y": {{this.frame.y}}, "w": {{this.frame.w}}, "h": {{this.frame.h}}},
+      "rotated": {{#if this.rotated}}true{{else}}false{{/if}},
+      "trimmed": {{#if this.trimmed}}true{{else}}false{{/if}},
+      "spriteSourceSize": {"x": {{this.spriteSourceSize.x}}, "y": {{this.spriteSourceSize.y}}, "w": {{this.spriteSourceSize.w}}, "h": {{this.spriteSourceSize.h}}},
+      "sourceSize": {"w": {{this.sourceSize.w}}, "h": {{this.sourceSize.h}}},
+      "pivot": {"x": {{this.pivot.x}}, "y": {{this.pivot.y}}}
+    }{{#unless @last}},
+{{/unless}}{{/each}}
+  },
+  "meta": {
+    "app": "{{@root.meta.app}}",
+    "version": "{{@root.meta.version}}",
+    "image": "{{@root.meta.image}}",
+    "format": "{{@root.meta.format}}",
+    "size": {"w": {{@root.meta.size.w}}, "h": {{@root.meta.size.h}}},
+    "scale": "{{@root.meta.scale}}"
+  }
+}
+"#,
+        // JSON hash de PixiJS: lo mismo que el hash genérico con la imagen
+        // declarada en cada frame.
+        TemplateFormat::PixiJson => r#"{
+  "frames": {
+{{#each frames}}    "{{this.filename}}": {
+      "frame": {"x": {{this.frame.x}}, "y": {{this.frame.y}}, "w": {{this.frame.w}}, "h": {{this.frame.h}}},
+      "rotated": {{#if this.rotated}}true{{else}}false{{/if}},
+      "trimmed": {{#if this.trimmed}}true{{else}}false{{/if}},
+      "spriteSourceSize": {"x": {{this.spriteSourceSize.x}}, "y": {{this.spriteSourceSize.y}}, "w": {{this.spriteSourceSize.w}}, "h": {{this.spriteSourceSize.h}}},
+      "sourceSize": {"w": {{this.sourceSize.w}}, "h": {{this.sourceSize.h}}},
+      "pivot": {"x": {{this.pivot.x}}, "y": {{this.pivot.y}}},
+      "image": "{{@root.meta.image}}"
+    }{{#unless @last}},
+{{/unless}}{{/each}}
+  },
+  "meta": {
+    "app": "{{@root.meta.app}}",
+    "version": "{{@root.meta.version}}",
+    "image": "{{@root.meta.image}}",
+    "format": "{{@root.meta.format}}",
+    "size": {"w": {{@root.meta.size.w}}, "h": {{@root.meta.size.h}}},
+    "scale": "{{@root.meta.scale}}"
+  }
+}
+"#,
+        // Phaser 3: una entrada de textura por hoja con sus frames dentro.
+        TemplateFormat::Phaser => r#"{
+  "textures": [
+{{#each sheets}}    {
+      "image": "{{this.file}}",
+      "format": "{{@root.meta.format}}",
+      "size": {"w": {{this.width}}, "h": {{this.height}}},
+      "scale": {{@root.meta.scale}},
+      "frames": [
+{{#each this.frames}}        {
+          "filename": "{{this.filename}}",
+          "frame": {"x": {{this.frame.x}}, "y": {{this.frame.y}}, "w": {{this.frame.w}}, "h": {{this.frame.h}}},
+          "rotated": {{#if this.rotated}}true{{else}}false{{/if}},
+          "trimmed": {{#if this.trimmed}}true{{else}}false{{/if}},
+          "spriteSourceSize": {"x": {{this.spriteSourceSize.x}}, "y": {{this.spriteSourceSize.y}}, "w": {{this.spriteSourceSize.w}}, "h": {{this.spriteSourceSize.h}}},
+          "sourceSize": {"w": {{this.sourceSize.w}}, "h": {{this.sourceSize.h}}},
+          "pivot": {"x": {{this.pivot.x}}, "y": {{this.pivot.y}}}
+        }{{#unless @last}},
+{{/unless}}{{/each}}
+      ]
+    }{{#unless @last}},{{/unless}}{{/each}}
+  ],
+  "meta": {
+    "app": "{{@root.meta.app}}",
+    "version": "{{@root.meta.version}}",
+    "image": "{{@root.meta.image}}",
+    "format": "{{@root.meta.format}}",
+    "size": {"w": {{@root.meta.size.w}}, "h": {{@root.meta.size.h}}},
+    "scale": "{{@root.meta.scale}}",
+    "type": "original",
+    "multiPack": true,
+    "prioritySort": "normal"
+  }
+}
+"#,
+        // Sparrow/Starling: `frameX`/`frameY` negativos y tamaño original.
+        TemplateFormat::Starling => r#"<TextureAtlas imagePath="{{meta.image}}">
+{{#each frames}}	<SubTexture name="{{this.filename}}" x="{{this.frame.x}}" y="{{this.frame.y}}" width="{{this.frame.w}}" height="{{this.frame.h}}"{{#if this.trimmed}} frameX="{{this.frameX}}" frameY="{{this.frameY}}" frameWidth="{{this.frameWidth}}" frameHeight="{{this.frameHeight}}"{{/if}}{{#if this.rotated}} rotated="true"{{/if}}/>
+{{/each}}</TextureAtlas>
+"#,
+        // UIKit: plist con una clave escalar por campo.
+        TemplateFormat::UIKitPlist => r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>frames</key>
+	<dict>
+{{#each frames}}		<key>{{this.filename}}</key>
+		<dict>
+			<key>x</key>
+			<integer>{{this.frame.x}}</integer>
+			<key>y</key>
+			<integer>{{this.frame.y}}</integer>
+			<key>width</key>
+			<integer>{{this.frame.w}}</integer>
+			<key>height</key>
+			<integer>{{this.frame.h}}</integer>
+			<key>rotated</key>
+			{{#if this.rotated}}<true/>{{else}}<false/>{{/if}}
+			<key>trimmed</key>
+			{{#if this.trimmed}}<true/>{{else}}<false/>{{/if}}
+			<key>offsetX</key>
+			<integer>{{this.spriteSourceSize.x}}</integer>
+			<key>offsetY</key>
+			<integer>{{this.spriteSourceSize.y}}</integer>
+			<key>originalWidth</key>
+			<integer>{{this.sourceSize.w}}</integer>
+			<key>originalHeight</key>
+			<integer>{{this.sourceSize.h}}</integer>
+		</dict>
+{{/each}}	</dict>
+	<key>metadata</key>
+	<dict>
+		<key>textureFileName</key>
+		<string>{{meta.image}}</string>
+		<key>size</key>
+		<string>{{meta.size.w}},{{meta.size.h}}</string>
+	</dict>
+</dict>
+</plist>
+"#,
+        // Atlas de texto de libGDX: una sección por hoja, `offset` contado
+        // desde el borde izquierdo/inferior del original.
+        TemplateFormat::LibgdxAtlas => r#"{{#each sheets}}{{this.file}}
+size: {{this.width}}, {{this.height}}
+format: {{@root.meta.format}}
+filter: {{@root.filter}}
+repeat: none
+{{#each this.frames}}
+{{this.filename}}
+rotate: {{#if this.rotated}}true{{else}}false{{/if}}
+xy: {{this.frame.x}}, {{this.frame.y}}
+size: {{this.frame.w}}, {{this.frame.h}}
+orig: {{this.sourceSize.w}}, {{this.sourceSize.h}}
+offset: {{this.offsetBottomLeft.x}}, {{this.offsetBottomLeft.y}}
+index: -1
+{{/each}}
+{{/each}}"#,
+        // Atlas de texto de Spine: mismas claves, sangradas dos espacios y
+        // región y región separadas por línea en blanco.
+        TemplateFormat::SpineAtlas => r#"{{#each sheets}}{{this.file}}
+size: {{this.width}}, {{this.height}}
+format: {{@root.meta.format}}
+filter: {{@root.filter}}
+repeat: none
+
+{{#each this.frames}}{{this.filename}}
+  rotate: {{#if this.rotated}}true{{else}}false{{/if}}
+  xy: {{this.frame.x}}, {{this.frame.y}}
+  size: {{this.frame.w}}, {{this.frame.h}}
+  orig: {{this.sourceSize.w}}, {{this.sourceSize.h}}
+  offset: {{this.offsetBottomLeft.x}}, {{this.offsetBottomLeft.y}}
+  index: -1
+
+{{/each}}{{/each}}"#,
+        // CSS (también para `less` y `sass-mixins`): una regla por sprite.
+        TemplateFormat::Css => r#"/* Generado por TexturePacker-RS — hojas como sprites */
+{{#each sheets}}/* Página {{this.index}}: {{this.file}} */
+{{#each this.frames}}.{{this.cssClass}} {
+  width: {{this.frame.w}}px;
+  height: {{this.frame.h}}px;
+  background-image: url({{../file}});
+  background-position: -{{this.frame.x}}px -{{this.frame.y}}px;
+}
+{{/each}}
+{{/each}}"#,
+        // Solo la hoja: no se dibuja nada (el pipeline omite el fichero).
+        TemplateFormat::SpriteSheetOnly => "",
         TemplateFormat::CppHeader => r#"// Generated by TexturePacker-RS v{{meta.version}} — do not edit.
 #pragma once
 
@@ -696,6 +988,44 @@ mod tests {
         assert_eq!(v["frames"][0]["filename"], "hero");
         assert_eq!(v["frames"][0]["frame"]["x"], 10);
         assert_eq!(v["meta"]["image"], "atlas.png");
+    }
+
+    #[test]
+    fn json_array_keeps_its_original_contract() {
+        let r = sample_result();
+        let out = render(&r, &pages(), &["atlas.png".into()], 1.0, &r.config).unwrap();
+        let v: Value = serde_json::from_str(&out).unwrap();
+
+        // Las claves nuevas de los otros exportadores no se cuelan: ni la
+        // agrupación por hojas ni los offsets/instancias por frame.
+        assert!(v.get("sheets").is_none(), "{out}");
+        let frame = &v["frames"][0];
+        for key in [
+            "frameX",
+            "frameY",
+            "frameWidth",
+            "frameHeight",
+            "offset",
+            "offsetBottomLeft",
+            "cssClass",
+        ] {
+            assert!(frame.get(key).is_none(), "sobra {key}:\n{out}");
+        }
+
+        // Las de siempre siguen intactas.
+        for key in [
+            "filename",
+            "frame",
+            "rotated",
+            "trimmed",
+            "spriteSourceSize",
+            "sourceSize",
+            "pivot",
+            "page",
+            "aliased",
+        ] {
+            assert!(frame.get(key).is_some(), "falta {key}:\n{out}");
+        }
     }
 
     #[test]

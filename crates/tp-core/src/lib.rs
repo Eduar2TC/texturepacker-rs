@@ -21,6 +21,7 @@
 //! Entry point: [`pipeline::run`].
 
 pub mod config;
+pub mod dataformats;
 pub mod dxt;
 pub mod error;
 pub mod etc2;

@@ -851,7 +851,9 @@ fn execute(
         // frames (multipack); sin él se emite un único fichero con
         // todas las páginas.
         let per_page = has_page_placeholder(&config.base_file_name);
-        if per_page {
+        if templates::data_file_extension(config).is_empty() {
+            // «spritesheet-only»: el formato no escribe fichero de datos.
+        } else if per_page {
             for (pinfo, image) in variant_page_infos.iter().zip(&variant_image_files) {
                 let page_sprites: Vec<SpriteAsset> = sprite_assets
                     .iter()
@@ -1467,7 +1469,7 @@ fn metadata_file_name(
         // Un único data file: la hoja 0 evita el índice implícito.
         expand_name(&config.base_file_name, 0, variant)
     };
-    with_ext(&stem, templates::metadata_extension(config.template_format))
+    with_ext(&stem, templates::data_file_extension(config))
 }
 
 fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {

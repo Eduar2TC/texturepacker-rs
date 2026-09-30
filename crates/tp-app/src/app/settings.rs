@@ -82,20 +82,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             ui.label(
                 egui::RichText::new("Placeholders: {n} {n1} {v}  (p. ej. hoja{n1}{v})").weak(),
             );
-            enum_combo(
-                ui,
-                "Formato de metadatos",
-                template_name(app.config.template_format),
-                |ui, v| {
-                    ui.selectable_value(v, TemplateFormat::Json, "JSON");
-                    ui.selectable_value(v, TemplateFormat::Xml, "XML (libgdx)");
-                    ui.selectable_value(v, TemplateFormat::Plist, "Plist (cocos2d)");
-                    ui.selectable_value(v, TemplateFormat::CppHeader, "Cabecera C++");
-                    ui.selectable_value(v, TemplateFormat::Tsv, "TSV");
-                    ui.selectable_value(v, TemplateFormat::PlainText, "Texto plano");
-                },
-                &mut app.config.template_format,
-            );
+            data_format_combo(app, ui);
 
             if !advanced {
                 return;
@@ -1425,14 +1412,75 @@ fn alpha_handling_name(a: AlphaHandling) -> &'static str {
     }
 }
 
+/// Combo de formato de datos con todos los presets del original, agrupados
+/// por categoría. Elegir uno convierte el proyecto (familia + extensión) y
+/// aplica sus valores recomendados, como el diálogo «Data format…».
+fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
+    let selected = match app.config.data_format_preset() {
+        Some(preset) => preset.label,
+        None => template_name(app.config.template_format),
+    };
+    egui::ComboBox::from_label("Formato de metadatos")
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            let mut sel = app.config.data_format.clone();
+            egui::ScrollArea::vertical()
+                .id_salt("data_format_list")
+                .max_height(280.0)
+                .show(ui, |ui| {
+                    for &category in tp_core::dataformats::CATEGORIES {
+                        ui.separator();
+                        ui.strong(category);
+                        for preset in tp_core::dataformats::data_formats_in_category(category) {
+                            ui.selectable_value(&mut sel, preset.id.to_string(), preset.label);
+                        }
+                    }
+                });
+            if sel != app.config.data_format && app.config.apply_data_format(&sel) {
+                mark_settings_changed(ui);
+            }
+        });
+    // «Update to recommended values» del diálogo de conversión: re-aplica la
+    // rotación, el algoritmo y la auto-detección del preset elegido.
+    let recommended = app.config.data_format_preset().is_some();
+    if ui
+        .add_enabled(recommended, egui::Button::new("Valores recomendados"))
+        .on_hover_text(
+            "Aplica la rotación, el algoritmo y la auto-detección de animaciones \
+             recomendados para el formato seleccionado.",
+        )
+        .clicked()
+        && app.config.apply_data_format_defaults()
+    {
+        mark_settings_changed(ui);
+    }
+}
+
+/// Marca que la config cambió en este frame (el panel llama a
+/// `on_config_changed` al terminar de pintar).
+fn mark_settings_changed(ui: &egui::Ui) {
+    ui.ctx().data_mut(|d| {
+        d.insert_temp(egui::Id::new(SETTINGS_CHANGED_FLAG), true);
+    });
+}
+
 fn template_name(t: TemplateFormat) -> &'static str {
     match t {
-        TemplateFormat::Json => "JSON",
+        TemplateFormat::Json => "JSON (lista)",
+        TemplateFormat::JsonHash => "JSON (hash)",
+        TemplateFormat::Phaser => "Phaser 3",
+        TemplateFormat::PixiJson => "PixiJS",
         TemplateFormat::Xml => "XML (libgdx)",
+        TemplateFormat::Starling => "Starling",
         TemplateFormat::Plist => "Plist (cocos2d)",
+        TemplateFormat::UIKitPlist => "Plist (UIKit)",
+        TemplateFormat::LibgdxAtlas => "Atlas libGDX",
+        TemplateFormat::SpineAtlas => "Atlas Spine",
+        TemplateFormat::Css => "CSS (sprite)",
         TemplateFormat::CppHeader => "Cabecera C++",
         TemplateFormat::Tsv => "TSV",
         TemplateFormat::PlainText => "Texto plano",
+        TemplateFormat::SpriteSheetOnly => "Solo hoja de sprites",
     }
 }
 

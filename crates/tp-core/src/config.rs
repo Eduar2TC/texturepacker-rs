@@ -1002,21 +1002,60 @@ impl SortOrder {
 }
 
 /// Built-in metadata template languages (the spec mentions JSON/XML/Plist/C++).
+///
+/// Cada variante es una *familia* de salida: la lista completa de
+/// exportadores del original (`crate::dataformats::DATA_FORMATS`) se mapea
+/// sobre estas familias, así que un preset cambia la familia y la extensión
+/// del fichero de datos a la vez.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TemplateFormat {
+    /// JSON con `frames` como lista (el `json-array` del original).
     #[default]
     #[serde(rename = "JSON")]
     Json,
+    /// JSON con `frames` como mapa por nombre (`json` del original).
+    #[serde(rename = "JsonHash")]
+    JsonHash,
+    /// JSON de Phaser 3: una entrada de textura por página bajo `textures`.
+    #[serde(rename = "Phaser")]
+    Phaser,
+    /// JSON hash de PixiJS: como `JsonHash` con `image` en cada frame.
+    #[serde(rename = "PixiJson")]
+    PixiJson,
+    /// XML genérico `<TextureAtlas><sprite …/></TextureAtlas>`.
     #[serde(rename = "XML")]
     Xml,
+    /// XML Sparrow/Starling (`<SubTexture …/>`).
+    #[serde(rename = "Starling")]
+    Starling,
+    /// Plist v3 de Cocos2D (la misma estructura que usan `spritekit` y
+    /// `spritekit-swift`).
     #[serde(rename = "Plist")]
     Plist,
+    /// Plist de UIKit con claves escalares por campo.
+    #[serde(rename = "UIKit")]
+    UIKitPlist,
+    /// Atlas de texto de libGDX (`xy`/`size`/`orig`/`offset`/`index`).
+    #[serde(rename = "LibgdxAtlas")]
+    LibgdxAtlas,
+    /// Atlas de texto de Spine (cabezera de página + regiones sangradas).
+    #[serde(rename = "SpineAtlas")]
+    SpineAtlas,
+    /// Reglas CSS de sprites (también para `less` y `sass-mixins`).
+    #[serde(rename = "Css")]
+    Css,
+    /// Cabecera C++/ObjC con la tabla de sprites (fichero extra).
     #[serde(rename = "CppHeader")]
     CppHeader,
+    /// TSV con una fila por sprite (fichero propio, sin id en el original).
     #[serde(rename = "TSV")]
     Tsv,
+    /// Texto plano (el exportador de ejemplo `plain`).
     #[serde(rename = "PlainText")]
     PlainText,
+    /// Solo la hoja de textura: no se escribe fichero de datos.
+    #[serde(rename = "SpriteSheetOnly")]
+    SpriteSheetOnly,
 }
 
 /// Per-variant options of a scaling variant (el diálogo «scaling variants»
@@ -1336,6 +1375,13 @@ pub struct ProjectConfig {
     pub export_template: Option<PathBuf>,
     /// Metadata output language.
     pub template_format: TemplateFormat,
+    /// Id del preset de formato de datos del original
+    /// (`crate::dataformats::DATA_FORMATS`); vacío = el clon solo usa la
+    /// familia de `template_format` (los proyectos antiguos). Lo fija
+    /// [`ProjectConfig::apply_data_format`] y decide la extensión del
+    /// fichero de datos.
+    #[serde(default)]
+    pub data_format: String,
     /// Extra *class* file (Swift, `--class-file`, spritekit-swift). Empty
     /// disables it.
     #[serde(default)]
@@ -1596,6 +1642,7 @@ impl Default for ProjectConfig {
             encryption_key_name: None,
             export_template: None,
             template_format: TemplateFormat::Json,
+            data_format: String::new(),
             class_file: String::new(),
             header_file: String::new(),
             source_file: String::new(),
@@ -1731,6 +1778,49 @@ impl ProjectConfig {
             .filter(|&scale| self.variant_shares_base_sheet(scale))
             .filter(|&scale| !scale_denominator(scale).is_some_and(|d| d > 0 && div % d == 0))
             .collect()
+    }
+
+    /// El preset de formato de datos seleccionado (`None` = el proyecto solo
+    /// declara la familia de `template_format`, como antes de existir la
+    /// lista de exportadores).
+    pub fn data_format_preset(&self) -> Option<&'static crate::dataformats::DataFormatPreset> {
+        if self.data_format.is_empty() {
+            None
+        } else {
+            crate::dataformats::find_data_format(&self.data_format)
+        }
+    }
+
+    /// Convierte el proyecto a otro formato de datos, igual que el botón
+    /// «Data Format» del original: cambia la familia de plantilla, la
+    /// extensión del fichero de datos y aplica los *valores recomendados* del
+    /// preset. Devuelve `false` cuando el id no existe (no se toca nada).
+    pub fn apply_data_format(&mut self, id: &str) -> bool {
+        let Some(preset) = crate::dataformats::find_data_format(id) else {
+            return false;
+        };
+        self.data_format = preset.id.to_string();
+        self.template_format = preset.family;
+        self.apply_data_format_defaults()
+    }
+
+    /// Aplica solo los valores recomendados del preset actual (la opción
+    /// «Update to recommended values» del diálogo de conversión): rotación,
+    /// algoritmo y auto-detección de animaciones.
+    pub fn apply_data_format_defaults(&mut self) -> bool {
+        let Some(preset) = self.data_format_preset() else {
+            return false;
+        };
+        if let Some(v) = preset.allow_rotation {
+            self.allow_rotation = v;
+        }
+        if let Some(a) = preset.algorithm {
+            self.algorithm = a;
+        }
+        if let Some(v) = preset.auto_detect_animations {
+            self.enable_auto_detect_animations = v;
+        }
+        true
     }
 
     /// Applies a [`VARIANT_PRESETS`] entry by name, overwriting the current
@@ -1887,6 +1977,15 @@ impl ProjectConfig {
                 "pixel_format {} no es compatible con el formato de textura {}",
                 self.pixel_format.as_str(),
                 self.gpu_format.as_str()
+            )));
+        }
+        // Id de formato de datos conocido (vacío = solo cuenta la familia).
+        if !self.data_format.is_empty()
+            && crate::dataformats::find_data_format(&self.data_format).is_none()
+        {
+            return Err(TpError::Config(format!(
+                "data_format desconocido: {:?}",
+                self.data_format
             )));
         }
         let (div_x, div_y) = self.effective_divisors();
@@ -2126,6 +2225,37 @@ mod tests {
             .to_toml()
             .unwrap()
             .contains("manual_grid"));
+    }
+
+    #[test]
+    fn data_format_conversion_swaps_family_extension_and_recommended_values() {
+        let mut cfg = ProjectConfig::default();
+        assert!(cfg.data_format_preset().is_none());
+        assert!(cfg.data_format.is_empty());
+
+        // Convertir a libGDX: familia, extensión y recomendados del preset.
+        assert!(cfg.apply_data_format("libgdx"));
+        assert_eq!(cfg.data_format, "libgdx");
+        assert_eq!(cfg.template_format, TemplateFormat::LibgdxAtlas);
+        assert_eq!(cfg.data_format_preset().map(|p| p.extension), Some("atlas"));
+        assert!(cfg.enable_auto_detect_animations);
+
+        // CSS recomienda no rotar y la familia cambia a la suya.
+        cfg.allow_rotation = true;
+        assert!(cfg.apply_data_format("css"));
+        assert_eq!(cfg.template_format, TemplateFormat::Css);
+        assert_eq!(cfg.data_format_preset().map(|p| p.extension), Some("css"));
+        assert!(!cfg.allow_rotation);
+
+        // Sólo recomendados: la familia no se mueve.
+        cfg.template_format = TemplateFormat::Json;
+        assert!(cfg.apply_data_format_defaults());
+        assert_eq!(cfg.template_format, TemplateFormat::Json);
+        assert_eq!(cfg.data_format, "css");
+
+        // Desconocido: no toca nada.
+        assert!(!cfg.apply_data_format("no-existe"));
+        assert_eq!(cfg.data_format, "css");
     }
 
     #[test]

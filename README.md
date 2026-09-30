@@ -144,7 +144,7 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 | Barra superior | **Abrir** / **Guardar** / **↺** (restablecer), **➕** añadir sprites, **➖** quitar seleccionados, **Carpeta** (carpeta inteligente), **⚙** ajustes de sprite (pivots y bordes 9-patch), **Publicar**, **✂** (dividir hoja) y **▶** (vista previa de animación), ruta del proyecto |
 | Panel izquierdo | Árbol **Sprites**: carpetas y archivos; selección simple o múltiple (Ctrl/Shift), arrastrar y soltar, «Restaurar (N)» para deshacer exclusiones |
 | Centro | Vista previa del atlas: zoom (−/slider/+/1:1/Ajustar, Ctrl+rueda o pinza), contornos, pivots, **bordes 9-patch** (barras verdes **arrastrables** en el sprite seleccionado), selección de página y de sprite; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
-| Panel derecho | **Ajustes**: Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, formato de metadatos, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado y plantillas |
+| Panel derecho | **Ajustes**: Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, **formato de metadatos (63 presets por motor + «Valores recomendados»)**, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado y plantillas |
 | Ventanas flotantes | **✂ Dividir hoja**: elige una hoja, corta en rejilla (columnas × filas) o por tamaño fijo con margen/espaciado, previsualiza la rejilla y escribe los PNG, los añade al proyecto y publica. **▶ Vista previa de animación**: grupos por nombre de archivo, FPS, repetir, transporte (⏮ ⏸ ⏭), fondo (damas/alfa/negro), escala y sprites rotados |
 
 1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
@@ -250,7 +250,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 | KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
 | Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
 | Cifrado simétrico de textura (AES-GCM)         | ✅     | AES-256-GCM; archivos `*.tpenc`, `tp-cli decrypt` |
-| Motor de plantillas (Mustache)                 | ✅     | handlebars; JSON, XML (libgdx), Plist (cocos2d), C++ header, TSV, texto + plantillas personalizadas |
+| Motor de plantillas (Mustache)                 | ✅     | handlebars; **63 presets de formato de datos en 15 familias** (JSON lista/hash, Phaser, PixiJS, XML, Starling, Plist Cocos2D/UIKit, atlas libGDX/Spine, CSS, C++ header, TSV, texto, solo hoja) + plantillas personalizadas |
 | Auto-detect animations                         | ✅     | `walk_001..walk_003` se agrupan como animación `walk` en `meta.animations` (JSON) y en la sección `animations` del Plist; desactivable (`enable_auto_detect_animations`, `--no-auto-animations`) |
 
 ## Formato de proyecto (`.tpproj`)
@@ -340,6 +340,16 @@ El JSON generado organiza la información en dos bloques, `meta` y `frames`:
 En modo polígono, cada frame incluye `polygon` (puntos del contorno) y `mesh`
 (`vertices`, `indices`, `uvs`) en coordenadas locales del sprite recortado.
 
+El mismo contexto alimenta las otras **14 familias de `TemplateFormat`** con plantilla
+propia: XML de libGDX, Plist de Cocos2D (`offset` centrado «x,y»), Sparrow/Starling
+(`frameX`/`frameY` negativos y tamaño original en `frameWidth`/`frameHeight`), Plist de
+UIKit, atlas de texto de libGDX y Spine, Phaser (`textures` con una entrada por hoja),
+PixiJS, CSS con clases saneadas (`_1up_idle`), cabecera C++, TSV, texto plano y
+«solo la hoja» (no escribe fichero de datos). El combo «Formato de metadatos» de la GUI
+convierte el proyecto a cualquiera de los 63 presets con sus valores recomendados, y la
+CLI acepta los mismos ids en `--template-format` — con `json` legado reservado al array
+y el hash del original pedido como `json-hash`.
+
 ### Pivots y bordes 9-patch por sprite
 
 Junto a los sprites pueden convivir dos archivos JSON opcionales:
@@ -421,7 +431,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 318 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 327 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
@@ -432,7 +442,7 @@ cuando faltan placeholders y error con `multipack = false`), round-trip de ETC2 
 + EAC) y PVRTC 4BPP (opaco, gradientes, transparencia y layout morton) contra un
 decodificador independiente (`texture2ddecoder`), cifrado/descifrado, plantillas,
 configuración (round-trip TOML de los ajustes nuevos), CLI (flags y parseo de
-argumentos), y 40 pruebas end-to-end que generan sprites reales en disco y
+argumentos), y 42 pruebas end-to-end que generan sprites reales en disco y
 verifican aliases, rotación, normal maps, variantes, multi-atlas, los tres
 formatos GPU (ETC2/PVRTC/ASTC), los ajustes de Lote 5 (padding de borde,
 divisor común, nombres con subcarpeta/extensión, `texture_path`, premultiply y
@@ -444,7 +454,10 @@ flip vertical solo en formatos GPU e ingesta de TGA/BMP/QOI con deduplicación
 por hash) y del **Lote 9** (bordes 9-patch desde `borders.json` hasta los
 metadatos `border` del JSON), además de los del **Lote 13** (la hoja publicada
 en KTX2 se vuelve a leer byte a byte y el `.basis` sale con su firma y con la
-calidad moviendo el tamaño).
+calidad moviendo el tamaño) y los de los **formatos de datos** (cada familia
+publica su propio fichero — atlas de texto, Plist, XML, CSS — o ninguno en
+«solo la hoja», y renderiza su forma: `offset` centrado, `frameX` negativo,
+`textures` por hoja y clases CSS saneadas).
 
 Además, `cargo run -p tp-app --bin tp-smoke` compila un **autotest binario
 de la app completa**: genera en un directorio temporal sprites de ejemplo y un

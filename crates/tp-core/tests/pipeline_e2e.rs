@@ -34,6 +34,19 @@ fn write_corner_png(path: &Path, w: u32, h: u32, color: [u8; 4]) {
     img.save(path).unwrap();
 }
 
+/// Solid `color` inside a transparent border: trimmed with non-zero offsets.
+fn write_trimmed_png(path: &Path, w: u32, h: u32, color: [u8; 4]) {
+    let mut img = image::RgbaImage::new(w + 4, h + 4);
+    for (x, y, px) in img.enumerate_pixels_mut() {
+        *px = if x >= 2 && y >= 2 && x < w + 2 && y < h + 2 {
+            image::Rgba(color)
+        } else {
+            image::Rgba([0, 0, 0, 0])
+        };
+    }
+    img.save(path).unwrap();
+}
+
 fn make_input_dir(base: &Path, name: &str) -> PathBuf {
     let dir = base.join(name);
     std::fs::create_dir_all(&dir).unwrap();
@@ -2632,4 +2645,132 @@ fn lote13_ktx2_container_and_basis_export() {
             hi.len()
         );
     }
+}
+
+/// Un preset por familia de salida: cada uno publica su propio fichero de
+/// datos junto a la hoja (y ninguno en «solo la hoja»).
+#[test]
+fn data_format_presets_publish_their_own_data_file() {
+    let fx = Fixture::new("data_format_presets");
+    let input = make_input_dir(&fx.dir, "in");
+    write_trimmed_png(&input.join("hero.png"), 12, 8, [10, 20, 30, 255]);
+    write_png(&input.join("coin.png"), 8, 8, [200, 160, 0, 255]);
+
+    let cases: &[(&str, Option<&str>)] = &[
+        ("libgdx", Some("atlas.atlas")),
+        ("spine", Some("atlas.atlas")),
+        ("sparrow", Some("atlas.xml")),
+        ("phaser", Some("atlas.json")),
+        ("cocos2d", Some("atlas.plist")),
+        ("css", Some("atlas.css")),
+        ("spritesheet-only", None),
+    ];
+    for &(preset, data_file) in cases {
+        let output = fx.dir.join(format!("out_{preset}"));
+        let mut cfg = ProjectConfig {
+            input_directory: input.clone(),
+            output_directory: output.clone(),
+            base_file_name: "atlas".into(),
+            ..ProjectConfig::default()
+        };
+        assert!(cfg.apply_data_format(preset), "preset desconocido {preset}");
+        let out = pipeline::run(&cfg).unwrap_or_else(|e| panic!("{preset}: {e}"));
+
+        assert!(
+            output.join("atlas.png").exists(),
+            "{preset}: no se publicó la hoja"
+        );
+        match data_file {
+            Some(name) => {
+                assert!(output.join(name).exists(), "{preset}: falta {name}");
+                assert!(
+                    out.result.output_files.iter().any(|f| f == name),
+                    "{preset}: {name} no anunciado en {:?}",
+                    out.result.output_files
+                );
+            }
+            None => {
+                assert!(
+                    out.result.output_files.iter().all(|f| f.ends_with(".png")),
+                    "«solo la hoja» publica ficheros de datos: {:?}",
+                    out.result.output_files
+                );
+                assert!(!output.join("atlas.json").exists());
+            }
+        }
+    }
+}
+
+/// Cada familia renderiza su propia forma: atlas de texto, plist con `offset`
+/// centrado, Starling con `frameX` negativo, Phaser con `textures` y CSS con
+/// clases saneadas.
+#[test]
+fn data_format_families_render_their_own_shape() {
+    let fx = Fixture::new("data_format_shapes");
+    let input = make_input_dir(&fx.dir, "in");
+    write_trimmed_png(&input.join("hero.png"), 12, 8, [10, 20, 30, 255]);
+    write_png(&input.join("1up-idle.png"), 8, 8, [200, 160, 0, 255]);
+
+    let render = |preset: &str| -> String {
+        let output = fx.dir.join(format!("shape_{preset}"));
+        let mut cfg = ProjectConfig {
+            input_directory: input.clone(),
+            output_directory: output.clone(),
+            base_file_name: "atlas".into(),
+            ..ProjectConfig::default()
+        };
+        assert!(cfg.apply_data_format(preset));
+        pipeline::run(&cfg).unwrap_or_else(|e| panic!("{preset}: {e}"));
+        let ext = tp_core::dataformats::find_data_format(preset)
+            .unwrap()
+            .extension;
+        std::fs::read_to_string(output.join(format!("atlas.{ext}"))).unwrap()
+    };
+
+    // libGDX: atlas de texto con página, filtro y offsets desde abajo.
+    let gdx = render("libgdx");
+    assert!(gdx.starts_with("atlas.png"), "cabecera de página: {gdx}");
+    assert!(gdx.contains("size: "), "{gdx}");
+    assert!(gdx.contains("filter: Linear, Linear"), "{gdx}");
+    assert!(gdx.contains("\nhero\n"), "{gdx}");
+    assert!(gdx.contains("\noffset: "), "{gdx}");
+
+    // Spine: mismas claves, regiones sangradas y separadas por línea en
+    // blanco, sin `pma` (las versiones viejas del runtime lo rechazan).
+    let spine = render("spine");
+    assert!(spine.contains("\n  xy: "), "regiones sangradas: {spine}");
+    assert!(spine.contains("\n  orig: "), "{spine}");
+    assert!(!spine.contains("pma:"), "{spine}");
+
+    // Sparrow/Starling: `frameX`/`frameY` negativos y tamaño original.
+    let starling = render("sparrow");
+    assert!(
+        starling.starts_with("<TextureAtlas imagePath=\"atlas.png\">"),
+        "{starling}"
+    );
+    assert!(starling.contains("frameX=\"-2\""), "{starling}");
+    assert!(starling.contains("frameY=\"-2\""), "{starling}");
+    assert!(starling.contains("frameWidth=\"16\""), "{starling}");
+
+    // Phaser: una textura por hoja y `scale` como número.
+    let phaser = render("phaser");
+    assert!(phaser.contains("\"textures\": ["), "{phaser}");
+    assert!(phaser.contains("\"image\": \"atlas.png\""), "{phaser}");
+    assert!(phaser.contains("\"filename\": \"hero\""), "{phaser}");
+    let parsed: serde_json::Value = serde_json::from_str(&phaser).expect("JSON válido");
+    assert_eq!(parsed["textures"].as_array().unwrap().len(), 1);
+    assert!(parsed["textures"][0]["frames"].as_array().unwrap().len() >= 2);
+
+    // Cocos2D: offset centrado como cadena «x,y» (hero queda en 0,0).
+    let plist = render("cocos2d");
+    assert!(plist.contains("<key>frame</key>"), "{plist}");
+    assert!(plist.contains("<string>0,0</string>"), "{plist}");
+    assert!(!plist.contains("<key>alias</key>"), "{plist}");
+
+    // CSS: una regla por sprite con la clase saneada (`1up-idle` → `_1up_idle`).
+    let css = render("css");
+    assert!(css.contains(".hero {"), "{css}");
+    assert!(css.contains("._1up_idle {"), "{css}");
+    assert!(css.contains("background-image: url(atlas.png);"), "{css}");
+    assert!(css.contains("background-position: -"), "{css}");
 }

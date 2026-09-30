@@ -69,7 +69,9 @@ fn usage() -> ! {
          \x20 --variant E[:N[:F[:allowfraction[:W:H]]]]  Variante (repetible o por comas),\n\
          \x20                        p.ej. 0.5:-hd, 1.0:-ipadhd::*, 0.25:::allowfraction:1024:1024\n\
          \x20 --variants LIST       Escalas, p.ej. 2,0.5 (sufijos @2x, -hd)\n\
-         \x20 --template-format T   json | xml | plist | cpp | tsv | text\n\
+         \x20 --template-format T   json | xml | plist | cpp | tsv | text, o un exportador\n\
+         \x20                        (libgdx, cocos2d, phaser, pixijs4, sparrow, spine…; el\n\
+         \x20                        hash del original es json-hash porque json = array)\n\
          \x20 --class-file F       Fichero de clase Swift extra (spritekit-swift)\n\
          \x20 --header-file F      Cabecera C++/ObjC extra (cocos2d-x)\n\
          \x20 --source-file F      Código fuente C++ extra (cocos2d-x)\n\
@@ -244,6 +246,35 @@ fn apply_variant_flags(values: &[(String, String)], cfg: &mut ProjectConfig) {
         cfg.scale_variants = cfg.variant_names.iter().map(|(s, _)| *s).collect();
         cfg.variant_options = options;
     }
+}
+
+/// Mapea `--template-format` sobre la config.
+///
+/// Primero los tokens legados del original (cada familia con su semántica
+/// concreta) y después los ids de exportador que el propio original enumera
+/// para sus data formats (`libgdx`, `cocos2d`, `phaser`…), que aplican además
+/// los valores recomendados del preset. `json` legado es el array, así que el
+/// hash del original se pide como `json-hash`.
+fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), String> {
+    match value.to_ascii_lowercase().as_str() {
+        "json" => cfg.template_format = TemplateFormat::Json,
+        "xml" => cfg.template_format = TemplateFormat::Xml,
+        "plist" => cfg.template_format = TemplateFormat::Plist,
+        "cpp" => cfg.template_format = TemplateFormat::CppHeader,
+        "tsv" => cfg.template_format = TemplateFormat::Tsv,
+        "text" => cfg.template_format = TemplateFormat::PlainText,
+        other => {
+            let id = if other == "json-hash" { "json" } else { other };
+            if !cfg.apply_data_format(id) {
+                return Err(format!(
+                    "--template-format inválido: {value} (familias: json | xml | plist | cpp | \
+                     tsv | text; exportadores: json-hash, libgdx, cocos2d, sparrow, spine, \
+                     phaser, pixijs4, egret…)"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn cmd_pack(args: &[String]) {
@@ -471,15 +502,9 @@ fn cmd_pack(args: &[String]) {
         }
     }
     if let Some(v) = val("template-format") {
-        cfg.template_format = match v.to_ascii_lowercase().as_str() {
-            "json" => TemplateFormat::Json,
-            "xml" => TemplateFormat::Xml,
-            "plist" => TemplateFormat::Plist,
-            "cpp" => TemplateFormat::CppHeader,
-            "tsv" => TemplateFormat::Tsv,
-            "text" => TemplateFormat::PlainText,
-            _ => fail(format!("--template-format inválido: {v}")),
-        };
+        if let Err(e) = apply_template_format(&mut cfg, &v) {
+            fail(e);
+        }
     }
     if let Some(v) = val("template") {
         cfg.export_template = Some(PathBuf::from(v));
@@ -1234,6 +1259,41 @@ mod tests {
         assert_eq!(val("basic-order").as_deref(), Some("desc"));
         assert_eq!(val("strategy").as_deref(), Some("contact-point"));
         assert!(flags.iter().any(|f| f == "force-squared"));
+    }
+
+    #[test]
+    fn template_format_accepts_families_and_exporters() {
+        // Tokens legados: sólo cambian la familia (sin preset asociado).
+        let mut cfg = ProjectConfig::default();
+        apply_template_format(&mut cfg, "json").unwrap();
+        assert_eq!(cfg.template_format, TemplateFormat::Json);
+        assert!(cfg.data_format.is_empty());
+
+        // El hash del original se pide como `json-hash` (json = array).
+        let mut cfg = ProjectConfig::default();
+        apply_template_format(&mut cfg, "json-hash").unwrap();
+        assert_eq!(cfg.template_format, TemplateFormat::JsonHash);
+        assert_eq!(cfg.data_format, "json");
+
+        // Exportador: familia + extensión + recomendados del preset.
+        let mut cfg = ProjectConfig {
+            enable_auto_detect_animations: false,
+            ..ProjectConfig::default()
+        };
+        apply_template_format(&mut cfg, "libgdx").unwrap();
+        assert_eq!(cfg.template_format, TemplateFormat::LibgdxAtlas);
+        assert_eq!(cfg.data_format, "libgdx");
+        assert!(cfg.enable_auto_detect_animations);
+
+        let mut cfg = ProjectConfig {
+            allow_rotation: true,
+            ..ProjectConfig::default()
+        };
+        apply_template_format(&mut cfg, "css").unwrap();
+        assert!(!cfg.allow_rotation);
+
+        let err = apply_template_format(&mut ProjectConfig::default(), "no-existe").unwrap_err();
+        assert!(err.contains("--template-format inválido"), "{err}");
     }
 
     #[test]

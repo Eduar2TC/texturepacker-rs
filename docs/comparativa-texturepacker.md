@@ -29,20 +29,58 @@ corrección» al final.
 
 ## 2) Parciales — existen, pero muy por debajo del original
 
-- **Exportadores** **[PARCIAL]**: 6 plantillas nativas (JSON, XML, Plist, C++ header, TSV,
-  PlainText — `crates/tp-core/src/config.rs:621-630`) + plantilla Mustache propia, frente a
-  los 60+ del original, y sigue sin existir el botón de conversión de formato de datos.
-  **Los ficheros extra por framework ya están**: `class_file`, `header_file`, `source_file`
-  y `spriteids_file` en el `.tpproj` (vacío = no escribir), generados por
-  `templates::extra_files` (`crates/tp-core/src/templates.rs`) — ids C++/Swift saneados
-  (ruta y signos → `_`, dígito inicial con prefijo `_`, colisiones con `_` extra), cabecera
-  con guard `ATLAS_SPRITES_H`, fuente con `#include` de la cabecera configurada o
-  `<ns>.h`, enum Swift `public enum` con `public static let` y lista de ids una por línea —,
-  escritos junto a los metadatos y anunciados en la vista previa (pestaña «Archivos»), con
-  sección «Ficheros extra por framework» en la GUI y flags `--class-file`, `--header-file`,
-  `--source-file` y `--spriteids-file`. Tests: `extra_files_generate_cpp_swift_and_id_list`,
-  `extra_data_file_settings_roundtrip_and_default_empty`, `extra_data_file_flags_parse` y el
-  e2e `lote10_extra_data_files_export`.
+- **Exportadores** **[RESUELTO] 63 de los 60+ del original**: `crates/tp-core/src/dataformats.rs`
+  enumera 63 exportadores agrupados en 6 categorías — Genéricos (5: `json`, `json-array`,
+  `xml`, `plain`, `spritesheet-only`), Atlas de texto (6: `libgdx`, `spine`, `css`,
+  `css-simple`, `less`, `sass-mixins`), JSON de motores (26: `phaser`, `pixijs4`, `egret`,
+  `spriter`, `melonjs`, `unity`, `unity-texture2d`, `unreal-paper2d`, `monogame`,
+  `easeljs`, `zim`, `amethyst`, `godot-spritesheet`…), plist y XML (7: `cocos2d`,
+  `cocos2d-v2`, `cocos2d-x`, `spritekit`, `spritekit-swift`, `sparrow`, `uikit`), Motores
+  minoritarios (17: `2dtoolkit`… `wave-engine-1`, `shiva3d`, `caat`) y Extras del propio
+  clon (2: `cpp-header`, `tsv`) —, cada uno con familia de plantilla, extensión del fichero
+  de datos y valores recomendados (rotación, algoritmo, auto-detección de animaciones) en
+  `DATA_FORMATS`, con `find_data_format`, `data_format_ids` y `data_formats_in_category`.
+  Las **15 familias de `TemplateFormat`** generan la salida: `builtin_template` tiene
+  plantilla propia para catorce (el JSON con `frames` en lista lo serializa `render` con
+  su contrato de siempre) y la plantilla Mustache propia (`export_template`/`--template`)
+  sigue teniendo prioridad. `templates::data_file_extension` usa la extensión del preset
+  cuando el proyecto declara uno y la de la familia si no; la familia «solo la hoja»
+  (`spritesheet-only`) no escribe fichero de datos: `pipeline::execute` lo salta y la
+  vista previa no lo anuncia.
+  La **conversión de formato de datos** (el «Data format… / Update to recommended values»
+  del original) vive en `ProjectConfig::apply_data_format` (cambia familia + extensión +
+  recomendados) y `apply_data_format_defaults` (sólo recomendados), sobre el campo
+  `data_format` (`#[serde(default)]`, validado en `validate()` y con `data_format_preset()`).
+  En la GUI: combo «Formato de metadatos» con los 63 presets agrupados por categoría y
+  botón «Valores recomendados». En el CLI: `apply_template_format` acepta los tokens
+  legados `json | xml | plist | cpp | tsv | text` **y** los ids de exportador.
+  Contexto nuevo: `frameX`/`frameY`/`frameWidth`/`frameHeight` (Starling), `offset`
+  centrado «x,y» y `offsetBottomLeft` (atlas de texto y plist), `cssClass` (clase CSS
+  saneada) y `sheets` con los frames agrupados por hoja (Phaser, CSS y atlas de texto);
+  el JSON lista descarta esas claves para no mover su contrato. **Desviaciones**: los
+  motores minoritarios salen con la estructura `JsonHash` y extensión `json` en vez de la
+  propia de cada motor; el id del exportador de Sparrow/Starling es `sparrow` (el del
+  original), no `starling`; `json` legado sigue siendo el array, así que el hash del
+  original se pide como `json-hash` en el CLI (en la GUI es el preset «JSON (hash)»); el
+  `offset` del plist pasó a ser el centrado que publica el original (antes copiaba el
+  `spriteSourceSize` top-left) y lleva `alias` sólo cuando hay alias; en Starling
+  `width`/`height` es el rect almacenado con la rotación ya aplicada y el original va en
+  `frameWidth`/`frameHeight`; y las texturas citadas siguen el cache busting global del
+  proyecto, no sólo el de Pixi/Phaser. Los ficheros extra por framework ya estaban:
+  `class_file`, `header_file`, `source_file` y `spriteids_file` en el `.tpproj` (vacío =
+  no escribir), generados por `templates::extra_files` (`crates/tp-core/src/templates.rs`)
+  — ids C++/Swift saneados (ruta y signos → `_`, dígito inicial con prefijo `_`,
+  colisiones con `_` extra), cabecera con guard `ATLAS_SPRITES_H`, fuente con `#include`
+  de la cabecera configurada o `<ns>.h`, enum Swift `public enum` con `public static let`
+  y lista de ids una por línea —, escritos junto a los metadatos y anunciados en la vista
+  previa (pestaña «Archivos»), con sección «Ficheros extra por framework» en la GUI y
+  flags `--class-file`, `--header-file`, `--source-file` y `--spriteids-file`. Tests: 5
+  de `dataformats`, el de conversión de `config`,
+  `template_format_accepts_families_and_exporters` (CLI),
+  `json_array_keeps_its_original_contract`, `extra_files_generate_cpp_swift_and_id_list`,
+  `extra_data_file_settings_roundtrip_and_default_empty`, `extra_data_file_flags_parse` y
+  los e2e `lote10_extra_data_files_export`, `data_format_presets_publish_their_own_data_file`
+  y `data_format_families_render_their_own_shape`.
 - **Formatos de textura de salida** **[RESUELTO]**: los **17 de los 17** que enumera la
   documentación vigente del original (el `--help` antiguo sumaba `atf` y `pvr2`, que el
   propio TexturePacker retiró en la 6.0.2, de ahí la vieja cuenta «16 de los 19»). A
@@ -246,7 +284,7 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
-305 tras el noveno, 310 tras el décimo, **318 tras el undécimo**).
+305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, **327 tras el duodécimo**).
 
 ---
 
@@ -273,10 +311,10 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    [RESUELTO] 17/17»): BMP/TGA/TIFF/DDS/ZKTX/PVR3GZ/PVR3CCZ/ETC1(PKM)/ETC1(KTX)/
    KTX2/BASIS, con `GpuFormat::parse`, combo de la GUI, `--format` ampliado y e2e
    propio.
-4. **Exportadores (ficheros extra)** — **hecho** (ver §2 «Exportadores [PARCIAL]»): los cuatro
-   campos del `.tpproj`, `templates::extra_files` + `ident`, escritura junto a los metadatos
-   con anuncio en la vista previa, flags CLI y sección de la GUI. Quedan sin cubrir los 60+
-   presets de plantilla del original y la conversión de formato de datos.
+4. **Exportadores (ficheros extra)** — **hecho** (ver §2 «Exportadores [RESUELTO] 63 de
+   los 60+»): los cuatro campos del `.tpproj`, `templates::extra_files` + `ident`,
+   escritura junto a los metadatos con anuncio en la vista previa, flags CLI y sección de
+   la GUI. Los 63 presets de formato de datos y la conversión son el punto 12.
 5. **Calidades y pixel formats GPU** — **hecho** (ver §2 «Pixel format / calidades»):
    `PixelFormat` ampliado con `RGBA4444`/`RGB565` y todos los de GPU (serde idéntico al
    original), `is_compatible_with` + `validate()`, campos `pvr_quality`/`etc1_quality`/
@@ -343,3 +381,22 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
     `basis_file_transcodes_back_to_rgba`, más `basis_requires_the_gpu_formats_feature`
     sin la feature), los 3 de `tp-basis`, los casos de config/CLI actualizados y el e2e
     `lote13_ktx2_container_and_basis_export`.
+
+12. **Presets de formato de datos + conversión** — **hecho** (ver §2 «Exportadores
+    [RESUELTO] 63 de los 60+»): `crates/tp-core/src/dataformats.rs` con
+    `DataFormatPreset` (id, etiqueta, familia, extensión, categoría y recomendados),
+    `DATA_FORMATS` (63 en 6 categorías), `find_data_format`, `data_format_ids`,
+    `data_formats_in_category` y sus 5 tests; `TemplateFormat` ampliado a **15 familias**
+    (JSON hash, Phaser, PixiJS, Starling, plist UIKit, atlas libGDX, atlas Spine, CSS y
+    «solo la hoja») con plantilla propia en `builtin_template`; `ProjectConfig::data_format`
+    (`#[serde(default)]`) con `apply_data_format` / `apply_data_format_defaults` /
+    `data_format_preset` y validación en `validate()`; `templates::data_file_extension`
+    (la extensión del preset manda) y salta el bloque de metadatos de
+    `pipeline::execute` en «solo la hoja»; contexto con `frameX`/`frameY`/`frameWidth`/
+    `frameHeight`, `offset` centrado, `offsetBottomLeft`, `cssClass` y `sheets` agrupados
+    por hoja (el JSON lista descarta esas claves); combo «Formato de metadatos» agrupado
+    por categoría con botón «Valores recomendados» en la GUI, y `apply_template_format`
+    en el CLI (tokens legados `json|xml|plist|cpp|tsv|text` + ids de exportador).
+    Tests: 5 de `dataformats`, 1 de `config`, 1 de CLI, `json_array_keeps_its_original_contract`
+    y los e2e `data_format_presets_publish_their_own_data_file` y
+    `data_format_families_render_their_own_shape`.
