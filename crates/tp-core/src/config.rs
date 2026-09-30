@@ -139,6 +139,34 @@ pub enum GpuFormat {
     Jpg,
     #[serde(rename = "WEBP", alias = "WebP")]
     WebP,
+    /// Bitmap sin comprimir (24/32 bits, sin alfa si el formato de píxel lo
+    /// descarta).
+    #[serde(rename = "BMP")]
+    Bmp,
+    /// TGA/TARGA sin comprimir.
+    #[serde(rename = "TGA")]
+    Tga,
+    /// TIFF sin comprimir (LZW lo decide el codificador de `image`).
+    #[serde(rename = "TIFF")]
+    Tiff,
+    /// DDS sin comprimir (RGBA8 con máscaras de canal).
+    #[serde(rename = "DDS")]
+    Dds,
+    /// KTX v1 con el contenido zlib-comprimido (`.zktx`, estilo libGDX).
+    #[serde(rename = "ZKTX")]
+    Zktx,
+    /// PVR v3 (PVRTC1 4bpp) con el fichero entero en gzip.
+    #[serde(rename = "PVR3GZ")]
+    Pvr3Gz,
+    /// PVR v3 (PVRTC1 4bpp) en el contenedor CCZ de Cocos2D (zlib).
+    #[serde(rename = "PVR3CCZ")]
+    Pvr3Ccz,
+    /// ETC1 RGB en un contenedor PKM (`.pkm`).
+    #[serde(rename = "ETC1")]
+    Etc1,
+    /// ETC1 RGB en un contenedor KTX (`.ktx`).
+    #[serde(rename = "ETC1_KTX")]
+    Etc1Ktx,
     #[serde(rename = "ASTC_4x4")]
     Astc4x4,
     #[serde(rename = "ETC2_RGBA")]
@@ -154,6 +182,15 @@ impl GpuFormat {
             GpuFormat::Png8 => "PNG8",
             GpuFormat::Jpg => "JPG",
             GpuFormat::WebP => "WebP",
+            GpuFormat::Bmp => "BMP",
+            GpuFormat::Tga => "TGA",
+            GpuFormat::Tiff => "TIFF",
+            GpuFormat::Dds => "DDS",
+            GpuFormat::Zktx => "ZKTX",
+            GpuFormat::Pvr3Gz => "PVR3GZ",
+            GpuFormat::Pvr3Ccz => "PVR3CCZ",
+            GpuFormat::Etc1 => "ETC1",
+            GpuFormat::Etc1Ktx => "ETC1_KTX",
             GpuFormat::Astc4x4 => "ASTC_4x4",
             GpuFormat::Etc2Rgba => "ETC2_RGBA",
             GpuFormat::Pvrtc4Bpp => "PVRTC_4BPP",
@@ -170,7 +207,13 @@ impl GpuFormat {
     pub fn is_hardware(&self) -> bool {
         matches!(
             self,
-            GpuFormat::Astc4x4 | GpuFormat::Etc2Rgba | GpuFormat::Pvrtc4Bpp
+            GpuFormat::Astc4x4
+                | GpuFormat::Etc2Rgba
+                | GpuFormat::Pvrtc4Bpp
+                | GpuFormat::Pvr3Gz
+                | GpuFormat::Pvr3Ccz
+                | GpuFormat::Etc1
+                | GpuFormat::Etc1Ktx
         )
     }
 
@@ -179,10 +222,43 @@ impl GpuFormat {
             GpuFormat::Png | GpuFormat::Png8 => "png",
             GpuFormat::Jpg => "jpg",
             GpuFormat::WebP => "webp",
+            GpuFormat::Bmp => "bmp",
+            GpuFormat::Tga => "tga",
+            GpuFormat::Tiff => "tiff",
+            GpuFormat::Dds => "dds",
+            GpuFormat::Zktx => "zktx",
+            GpuFormat::Pvr3Gz => "pvr.gz",
+            GpuFormat::Pvr3Ccz => "pvr.ccz",
+            GpuFormat::Etc1 => "pkm",
+            GpuFormat::Etc1Ktx => "ktx",
             GpuFormat::Astc4x4 => "astc",
             GpuFormat::Etc2Rgba => "ktx",
             GpuFormat::Pvrtc4Bpp => "pvr",
         }
+    }
+
+    /// CLI token for the format (`--format`), plus the aliases the CLI used
+    /// to keep for itself (`png-8`, `jpeg`, …).
+    pub fn parse(v: &str) -> Option<GpuFormat> {
+        Some(match v.to_ascii_lowercase().as_str() {
+            "png" => GpuFormat::Png,
+            "png8" | "png-8" => GpuFormat::Png8,
+            "jpg" | "jpeg" => GpuFormat::Jpg,
+            "webp" => GpuFormat::WebP,
+            "bmp" => GpuFormat::Bmp,
+            "tga" => GpuFormat::Tga,
+            "tif" | "tiff" => GpuFormat::Tiff,
+            "dds" => GpuFormat::Dds,
+            "zktx" => GpuFormat::Zktx,
+            "pvr3gz" | "pvr-gz" => GpuFormat::Pvr3Gz,
+            "pvr3ccz" | "pvr-ccz" => GpuFormat::Pvr3Ccz,
+            "pkm" | "etc1" => GpuFormat::Etc1,
+            "ktx" | "etc1-ktx" | "etc1_ktx" => GpuFormat::Etc1Ktx,
+            "astc" => GpuFormat::Astc4x4,
+            "etc2" => GpuFormat::Etc2Rgba,
+            "pvrtc" | "pvr3" => GpuFormat::Pvrtc4Bpp,
+            _ => return None,
+        })
     }
 }
 
@@ -847,11 +923,11 @@ pub struct ProjectConfig {
     #[serde(default = "default_webp_quality")]
     pub webp_quality: u16,
     /// Formato de píxel de salida (pixel format); solo formatos de
-    /// software (PNG/PNG8/JPG/WebP).
+    /// software (PNG/PNG8/JPG/WebP/BMP/TGA/TIFF/DDS/ZKTX).
     #[serde(default)]
     pub pixel_format: PixelFormat,
     /// Voltear la textura verticalmente (`--flip-y`); solo formatos
-    /// de hardware (ASTC/ETC2/PVRTC).
+    /// de hardware (ASTC/ETC2/ETC1/PVRTC).
     #[serde(default)]
     pub flip_vertical: bool,
     /// Optional AES-256-GCM key; texture files are encrypted when set.
@@ -1777,6 +1853,54 @@ mod tests {
                 err.to_string().contains("normal_map_sheet"),
                 "mensaje raro: {err}"
             );
+        }
+    }
+
+    #[test]
+    fn output_format_tokens_and_extensions() {
+        // Token CLI -> variante -> extensión del fichero publicado.
+        let cases = [
+            ("png", GpuFormat::Png, "png"),
+            ("png8", GpuFormat::Png8, "png"),
+            ("jpeg", GpuFormat::Jpg, "jpg"),
+            ("webp", GpuFormat::WebP, "webp"),
+            ("bmp", GpuFormat::Bmp, "bmp"),
+            ("tga", GpuFormat::Tga, "tga"),
+            ("tiff", GpuFormat::Tiff, "tiff"),
+            ("dds", GpuFormat::Dds, "dds"),
+            ("zktx", GpuFormat::Zktx, "zktx"),
+            ("pvr3gz", GpuFormat::Pvr3Gz, "pvr.gz"),
+            ("pvr3ccz", GpuFormat::Pvr3Ccz, "pvr.ccz"),
+            ("pkm", GpuFormat::Etc1, "pkm"),
+            ("ktx", GpuFormat::Etc1Ktx, "ktx"),
+            ("astc", GpuFormat::Astc4x4, "astc"),
+            ("etc2", GpuFormat::Etc2Rgba, "ktx"),
+            ("pvrtc", GpuFormat::Pvrtc4Bpp, "pvr"),
+            ("pvr3", GpuFormat::Pvrtc4Bpp, "pvr"),
+        ];
+        for (token, want, ext) in cases {
+            let got = GpuFormat::parse(token).unwrap_or_else(|| panic!("token {token}"));
+            assert_eq!(got, want, "{token}");
+            assert_eq!(got.file_extension(), ext, "{token}");
+        }
+        assert_eq!(GpuFormat::parse("svg"), None);
+
+        // Los formatos de hardware siguen distinguiéndose de los de software.
+        assert!(GpuFormat::Etc1.is_hardware());
+        assert!(GpuFormat::Pvr3Ccz.is_hardware());
+        assert!(!GpuFormat::Bmp.is_hardware());
+        assert!(!GpuFormat::Dds.is_hardware());
+        assert!(!GpuFormat::Zktx.is_hardware());
+        assert!(GpuFormat::Etc1.is_supported() && GpuFormat::Bmp.is_supported());
+
+        // Serde: los nombres del TOML vuelven a la misma variante.
+        for format in [GpuFormat::Bmp, GpuFormat::Pvr3Gz, GpuFormat::Etc1Ktx] {
+            let cfg = ProjectConfig {
+                gpu_format: format,
+                ..ProjectConfig::default()
+            };
+            let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+            assert_eq!(back.gpu_format, format, "{format:?}");
         }
     }
 

@@ -101,6 +101,50 @@ pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
     out
 }
 
+/// Encode an RGBA8 image (width x height, row-major) into ETC1 RGB blocks.
+/// Returns a `Vec<u8>` of 8 bytes per 4x4 block using only the ETC1 modes
+/// (individual + differential), so the result decodes as ETC1 everywhere.
+/// Alpha is ignored; edge clamping works like [`encode_etc2_rgba8`].
+pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let blocks_x = width.div_ceil(4);
+    let blocks_y = height.div_ceil(4);
+    let mut out = Vec::with_capacity(blocks_x * blocks_y * 8);
+
+    let px = |x: usize, y: usize| -> [u8; 3] {
+        let cx = x.min(width - 1);
+        let cy = y.min(height - 1);
+        let i = (cy * width + cx) * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    };
+
+    for by in 0..blocks_y {
+        for bx in 0..blocks_x {
+            let mut pixels = [[0u8; 3]; 16];
+            for py in 0..4 {
+                for pxx in 0..4 {
+                    pixels[py * 4 + pxx] = px(bx * 4 + pxx, by * 4 + py);
+                }
+            }
+            let mut rgb = [[0u8; 3]; 16];
+            for i in 0..16 {
+                rgb[i] = pixels[stream_to_scan(i)];
+            }
+            out.extend_from_slice(&encode_etc1_block(&rgb));
+        }
+    }
+    out
+}
+
+/// One 4x4 block through the ETC1 mode set only (no T/H/planar, which are
+/// ETC2 extensions and would decode as garbage on ETC1 hardware).
+fn encode_etc1_block(rgb: &[[u8; 3]; 16]) -> [u8; 8] {
+    let (err, best) = encode_individual(rgb);
+    match encode_differential(rgb) {
+        Some(r) if r.err < err => r.block,
+        _ => best,
+    }
+}
+
 /// Scan index of stream texel `i`. ETC1/2 store texels in **column-major**
 /// order: texel at (col c, row r) has stream index `c*4 + r`.
 const fn stream_to_scan(i: usize) -> usize {

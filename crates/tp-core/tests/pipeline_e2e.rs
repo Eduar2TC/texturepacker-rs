@@ -1054,6 +1054,107 @@ fn lote8_jpg_png8_webp_and_pixel_formats_export() {
 }
 
 #[test]
+fn lote9_software_and_container_formats_export() {
+    use std::io::Read;
+
+    let fx = Fixture::new("lote9_formats");
+    let input = make_input_dir(&fx.dir, "in");
+    for i in 0..4 {
+        write_png(
+            &input.join(format!("s{i}.png")),
+            8,
+            8,
+            [(i * 40) as u8, 120, 200, 255],
+        );
+    }
+    let run = |output: std::path::PathBuf, format: GpuFormat| {
+        let cfg = ProjectConfig {
+            input_directory: input.clone(),
+            output_directory: output,
+            max_texture_size: 64,
+            // PVR3 (PVRTC) exige dimensiones potencia de dos.
+            size_constraints: SizeConstraint::Pot,
+            gpu_format: format,
+            ..ProjectConfig::default()
+        };
+        let out = pipeline::run(&cfg).expect("pipeline should succeed");
+        assert_eq!(out.result.pages[0].format, format.as_str());
+        out
+    };
+
+    // ---- BMP / TGA / TIFF: decodificables ----------------------------------
+    let dir = fx.dir.join("out_bmp");
+    let out = run(dir.clone(), GpuFormat::Bmp);
+    let bmp = image::open(dir.join("atlas.bmp")).expect("bmp decodes");
+    assert_eq!(
+        (bmp.width(), bmp.height()),
+        (out.pages[0].width as u32, out.pages[0].height as u32)
+    );
+
+    let dir = fx.dir.join("out_tiff");
+    run(dir.clone(), GpuFormat::Tiff);
+    image::open(dir.join("atlas.tiff")).expect("tiff decodes");
+
+    let dir = fx.dir.join("out_tga");
+    run(dir.clone(), GpuFormat::Tga);
+    image::open(dir.join("atlas.tga")).expect("tga decodes");
+
+    // ---- DDS: cabecera legacy + payload crudo -------------------------------
+    let dir = fx.dir.join("out_dds");
+    run(dir.clone(), GpuFormat::Dds);
+    let dds = std::fs::read(dir.join("atlas.dds")).unwrap();
+    assert_eq!(&dds[..4], b"DDS ");
+    assert_eq!(
+        u32::from_le_bytes(dds[4..8].try_into().unwrap()),
+        124,
+        "dwSize"
+    );
+    assert!(dds.len() > 128, "payload presente");
+
+    // ---- ZKTX: KTX en zlib --------------------------------------------------
+    let dir = fx.dir.join("out_zktx");
+    run(dir.clone(), GpuFormat::Zktx);
+    let zktx = std::fs::read(dir.join("atlas.zktx")).unwrap();
+    let mut ktx = Vec::new();
+    flate2::read::ZlibDecoder::new(&zktx[..])
+        .read_to_end(&mut ktx)
+        .expect("zktx es zlib");
+    assert_eq!(&ktx[..12], b"\xABKTX 11\xBB\r\n\x1A\n");
+
+    // ---- PVR3GZ / PVR3CCZ: envuelven el mismo PVR3 --------------------------
+    let dir = fx.dir.join("out_ccz");
+    run(dir.clone(), GpuFormat::Pvr3Ccz);
+    let ccz = std::fs::read(dir.join("atlas.pvr.ccz")).unwrap();
+    assert_eq!(&ccz[..4], b"CCZ!");
+    let mut pvr = Vec::new();
+    flate2::read::ZlibDecoder::new(&ccz[16..])
+        .read_to_end(&mut pvr)
+        .expect("ccz es zlib");
+    assert_eq!(&pvr[..4], b"PVR\x03");
+
+    let dir = fx.dir.join("out_gz");
+    run(dir.clone(), GpuFormat::Pvr3Gz);
+    let gz = std::fs::read(dir.join("atlas.pvr.gz")).unwrap();
+    let mut pvr = Vec::new();
+    flate2::read::GzDecoder::new(&gz[..])
+        .read_to_end(&mut pvr)
+        .expect("pvr.gz es gzip");
+    assert_eq!(&pvr[..4], b"PVR\x03");
+
+    // ---- PKM (ETC1) ---------------------------------------------------------
+    let dir = fx.dir.join("out_pkm");
+    run(dir.clone(), GpuFormat::Etc1);
+    let pkm = std::fs::read(dir.join("atlas.pkm")).unwrap();
+    assert_eq!(&pkm[..6], b"PKM 10");
+
+    // ---- KTX con ETC1 -------------------------------------------------------
+    let dir = fx.dir.join("out_etc1_ktx");
+    run(dir.clone(), GpuFormat::Etc1Ktx);
+    let ktx = std::fs::read(dir.join("atlas.ktx")).unwrap();
+    assert_eq!(&ktx[..12], b"\xABKTX 11\xBB\r\n\x1A\n");
+}
+
+#[test]
 fn lote8_flip_vertical_only_for_hardware_formats() {
     let fx = Fixture::new("lote8_flip");
     let input = make_input_dir(&fx.dir, "in");

@@ -86,6 +86,24 @@ pub fn encode_to_bytes(
         GpuFormat::Astc4x4 => encode_astc(rgba, width, height),
         GpuFormat::Etc2Rgba => Ok(encode_etc2_ktx(rgba, width, height)),
         GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height),
+        GpuFormat::Pvr3Gz => encode_pvrtc_pvr(rgba, width, height).map(gzip_bytes),
+        GpuFormat::Pvr3Ccz => encode_pvrtc_pvr(rgba, width, height).map(ccz_bytes),
+        GpuFormat::Etc1 => Ok(encode_etc1_pkm(rgba, width, height)),
+        GpuFormat::Etc1Ktx => Ok(encode_etc1_ktx(rgba, width, height)),
+        // Formatos de software: pasan por la conversión de pixel format.
+        GpuFormat::Bmp | GpuFormat::Tga | GpuFormat::Tiff => {
+            let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
+            encode_image_format(&data, width, height, color, opts.format)
+        }
+        GpuFormat::Dds => {
+            let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
+            encode_dds(&data, width, height, color)
+        }
+        GpuFormat::Zktx => {
+            let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
+            let ktx = ktx1_rgba8(width, height, color, &data);
+            Ok(zlib_bytes(&ktx))
+        }
     }
 }
 
@@ -788,15 +806,52 @@ fn encode_pvrtc_pvr(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>>
 /// ETC2 RGBA8 in a KTX container.
 fn encode_etc2_ktx(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
     let blocks = etc2::encode_etc2_rgba8(rgba, width, height);
-    let mut out = Vec::with_capacity(64 + 4 + blocks.len());
-    // KTX v1.1 header (64 bytes).
+    // GL_COMPRESSED_RGBA8_ETC2_EAC sobre GL_RGBA.
+    ktx1_container(0, 0, 0x9278, 0x1908, width, height, &blocks)
+}
+
+/// ETC1 RGB in a PKM container (`.pkm`), the format PowerVR/GLES tools expect.
+fn encode_etc1_pkm(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let blocks = etc2::encode_etc1_rgb(rgba, width, height);
+    let ext_w = width.next_multiple_of(4);
+    let ext_h = height.next_multiple_of(4);
+    let mut out = Vec::with_capacity(16 + blocks.len());
+    out.extend_from_slice(b"PKM 10"); // magic + version "10"
+    out.extend_from_slice(&0u16.to_be_bytes()); // dataFormat: ETC1
+    out.extend_from_slice(&(ext_w as u16).to_be_bytes());
+    out.extend_from_slice(&(ext_h as u16).to_be_bytes());
+    out.extend_from_slice(&(width as u16).to_be_bytes());
+    out.extend_from_slice(&(height as u16).to_be_bytes());
+    out.extend_from_slice(&blocks);
+    out
+}
+
+/// ETC1 RGB in a KTX container (`.ktx`).
+fn encode_etc1_ktx(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+    let blocks = etc2::encode_etc1_rgb(rgba, width, height);
+    // GL_ETC1_RGB8_OES sobre GL_RGB.
+    ktx1_container(0, 0, 0x8D60, 0x1907, width, height, &blocks)
+}
+
+/// KTX v1.1 container with a single mip level. `gl_type`/`gl_format` are 0
+/// for compressed payloads, as the spec requires.
+fn ktx1_container(
+    gl_type: u32,
+    gl_format: u32,
+    internal_format: u32,
+    base_internal_format: u32,
+    width: usize,
+    height: usize,
+    payload: &[u8],
+) -> Vec<u8> {
+    let mut out = Vec::with_capacity(64 + 4 + payload.len());
     out.extend_from_slice(b"\xABKTX 11\xBB\r\n\x1A\n");
     out.extend_from_slice(&0x04030201u32.to_le_bytes()); // endianness marker
-    out.extend_from_slice(&0u32.to_le_bytes()); // glType
+    out.extend_from_slice(&gl_type.to_le_bytes());
     out.extend_from_slice(&1u32.to_le_bytes()); // glTypeSize
-    out.extend_from_slice(&0u32.to_le_bytes()); // glFormat
-    out.extend_from_slice(&0x9278u32.to_le_bytes()); // GL_COMPRESSED_RGBA8_ETC2_EAC
-    out.extend_from_slice(&0x1908u32.to_le_bytes()); // GL_RGBA
+    out.extend_from_slice(&gl_format.to_le_bytes());
+    out.extend_from_slice(&internal_format.to_le_bytes());
+    out.extend_from_slice(&base_internal_format.to_le_bytes());
     out.extend_from_slice(&(width as u32).to_le_bytes()); // pixelWidth
     out.extend_from_slice(&(height as u32).to_le_bytes()); // pixelHeight
     out.extend_from_slice(&0u32.to_le_bytes()); // pixelDepth
@@ -804,8 +859,179 @@ fn encode_etc2_ktx(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
     out.extend_from_slice(&1u32.to_le_bytes()); // numberOfFaces
     out.extend_from_slice(&1u32.to_le_bytes()); // numberOfMipmapLevels
     out.extend_from_slice(&0u32.to_le_bytes()); // bytesOfKeyValueData
-    out.extend_from_slice(&(blocks.len() as u32).to_le_bytes()); // imageSize
-    out.extend_from_slice(&blocks);
+    out.extend_from_slice(&(payload.len() as u32).to_le_bytes()); // imageSize
+    out.extend_from_slice(payload);
+    // KTX padi cada nivel a un múltiplo de 4 bytes.
+    let pad = (4 - (payload.len() % 4)) % 4;
+    out.extend(std::iter::repeat_n(0u8, pad));
+    out
+}
+
+/// Uncompressed KTX used as the payload of `.zktx`.
+fn ktx1_rgba8(
+    width: usize,
+    height: usize,
+    color: image::ExtendedColorType,
+    data: &[u8],
+) -> Vec<u8> {
+    use image::ExtendedColorType as Ct;
+    let (gl_format, internal, base) = match color {
+        Ct::Rgb8 => (0x1907, 0x8051, 0x1907), // GL_RGB8
+        Ct::L8 => (0x1909, 0x1909, 0x1909),   // GL_LUMINANCE
+        Ct::La8 => (0x190A, 0x190A, 0x190A),  // GL_LUMINANCE_ALPHA
+        _ => (0x1908, 0x8058, 0x1908),        // GL_RGBA8
+    };
+    ktx1_container(0x1401, gl_format, internal, base, width, height, data)
+}
+
+/// BMP/TGA/TIFF sin comprimir, con la conversión de pixel format ya aplicada.
+fn encode_image_format(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    color: image::ExtendedColorType,
+    format: GpuFormat,
+) -> Result<Vec<u8>> {
+    use image::ImageEncoder;
+    // Cursor: TIFF exige Write + Seek.
+    let mut buf = std::io::Cursor::new(Vec::new());
+    let name = format.as_str();
+    let res = match format {
+        GpuFormat::Bmp => image::codecs::bmp::BmpEncoder::new(&mut buf).write_image(
+            data,
+            width as u32,
+            height as u32,
+            color,
+        ),
+        GpuFormat::Tga => image::codecs::tga::TgaEncoder::new(&mut buf).write_image(
+            data,
+            width as u32,
+            height as u32,
+            color,
+        ),
+        GpuFormat::Tiff => image::codecs::tiff::TiffEncoder::new(&mut buf).write_image(
+            data,
+            width as u32,
+            height as u32,
+            color,
+        ),
+        _ => return Err(TpError::Other(format!("{name} no es un formato de imagen"))),
+    };
+    res.map_err(|e| TpError::Other(format!("Error codificando {name}: {e}")))?;
+    Ok(buf.into_inner())
+}
+
+/// DDS sin comprimir: cabecera legacy de 124 bytes + píxeles. Las máscaras
+/// de canal describen el orden real de los bytes, así que `RGBA8888` viaja
+/// como R,G,B,A en memoria y `RGB888` como 24 bits con la misma disposición.
+fn encode_dds(
+    data: &[u8],
+    width: usize,
+    height: usize,
+    color: image::ExtendedColorType,
+) -> Result<Vec<u8>> {
+    use image::ExtendedColorType as Ct;
+    // La8 no tiene equivalente directo: se expande a RGBA conservando el alfa.
+    let (pixels, bit_count, flags, masks): (Vec<u8>, u32, u32, [u32; 4]) = match color {
+        Ct::Rgba8 => (
+            data.to_vec(),
+            32u32,
+            0x41u32,
+            [0x0000_00ff, 0x0000_ff00, 0x00ff_0000, 0xff00_0000],
+        ),
+        Ct::Rgb8 => (
+            data.to_vec(),
+            24,
+            0x40,
+            [0x0000_00ff, 0x0000_ff00, 0x00ff_0000, 0],
+        ),
+        Ct::L8 => (data.to_vec(), 8, 0x2_0000, [0x0000_00ff, 0, 0, 0]),
+        Ct::La8 => {
+            let mut out = Vec::with_capacity(data.len() / 2 * 4);
+            for px in data.chunks_exact(2) {
+                out.extend_from_slice(&[px[0], px[0], px[0], px[1]]);
+            }
+            (
+                out,
+                32,
+                0x41,
+                [0x0000_00ff, 0x0000_ff00, 0x00ff_0000, 0xff00_0000],
+            )
+        }
+        _ => {
+            return Err(TpError::Other(format!(
+                "DDS no admite el formato de píxel resultante ({color:?})"
+            )))
+        }
+    };
+    let stride = (bit_count / 8) as usize;
+    if data.len() != width * height * stride {
+        return Err(TpError::Other(
+            "Tamaño de imagen inconsistente al codificar DDS".to_string(),
+        ));
+    }
+
+    let mut out = Vec::with_capacity(128 + pixels.len());
+    out.extend_from_slice(b"DDS ");
+    out.extend_from_slice(&124u32.to_le_bytes()); // dwSize
+                                                  // CAPS | HEIGHT | WIDTH | PITCH | PIXELFORMAT
+    out.extend_from_slice(&0x0000_100Fu32.to_le_bytes());
+    out.extend_from_slice(&(height as u32).to_le_bytes());
+    out.extend_from_slice(&(width as u32).to_le_bytes());
+    out.extend_from_slice(&((width * stride) as u32).to_le_bytes()); // pitch
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwDepth
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwMipMapCount
+    for _ in 0..11 {
+        out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved1
+    }
+    // DDS_PIXELFORMAT (32 bytes)
+    out.extend_from_slice(&32u32.to_le_bytes());
+    out.extend_from_slice(&flags.to_le_bytes());
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwFourCC
+    out.extend_from_slice(&bit_count.to_le_bytes());
+    for m in masks {
+        out.extend_from_slice(&m.to_le_bytes());
+    }
+    out.extend_from_slice(&0x0000_1000u32.to_le_bytes()); // dwCaps: TEXTURE
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps2
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps3
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps4
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved2
+    out.extend_from_slice(&pixels);
+    Ok(out)
+}
+
+/// gzip del fichero completo (`.pvr.gz`).
+fn gzip_bytes(data: Vec<u8>) -> Vec<u8> {
+    use flate2::write::GzEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    let _ = enc.write_all(&data);
+    enc.finish().unwrap_or_default()
+}
+
+/// zlib del contenido (`.zktx`).
+fn zlib_bytes(data: &[u8]) -> Vec<u8> {
+    use flate2::write::ZlibEncoder;
+    use flate2::Compression;
+    use std::io::Write;
+    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
+    let _ = enc.write_all(data);
+    enc.finish().unwrap_or_default()
+}
+
+/// Contenedor CCZ de Cocos2D: cabecera de 16 bytes (campos en big-endian)
+/// + el PVR v3 en zlib. `compression_type` 0 = zlib.
+fn ccz_bytes(data: Vec<u8>) -> Vec<u8> {
+    let payload = zlib_bytes(&data);
+    let mut out = Vec::with_capacity(16 + payload.len());
+    out.extend_from_slice(b"CCZ!");
+    out.extend_from_slice(&0u16.to_be_bytes()); // compression_type: zlib
+    out.extend_from_slice(&0u16.to_be_bytes()); // version
+    out.extend_from_slice(&0u32.to_be_bytes()); // reserved
+    out.extend_from_slice(&(data.len() as u32).to_be_bytes()); // len
+    out.extend_from_slice(&payload);
     out
 }
 
@@ -1738,5 +1964,239 @@ mod tests {
             assert_eq!((gw, gh), (sw, sh), "{mode:?} a {factor}x");
             assert_eq!(got, smooth, "{mode:?} a {factor}x debe caer en Smooth");
         }
+    }
+
+    /// Imagen de prueba determinista (bordes no transparentes alfa 128/255).
+    fn gradient(w: usize, h: usize) -> Vec<u8> {
+        let mut v = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                v.extend_from_slice(&[
+                    (x * 7 % 256) as u8,
+                    (y * 11 % 256) as u8,
+                    ((x + y) * 5 % 256) as u8,
+                    if (x + y) % 3 == 0 { 255 } else { 128 },
+                ]);
+            }
+        }
+        v
+    }
+
+    fn le32(bytes: &[u8], at: usize) -> u32 {
+        u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap())
+    }
+
+    fn be16(bytes: &[u8], at: usize) -> u16 {
+        u16::from_be_bytes(bytes[at..at + 2].try_into().unwrap())
+    }
+
+    /// Diferencia media por canal entre RGBA de origen y un buffer `u32` del
+    /// decodificador (empaquetado `[b, g, r, a]` en little-endian).
+    fn mean_channel_error(rgba: &[u8], decoded: &[u32]) -> f64 {
+        let mut total = 0u64;
+        for (px, out) in rgba.chunks_exact(4).zip(decoded) {
+            let bytes = out.to_le_bytes();
+            let (b, g, r) = (
+                u64::from(bytes[0]),
+                u64::from(bytes[1]),
+                u64::from(bytes[2]),
+            );
+            total += (u64::from(px[0])).abs_diff(r);
+            total += (u64::from(px[1])).abs_diff(g);
+            total += (u64::from(px[2])).abs_diff(b);
+        }
+        total as f64 / (rgba.len() / 4 * 3) as f64
+    }
+
+    #[test]
+    fn bmp_tga_tiff_roundtrip_the_rgba_pixels() {
+        let (w, h) = (7, 5);
+        let rgba = gradient(w, h);
+        for format in [GpuFormat::Bmp, GpuFormat::Tga, GpuFormat::Tiff] {
+            let bytes = encode_to_bytes(&rgba, w, h, &opts(format)).unwrap();
+            // El TGA no lleva magia: hay que indicar el formato al decodificar.
+            let img_format = match format {
+                GpuFormat::Bmp => image::ImageFormat::Bmp,
+                GpuFormat::Tga => image::ImageFormat::Tga,
+                _ => image::ImageFormat::Tiff,
+            };
+            let decoded = image::load_from_memory_with_format(&bytes, img_format)
+                .unwrap_or_else(|e| panic!("{} no decodifica: {e}", format.as_str()))
+                .to_rgba8();
+            assert_eq!(decoded.as_raw(), &rgba, "{}", format.as_str());
+        }
+    }
+
+    #[test]
+    fn software_image_formats_honour_the_pixel_format() {
+        let (w, h) = (4, 2);
+        let rgba = gradient(w, h);
+        let o = EncodeOptions {
+            pixel_format: PixelFormat::Rgb888,
+            ..opts(GpuFormat::Tga)
+        };
+        let bytes = encode_to_bytes(&rgba, w, h, &o).unwrap();
+        // TGA sin canal alfa: el decodificador devuelve opacos.
+        let decoded = image::load_from_memory_with_format(&bytes, image::ImageFormat::Tga)
+            .unwrap()
+            .to_rgba8();
+        assert_eq!(decoded.dimensions(), (w as u32, h as u32));
+        assert!(decoded.pixels().all(|p| p.0[3] == 255), "alfa no compuesto");
+    }
+
+    #[test]
+    fn dds_writes_a_valid_legacy_header_and_raw_pixels() {
+        let (w, h) = (4, 3);
+        let rgba = gradient(w, h);
+        let bytes = encode_to_bytes(&rgba, w, h, &opts(GpuFormat::Dds)).unwrap();
+        assert_eq!(&bytes[..4], b"DDS ");
+        assert_eq!(le32(&bytes, 4), 124, "dwSize");
+        assert_eq!(le32(&bytes, 12), h as u32, "dwHeight");
+        assert_eq!(le32(&bytes, 16), w as u32, "dwWidth");
+        assert_eq!(le32(&bytes, 20), (w * 4) as u32, "pitch");
+        // DDS_PIXELFORMAT en el offset 76 de la cabecera.
+        assert_eq!(le32(&bytes, 76), 32, "pixelformat dwSize");
+        assert_eq!(le32(&bytes, 80), 0x41, "DDPF_RGB | DDPF_ALPHAPIXELS");
+        assert_eq!(le32(&bytes, 88), 32, "dwRGBBitCount");
+        assert_eq!(le32(&bytes, 92), 0x0000_00FF, "máscara R");
+        assert_eq!(le32(&bytes, 104), 0xFF00_0000, "máscara A");
+        assert_eq!(le32(&bytes, 108), 0x1000, "DDSCAPS_TEXTURE");
+        assert_eq!(&bytes[128..], &rgba[..], "payload en orden R,G,B,A");
+    }
+
+    #[test]
+    fn dds_supports_the_rgb_and_gray_pixel_formats() {
+        let (w, h) = (4, 2);
+        let rgba = gradient(w, h);
+        let rgb = EncodeOptions {
+            pixel_format: PixelFormat::Rgb888,
+            ..opts(GpuFormat::Dds)
+        };
+        let bytes = encode_to_bytes(&rgba, w, h, &rgb).unwrap();
+        assert_eq!(le32(&bytes, 88), 24, "dwRGBBitCount");
+        assert_eq!(le32(&bytes, 80), 0x40, "solo DDPF_RGB");
+        assert_eq!(bytes.len(), 128 + w * h * 3);
+
+        let alpha = EncodeOptions {
+            pixel_format: PixelFormat::Alpha8,
+            ..opts(GpuFormat::Dds)
+        };
+        let bytes = encode_to_bytes(&rgba, w, h, &alpha).unwrap();
+        assert_eq!(le32(&bytes, 88), 8, "dwRGBBitCount");
+        assert_eq!(le32(&bytes, 80), 0x2_0000, "DDPF_LUMINANCE");
+        assert_eq!(bytes.len(), 128 + w * h);
+    }
+
+    #[test]
+    fn zktx_is_a_zlib_compressed_ktx() {
+        use std::io::Read;
+        let (w, h) = (4, 4);
+        let rgba = gradient(w, h);
+        let bytes = encode_to_bytes(&rgba, w, h, &opts(GpuFormat::Zktx)).unwrap();
+        let mut ktx = Vec::new();
+        flate2::read::ZlibDecoder::new(&bytes[..])
+            .read_to_end(&mut ktx)
+            .expect("zktx es zlib");
+        assert_eq!(&ktx[..12], b"\xABKTX 11\xBB\r\n\x1A\n");
+        assert_eq!(le32(&ktx, 16), 0x1401, "glType = GL_UNSIGNED_BYTE");
+        assert_eq!(le32(&ktx, 24), 0x1908, "glFormat = GL_RGBA");
+        assert_eq!(le32(&ktx, 28), 0x8058, "glInternalFormat = GL_RGBA8");
+        assert_eq!(le32(&ktx, 36), w as u32);
+        assert_eq!(le32(&ktx, 40), h as u32);
+        let image_size = le32(&ktx, 64) as usize;
+        assert_eq!(image_size, rgba.len());
+        assert_eq!(&ktx[68..68 + image_size], &rgba[..]);
+    }
+
+    #[test]
+    fn pvr3_gz_and_ccz_wrap_the_pvr3_file() {
+        use std::io::Read;
+        let rgba = gradient(8, 8);
+        let base = encode_to_bytes(&rgba, 8, 8, &opts(GpuFormat::Pvrtc4Bpp)).unwrap();
+        assert_eq!(&base[..4], b"PVR\x03");
+
+        let gz = encode_to_bytes(&rgba, 8, 8, &opts(GpuFormat::Pvr3Gz)).unwrap();
+        assert_eq!(&gz[..2], &[0x1F, 0x8B], "cabecera gzip");
+        let mut out = Vec::new();
+        flate2::read::GzDecoder::new(&gz[..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, base, "pvr.gz debe descomprimir al PVR3 original");
+
+        let ccz = encode_to_bytes(&rgba, 8, 8, &opts(GpuFormat::Pvr3Ccz)).unwrap();
+        assert_eq!(&ccz[..4], b"CCZ!");
+        assert_eq!(be16(&ccz, 4), 0, "compression_type = zlib");
+        assert_eq!(be16(&ccz, 6), 0, "version");
+        assert_eq!(
+            u32::from_be_bytes(ccz[12..16].try_into().unwrap()) as usize,
+            base.len()
+        );
+        let mut out = Vec::new();
+        flate2::read::ZlibDecoder::new(&ccz[16..])
+            .read_to_end(&mut out)
+            .unwrap();
+        assert_eq!(out, base, "pvr.ccz debe descomprimir al PVR3 original");
+    }
+
+    #[test]
+    fn etc1_pkm_and_ktx_decode_close_to_the_source() {
+        let (w, h) = (16, 16);
+        let rgba = gradient(w, h);
+
+        let pkm = encode_to_bytes(&rgba, w, h, &opts(GpuFormat::Etc1)).unwrap();
+        assert_eq!(&pkm[..6], b"PKM 10");
+        assert_eq!(be16(&pkm, 6), 0, "dataFormat ETC1");
+        assert_eq!(be16(&pkm, 8), w as u16, "extended width");
+        assert_eq!(be16(&pkm, 10), h as u16, "extended height");
+        assert_eq!(be16(&pkm, 12), w as u16, "original width");
+        assert_eq!(be16(&pkm, 14), h as u16, "original height");
+        let mut buf = vec![0u32; w * h];
+        texture2ddecoder::decode_etc1(&pkm[16..], w, h, &mut buf).unwrap();
+        let err = mean_channel_error(&rgba, &buf);
+        assert!(err < 6.0, "error medio ETC1 demasiado alto: {err:.2}");
+
+        let ktx = encode_to_bytes(&rgba, w, h, &opts(GpuFormat::Etc1Ktx)).unwrap();
+        assert_eq!(&ktx[..12], b"\xABKTX 11\xBB\r\n\x1A\n");
+        assert_eq!(le32(&ktx, 16), 0, "glType = 0 (comprimido)");
+        assert_eq!(le32(&ktx, 24), 0, "glFormat = 0 (comprimido)");
+        assert_eq!(le32(&ktx, 28), 0x8D60, "GL_ETC1_RGB8_OES");
+        assert_eq!(le32(&ktx, 32), 0x1907, "GL_RGB");
+        let image_size = le32(&ktx, 64) as usize;
+        assert_eq!(image_size, w * h / 2, "ETC1 son 8 bytes por bloque 4x4");
+        let mut buf = vec![0u32; w * h];
+        texture2ddecoder::decode_etc1(&ktx[68..68 + image_size], w, h, &mut buf).unwrap();
+        let err = mean_channel_error(&rgba, &buf);
+        assert!(err < 6.0, "error medio ETC1 (ktx) demasiado alto: {err:.2}");
+    }
+
+    #[test]
+    fn etc1_encoder_stays_inside_the_etc1_mode_set() {
+        // Un bloque que en ETC2 caería en modo T/H/planar (desbordamiento del
+        // diferencial) debe seguir siendo decodificable como ETC1.
+        let mut rgba = vec![0u8; 4 * 4 * 4];
+        for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+            let v = ((i as u16 * 16) % 256) as u8;
+            px.copy_from_slice(&[v, 255 - v, ((u16::from(v) * 3) % 256) as u8, 255]);
+        }
+        let blocks = crate::etc2::encode_etc1_rgb(&rgba, 4, 4);
+        assert_eq!(blocks.len(), 8);
+        // Ningún bloque puede salirse del conjunto de modos ETC1: con el bit
+        // de diferencial activo, base + delta debe caber en 5 bits (si no,
+        // ETC2 lo reinterpretaría como modo T/H/planar y ETC1 lo leería mal).
+        if (blocks[3] >> 1) & 1 == 1 {
+            for channel in blocks[..3].iter() {
+                let base = i16::from(channel >> 3);
+                let delta = i16::from(channel & 7);
+                let delta = if delta >= 4 { delta - 8 } else { delta };
+                let sum = base + delta;
+                assert!(
+                    (0..=31).contains(&sum),
+                    "diferencial {sum} fuera del rango ETC1"
+                );
+            }
+        }
+        let mut buf = vec![0u32; 16];
+        texture2ddecoder::decode_etc1(&blocks, 4, 4, &mut buf).unwrap();
+        assert!(mean_channel_error(&rgba, &buf) < 48.0);
     }
 }

@@ -109,7 +109,7 @@ fn execute(
     if config.flip_vertical && !config.gpu_format.is_hardware() {
         warnings.push(
             "Voltear verticalmente (flip Y) solo aplica a formatos de hardware \
-             (ASTC/ETC2/PVRTC); se ignora con el formato actual"
+             (ASTC/ETC2/ETC1/PVRTC); se ignora con el formato actual"
                 .to_string(),
         );
     }
@@ -117,8 +117,9 @@ fn execute(
         && config.gpu_format.is_hardware()
     {
         warnings.push(
-            "El formato de píxel solo aplica a PNG/PNG8/JPG/WebP; los formatos \
-             de hardware comprimen RGBA y lo ignoran"
+            "El formato de píxel solo aplica a los formatos de software \
+             (PNG/PNG8/JPG/WebP/BMP/TGA/TIFF/DDS/ZKTX); los formatos de \
+             hardware comprimen RGBA y lo ignoran"
                 .to_string(),
         );
     }

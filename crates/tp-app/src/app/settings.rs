@@ -252,7 +252,7 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             if ui
                 .checkbox(&mut app.config.flip_vertical, "Voltear verticalmente (flip Y)")
                 .on_hover_text(
-                    "Solo formatos de hardware (ASTC/ETC2/PVRTC); las coordenadas \
+                    "Solo formatos de hardware (ASTC/ETC2/ETC1/PVRTC); las coordenadas \
                      de los frames no cambian",
                 )
                 .changed()
@@ -710,9 +710,20 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     ui.selectable_value(v, GpuFormat::Png8, "PNG-8 (indexado)");
                     ui.selectable_value(v, GpuFormat::Jpg, "JPG");
                     ui.selectable_value(v, GpuFormat::WebP, "WebP");
+                    ui.selectable_value(v, GpuFormat::Bmp, "BMP");
+                    ui.selectable_value(v, GpuFormat::Tga, "TGA");
+                    ui.selectable_value(v, GpuFormat::Tiff, "TIFF");
+                    ui.selectable_value(v, GpuFormat::Dds, "DDS");
+                    ui.separator();
                     ui.selectable_value(v, GpuFormat::Astc4x4, "ASTC 4x4");
-                    ui.selectable_value(v, GpuFormat::Etc2Rgba, "ETC2 RGBA");
-                    ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP");
+                    ui.selectable_value(v, GpuFormat::Etc2Rgba, "ETC2 RGBA (ktx)");
+                    ui.selectable_value(v, GpuFormat::Etc1, "ETC1 (pkm)");
+                    ui.selectable_value(v, GpuFormat::Etc1Ktx, "ETC1 en KTX (ktx)");
+                    ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP (pvr)");
+                    ui.separator();
+                    ui.selectable_value(v, GpuFormat::Zktx, "KTX con zlib (zktx)");
+                    ui.selectable_value(v, GpuFormat::Pvr3Gz, "PVR3 en gzip (pvr.gz)");
+                    ui.selectable_value(v, GpuFormat::Pvr3Ccz, "PVR3 en CCZ (pvr.ccz)");
                 },
                 &mut app.config.gpu_format,
             );
@@ -830,13 +841,14 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
     if app.config.flip_vertical && !app.config.gpu_format.is_hardware() {
         warnings.push(
             "Voltear verticalmente (flip Y) solo aplica a formatos de hardware \
-             (ASTC/ETC2/PVRTC); se ignorará."
+             (ASTC/ETC2/ETC1/PVRTC); se ignorará."
                 .into(),
         );
     }
     if app.config.pixel_format != PixelFormat::Rgba8888 && app.config.gpu_format.is_hardware() {
         warnings.push(
-            "El formato de píxel solo aplica a PNG/PNG8/JPG/WebP; los formatos de \
+            "El formato de píxel solo aplica a los formatos de software \
+             (PNG/PNG8/JPG/WebP/BMP/TGA/TIFF/DDS/ZKTX); los formatos de \
              hardware usan RGBA."
                 .into(),
         );

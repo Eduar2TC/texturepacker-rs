@@ -33,8 +33,22 @@ corrección» al final.
   `crates/tp-core/src/config.rs:621-630`) + plantilla Mustache propia, frente a los 60+ del
   original; sin ficheros extra por framework (`--class-file`, `--header-file`,
   `--source-file`, `--spriteids-file`) ni botón de conversión de formato de datos.
-- **Formatos de textura de salida**: PNG/PNG8/JPG/WebP + ETC2/PVRTC, frente a los 19 del
-  original (faltan `bmp, tga, tiff, pvr3, pvr3gz, pvr3ccz, pkm, ktx, ktx2, zktx, astc, basis, dds`).
+- **Formatos de textura de salida** **[PARCIAL]**: 16 de los 19 del original. A PNG/PNG8/
+  JPG/WebP/ETC2/PVRTC se les han sumado **BMP, TGA y TIFF** (codificador de `image`),
+  **DDS** (cabecera legacy de 124 bytes con máscaras de canal y payload crudo),
+  **ZKTX** (KTX v1 en zlib), **PVR3GZ y PVR3CCZ** (el PVR3 de PVRTC en gzip y en el
+  contenedor CCZ de Cocos2D) y **ETC1** en contenedor PKM (`.pkm`) y en KTX
+  (`glInternalFormat 0x8D60`), con un codificador ETC1 propio que reutiliza los modos
+  individual + diferencial de `etc2.rs` y descarta T/H/planar (son extensiones ETC2, y
+  un bloque así se leería mal en hardware ETC1). Compresión con `flate2`, variantes en
+  `GpuFormat` (+ `GpuFormat::parse` para el CLI), combo de «Formato de publicación»,
+  flags `--format bmp|tga|tiff|dds|zktx|pvr3gz|pvr3ccz|pkm|ktx`. Tests:
+  `bmp_tga_tiff_roundtrip_the_rgba_pixels`, `dds_writes_a_valid_legacy_header_and_raw_pixels`,
+  `zktx_is_a_zlib_compressed_ktx`, `pvr3_gz_and_ccz_wrap_the_pvr3_file`,
+  `etc1_pkm_and_ktx_decode_close_to_the_source`, `output_format_tokens_and_extensions`
+  y el e2e `lote9_software_and_container_formats_export`. Siguen sin existir **`ktx2`**
+  (contenedor con su DFD obligatorio) y **`basis`** (necesita un codificador Basis
+  Universal externo, como astcenc lo fue para ASTC).
 - **ASTC** **[RESUELTO]**: `tp-app` y `tp-cli` activan `tp-core/gpu-formats` en su
   `Cargo.toml`, así que `GpuFormat::is_supported()` es `true`, astcenc se compila y el
   test `etc2_pvrtc_and_astc_export_paths` exporta `atlas.astc` de verdad. La advertencia
@@ -141,7 +155,7 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (236 tests tras el segundo punto de §2/§3).
+`cargo test --workspace` en verde (246 tests tras el tercer punto de §2/§3).
 
 ---
 
@@ -164,6 +178,9 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    `normal_map_sheet` para la hoja (validado en `ProjectConfig::validate`), UI de Ajustes
    (sufijo, filtro, auto-detect y nombre de la hoja bajo el checkbox) y flags
    `--normalmap-*` en el CLI. Tests citados en §2.
-3. **Formatos de salida faltantes** — pendiente.
+3. **Formatos de salida faltantes** — **hecho** (ver §2 «Formatos de textura de salida
+   [PARCIAL] 16/19»): BMP/TGA/TIFF/DDS/ZKTX/PVR3GZ/PVR3CCZ/ETC1(PKM)/ETC1(KTX) nuevos,
+   con `GpuFormat::parse`, combo de la GUI, `--format` ampliado y e2e propio. Faltan
+   `ktx2` y `basis`.
 4. **Exportadores** — pendiente.
 5. **Calidades y pixel formats GPU** — pendiente.

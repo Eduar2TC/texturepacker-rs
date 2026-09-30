@@ -42,7 +42,8 @@ fn usage() -> ! {
          \x20 --alpha-handling T    keep | clear | bleed | premultiply\n\
          \x20 --scale-mode T        smooth | fast | scale2x | scale3x | scale4x | eagle\n\
          \x20 --texture-path RUTA   Prefijo de la textura en los metadatos (p. ej. /assets)\n\
-         \x20 --format T            png | png8 | jpg | webp | astc | etc2 | pvrtc\n\
+         \x20 --format T            png | png8 | jpg | webp | bmp | tga | tiff | dds\n\
+         \x20                        zktx | pvr3gz | pvr3ccz | pkm | ktx | astc | etc2 | pvrtc\n\
          \x20 --png-opt-level N     Optimización PNG sin pérdida, 0-7 (1 = indexa si ≤256 colores)\n\
          \x20 --png8-dither T       Dithering PNG-8: low | medium | high\n\
          \x20 --jpg-quality N       Calidad JPG (0-100)\n\
@@ -234,18 +235,12 @@ fn cmd_pack(args: &[String]) {
         };
     }
     if let Some(v) = val("format") {
-        cfg.gpu_format = match v.to_ascii_lowercase().as_str() {
-            "png" => GpuFormat::Png,
-            "png8" | "png-8" => GpuFormat::Png8,
-            "jpg" | "jpeg" => GpuFormat::Jpg,
-            "webp" => GpuFormat::WebP,
-            "astc" => GpuFormat::Astc4x4,
-            "etc2" => GpuFormat::Etc2Rgba,
-            "pvrtc" => GpuFormat::Pvrtc4Bpp,
-            _ => fail(format!(
-                "--format inválido: {v} (usa png | png8 | jpg | webp | astc | etc2 | pvrtc)"
-            )),
-        };
+        cfg.gpu_format = GpuFormat::parse(&v).unwrap_or_else(|| {
+            fail(format!(
+                "--format inválido: {v} (usa png | png8 | jpg | webp | bmp | tga | tiff | \
+                 dds | zktx | pvr3gz | pvr3ccz | pkm | ktx | astc | etc2 | pvrtc)"
+            ))
+        });
     }
     if let Some(v) = val("png-opt-level") {
         cfg.png_opt_level = v

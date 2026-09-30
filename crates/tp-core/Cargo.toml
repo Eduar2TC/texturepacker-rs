@@ -21,6 +21,7 @@ sha2 = "0.10"
 png = "0.18"
 webp = { version = "0.3", default-features = false }
 astcenc-rs = { workspace = true, optional = true }
+flate2.workspace = true
 
 [features]
 default = []
