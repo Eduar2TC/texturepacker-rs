@@ -147,7 +147,7 @@ pub fn is_image_file(path: &Path) -> bool {
             e.as_str(),
             "png" | "webp" | "jpg" | "jpeg" | "tga" | "bmp" | "gif" | "ico" | "tiff"
                 | "tif" | "dds" | "qoi" | "pbm" | "pgm" | "ppm" | "pnm" | "xbm" | "xpm"
-                | "astc" | "ktx" | "ktx2"
+                | "astc" | "ktx" | "ktx2" | "psd" | "svg"
         )
     )
 }

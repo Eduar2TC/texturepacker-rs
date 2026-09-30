@@ -24,6 +24,10 @@ astcenc-rs = { workspace = true, optional = true }
 flate2.workspace = true
 # Decodificación de bloques GPU al leer .ktx / .astc de entrada (MIT/Apache).
 texture2ddecoder = "0.1.2"
+# Entrada .psd (Adobe Photoshop, Apache-2.0) y .svg (render con resvg, que
+# reexporta usvg/tiny-skia; Apache-2.0 OR MIT).
+psd = "0.3"
+resvg = "0.48"
 
 [features]
 default = []

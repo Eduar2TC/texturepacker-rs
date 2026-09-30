@@ -2490,3 +2490,77 @@ fn lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs() {
         "la hoja se publica igual que con cualquier otro formato"
     );
 }
+
+#[test]
+fn lote12_ingests_psd_and_svg_inputs() {
+    let fx = Fixture::new("input_formats_vector");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    // PSD aplanado RGB 4x4: mitad izquierda [10,20,30], derecha [40,50,60].
+    let mut psd = Vec::new();
+    psd.extend_from_slice(b"8BPS");
+    psd.extend_from_slice(&1u16.to_be_bytes());
+    psd.extend_from_slice(&[0u8; 6]);
+    psd.extend_from_slice(&3u16.to_be_bytes()); // RGB
+    psd.extend_from_slice(&4u32.to_be_bytes()); // alto
+    psd.extend_from_slice(&4u32.to_be_bytes()); // ancho
+    psd.extend_from_slice(&8u16.to_be_bytes());
+    psd.extend_from_slice(&3u16.to_be_bytes()); // modo RGB
+    psd.extend_from_slice(&0u32.to_be_bytes()); // color mode data
+    psd.extend_from_slice(&0u32.to_be_bytes()); // resources
+    psd.extend_from_slice(&0u32.to_be_bytes()); // layer & mask
+    psd.extend_from_slice(&0u16.to_be_bytes()); // raw
+    for channel in 0..3usize {
+        for _y in 0..4u32 {
+            for x in 0..4u32 {
+                let color = if x < 2 { [10u8, 20, 30] } else { [40, 50, 60] };
+                psd.push(color[channel]);
+            }
+        }
+    }
+    std::fs::write(input.join("doc.psd"), psd).unwrap();
+
+    // SVG 4x4: rect rojo opaco a la izquierda, azul al 50% a la derecha.
+    std::fs::write(
+        input.join("logo.svg"),
+        br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4">
+  <rect x="0" y="0" width="2" height="4" fill="#ff0000"/>
+  <rect x="2" y="0" width="2" height="4" fill="#0000ff" fill-opacity="0.5"/>
+</svg>"##,
+    )
+    .unwrap();
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output,
+        allow_rotation: false,
+        ..ProjectConfig::default()
+    };
+    let out = pipeline::run(&cfg).unwrap();
+    let mut ids: Vec<&str> = out.result.sprites.iter().map(|s| s.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(ids, vec!["doc", "logo"], "PSD y SVG entran como sprites");
+
+    let sample = |id: &str, dx: i32, dy: i32| -> [u8; 4] {
+        let sprite = out.result.sprites.iter().find(|s| s.id == id).unwrap();
+        let page = &out.pages[sprite.atlas_page_index as usize];
+        let f = &sprite.visible_frame;
+        let i = ((f.y + dy) * page.width + f.x + dx) as usize * 4;
+        [
+            page.pixels[i],
+            page.pixels[i + 1],
+            page.pixels[i + 2],
+            page.pixels[i + 3],
+        ]
+    };
+    assert_eq!(sample("doc", 1, 1), [10, 20, 30, 255], "PSD izquierda");
+    assert_eq!(sample("doc", 3, 1), [40, 50, 60, 255], "PSD derecha");
+    assert_eq!(sample("logo", 1, 1), [255, 0, 0, 255], "SVG: rect rojo");
+    let half = sample("logo", 3, 1);
+    assert_eq!(half[0], 0, "SVG: sin rojo en el rect azul");
+    assert!(
+        (i32::from(half[2]) - 255).abs() <= 8 && (i32::from(half[3]) - 128).abs() <= 4,
+        "SVG: azul al 50% sin premultiplicar: {half:?}"
+    );
+}

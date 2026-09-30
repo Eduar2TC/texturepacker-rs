@@ -143,19 +143,26 @@ corrección» al final.
 ## 3) Prácticamente inexistentes
 
 - **Entrada de imágenes — hecho**: `pbm`/`pgm`/`ppm` (y `pnm`) entran por la feature `pnm`
-  de `image`; `xbm`, `xpm`, `astc` y los contenedores `ktx`/`ktx2` se decodifican en el
-  nuevo `crates/tp-core/src/reader.rs` — XBM con `#define *_width/_height` y bits LSB-first
-  (verificado contra el `atobm` de X11: bit encendido = negro opaco), XPM1/XPM2 con paleta
-  `None`/hex/X11, `.astc` por cabecera de 16 bytes + `texture2ddecoder::decode_astc`, KTX1
-  (RGBA8/RGB8 crudos y ETC1/ETC2/DXT/ASTC vía `texture2ddecoder`) y KTX2 (RGBA8/BGRA8/RGB8/R8,
-  con supercompresión zlib; Basis Universal se rechaza con un mensaje claro porque necesita
-  un transcoder, igual que su escritura). La detección KTX1/KTX2 es por contenido
-  (los dos comparten identificador: el byte 12 es la endianness `01 02 03 04` en v1), así
-  que un `.ktx` con payload v2 también se lee. `is_image_file` y los filtros del diálogo
-  de la GUI/hoja están ampliados. Faltan `psd, svg, basis`; el original lista ~29 formatos.
-  Tests: 13 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
-  codificador, embebido en hexadecimal) y el e2e
-  `lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs`.
+  de `image`; `xbm`, `xpm`, `astc`, `psd`, `svg` y los contenedores `ktx`/`ktx2` se
+  decodifican en el nuevo `crates/tp-core/src/reader.rs` — XBM con `#define *_width/_height`
+  y bits LSB-first (verificado contra el `atobm` de X11: bit encendido = negro opaco),
+  XPM1/XPM2 con paleta `None`/hex/X11, `.astc` por cabecera de 16 bytes +
+  `texture2ddecoder::decode_astc`, KTX1 (RGBA8/RGB8 crudos y ETC1/ETC2/DXT/ASTC vía
+  `texture2ddecoder`) y KTX2 (RGBA8/BGRA8/RGB8/R8, con supercompresión zlib; Basis
+  Universal se rechaza con un mensaje claro porque necesita un transcoder, igual que su
+  escritura). La detección KTX1/KTX2 es por contenido (los dos comparten identificador: el
+  byte 12 es la endianness `01 02 03 04` en v1), así que un `.ktx` con payload v2 también
+  se lee. `psd` se abre con el crate `psd` (compuesto aplanado, igual que la vista previa
+  de Photoshop) y `svg` se rasteriza con `resvg` a tamaño intrínseco (o 100×100 por
+  defecto), con las fuentes del sistema cargadas una sola vez (`OnceLock`) y la salida
+  des-premultiplicada: tiny-skia compone en alfa premultiplicado y el pipeline trabaja con
+  alfa recta, comprobado con un `fill-opacity="0.5"`. `is_image_file` y los filtros del
+  diálogo de la GUI/hoja están ampliados. Faltan `basis`; el original lista ~29 formatos.
+  Tests: 17 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
+  codificador, embebido en hexadecimal, un PSD RGB mínimo construido a mano y la
+  comprobación alfa/recta del SVG) y los e2e
+  `lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs` y
+  `lote12_ingests_psd_and_svg_inputs`.
 - **Extras de data format — hecho**: `cache_busting` añade `?v=<hash>` a la textura citada
   en los metadatos (hash de 8 hex del fichero publicado, `hash::hash_bytes_short`), igual
   que los data formats de Pixi/Phaser; `gdx_filter` declara `filter: Linear, Linear` /
@@ -223,7 +230,7 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
-**305 tras el noveno**).
+305 tras el noveno, **310 tras el décimo**).
 
 ---
 
@@ -293,6 +300,12 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    e2e.
 9. **Entrada de imágenes** — **hecho** (ver §3 «Entrada de imágenes»): `pnm` en las
    features de `image` y el módulo `reader` con los decoders escritos a mano (XBM, XPM,
-   ASTC, KTX1, KTX2) más el despacho por extensión en `ingest::is_image_file`/
-   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. Quedan `psd`,
-   `svg` y `basis`.
+   ASTC, KTX1, KTX2, PSD, SVG) más el despacho por extensión en `ingest::is_image_file`/
+   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. Queda `basis`.
+10. **PSD y SVG** — **hecho** (ver §3 «Entrada de imágenes»): `psd` (crate del mismo
+    nombre, `Psd::from_bytes` → `rgba()`, el compuesto aplanado) y `svg` (`resvg` 0.48 +
+    `usvg` + `tiny-skia`, fuentes del sistema en un `OnceLock` compartido, pixmap
+    des-premultiplicado) en `reader.rs`, con `is_image_file`/diálogos de la GUI
+    ampliados. Tests: `psd_reads_the_flattened_rgb_composite`,
+    `psd_reports_broken_documents`, `svg_rasterizes_shapes_with_straight_alpha`,
+    `svg_reports_malformed_markup` y el e2e `lote12_ingests_psd_and_svg_inputs`.

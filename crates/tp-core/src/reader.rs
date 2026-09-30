@@ -1,5 +1,5 @@
-//! Lectura de formatos de entrada que `image` no cubre: XBM, XPM y los
-//! contenedores GPU (`.astc`, `.ktx`, `.ktx2`).
+//! Lectura de formatos de entrada que `image` no cubre: XBM, XPM, PSD y SVG,
+//! más los contenedores GPU (`.astc`, `.ktx`, `.ktx2`).
 //!
 //! El resto de formatos (PNG/JPG/WebP/… y ahora también PBM/PGM/PPM) sigue
 //! resolviéndose con la biblioteca `image`. Aquí solo viven los decodificadores
@@ -19,13 +19,16 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
     match ext.as_deref() {
-        Some("xbm") | Some("xpm") | Some("astc") | Some("ktx") | Some("ktx2") => {
+        Some("xbm") | Some("xpm") | Some("astc") | Some("ktx") | Some("ktx2") | Some("psd")
+        | Some("svg") => {
             let bytes = std::fs::read(path)
                 .map_err(|e| TpError::Other(format!("{}: {e}", path.display())))?;
             let decoded = match ext.as_deref() {
                 Some("xbm") => decode_xbm(&bytes),
                 Some("xpm") => decode_xpm(&bytes),
                 Some("astc") => decode_astc(&bytes),
+                Some("psd") => decode_psd(&bytes),
+                Some("svg") => decode_svg(&bytes),
                 // KTX v1 y v2 comparten identificador: el byte 12 es la
                 // endianness (`01 02 03 04`) en v1 y el vkFormat en v2.
                 _ if bytes.get(12..16) == Some(&[1, 2, 3, 4]) => decode_ktx(&bytes),
@@ -332,6 +335,89 @@ fn xpm_named_color(name: &str) -> Option<[u8; 4]> {
         _ => return None,
     };
     Some([rgb[0], rgb[1], rgb[2], 255])
+}
+
+// ---------------------------------------------------------------------------
+// PSD (Adobe Photoshop)
+// ---------------------------------------------------------------------------
+
+/// Reads the flattened composite of a `.psd` document with the `psd` crate.
+/// Layers are merged the way Photoshop does when saving the preview.
+fn decode_psd(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let psd = psd::Psd::from_bytes(bytes).map_err(|e| format!("PSD: {e}"))?;
+    let (width, height) = (psd.width(), psd.height());
+    if width == 0 || height == 0 {
+        return Err("PSD con ancho o alto 0".to_string());
+    }
+    let rgba = psd.rgba();
+    if rgba.len() < (width * height * 4) as usize {
+        return Err(format!(
+            "PSD: se esperaban {} bytes y hay {}",
+            width * height * 4,
+            rgba.len()
+        ));
+    }
+    Ok((width as i32, height as i32, rgba))
+}
+
+// ---------------------------------------------------------------------------
+// SVG
+// ---------------------------------------------------------------------------
+
+/// System fonts, loaded once: text inside an SVG must not trigger a font scan
+/// per sprite.
+fn shared_fontdb() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+    static FONTDB: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> =
+        std::sync::OnceLock::new();
+    FONTDB
+        .get_or_init(|| {
+            let mut db = resvg::usvg::fontdb::Database::new();
+            db.load_system_fonts();
+            std::sync::Arc::new(db)
+        })
+        .clone()
+}
+
+/// Rasterizes an `.svg` at its intrinsic size (or the 100×100 default) with
+/// `resvg` and un-premultiplies the result: the pipeline works with straight
+/// alpha while tiny-skia renders premultiplied.
+fn decode_svg(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let text = String::from_utf8_lossy(bytes);
+    let opt = resvg::usvg::Options {
+        fontdb: shared_fontdb(),
+        ..Default::default()
+    };
+    let tree = resvg::usvg::Tree::from_str(&text, &opt).map_err(|e| format!("SVG: {e}"))?;
+    let size = tree.size();
+    if !(size.width() > 0.0 && size.height() > 0.0) {
+        return Err("SVG sin tamaño".to_string());
+    }
+    let width = size.width().ceil() as i32;
+    let height = size.height().ceil() as i32;
+    let mut pixmap = resvg::tiny_skia::Pixmap::new(width as u32, height as u32)
+        .ok_or_else(|| "SVG: no se pudo crear el lienzo".to_string())?;
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::default(),
+        &mut pixmap.as_mut(),
+    );
+    Ok((width, height, unpremultiply(&pixmap.take())))
+}
+
+/// tiny-skia composites to premultiplied RGBA; divide each channel by alpha.
+fn unpremultiply(data: &[u8]) -> Vec<u8> {
+    let mut out = data.to_vec();
+    for px in out.chunks_exact_mut(4) {
+        let alpha = px[3];
+        if alpha == 0 {
+            px[..3].fill(0);
+            continue;
+        }
+        for value in px.iter_mut().take(3) {
+            *value = ((u32::from(*value) * 255) / u32::from(alpha)).min(255) as u8;
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1002,6 +1088,99 @@ static char * test[] = {
         let path = temp("ktx_unknown.ktx", &ktx);
         let err = load_image_rgba(&path).unwrap_err().to_string();
         assert!(err.contains("0xdead"), "{err}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// Minimal flattened RGB PSD: header + empty sections + raw planar data.
+    fn build_psd(width: u32, height: u32, color_at: impl Fn(u32, u32) -> [u8; 3]) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(b"8BPS");
+        out.extend_from_slice(&1u16.to_be_bytes()); // versión
+        out.extend_from_slice(&[0u8; 6]); // reservado
+        out.extend_from_slice(&3u16.to_be_bytes()); // canales RGB
+        out.extend_from_slice(&height.to_be_bytes());
+        out.extend_from_slice(&width.to_be_bytes());
+        out.extend_from_slice(&8u16.to_be_bytes()); // profundidad
+        out.extend_from_slice(&3u16.to_be_bytes()); // modo RGB
+        out.extend_from_slice(&0u32.to_be_bytes()); // color mode data
+        out.extend_from_slice(&0u32.to_be_bytes()); // image resources
+        out.extend_from_slice(&0u32.to_be_bytes()); // layer & mask
+        out.extend_from_slice(&0u16.to_be_bytes()); // compresión raw
+        for channel in 0..3usize {
+            for y in 0..height {
+                for x in 0..width {
+                    out.push(color_at(x, y)[channel]);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn psd_reads_the_flattened_rgb_composite() {
+        let bytes = build_psd(4, 3, |x, y| {
+            if x < 2 {
+                [255, 0, 0]
+            } else if y == 0 {
+                [0, 0, 255]
+            } else {
+                [0, 128, 0]
+            }
+        });
+        let path = temp("doc.psd", &bytes);
+        let (w, h, rgba) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (4, 3));
+        let at = |x: usize, y: usize| -> [u8; 4] {
+            let i = (y * 4 + x) * 4;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+        assert_eq!(at(0, 0), [255, 0, 0, 255]);
+        assert_eq!(at(3, 0), [0, 0, 255, 255]);
+        assert_eq!(at(3, 2), [0, 128, 0, 255]);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn psd_reports_broken_documents() {
+        let path = temp("broken.psd", b"8BPS");
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("PSD"), "{err}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn svg_rasterizes_shapes_with_straight_alpha() {
+        let svg =
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4">
+  <rect x="0" y="0" width="2" height="4" fill="#ff0000"/>
+  <rect x="2" y="0" width="2" height="4" fill="#0000ff" fill-opacity="0.5"/>
+</svg>"##;
+        let path = temp("sprite.svg", svg);
+        let (w, h, rgba) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (4, 4));
+        let at = |x: usize, y: usize| -> [u8; 4] {
+            let i = (y * 4 + x) * 4;
+            [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
+        };
+        assert_eq!(at(1, 1), [255, 0, 0, 255], "rect rojo opaco");
+        let half = at(3, 1);
+        assert_eq!(half[0], 0, "azul sin rojo: {half:?}");
+        assert!(
+            (i32::from(half[2]) - 255).abs() <= 8,
+            "azul casi puro: {half:?}"
+        );
+        assert!(
+            (i32::from(half[3]) - 128).abs() <= 4,
+            "alfa al 50% sin premultiplicar: {half:?}"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn svg_reports_malformed_markup() {
+        let path = temp("broken.svg", b"<svg><rect");
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("SVG"), "{err}");
         let _ = std::fs::remove_file(path);
     }
 }
