@@ -136,121 +136,406 @@ fn pack_word(c: Colour, opaque: bool, is_a: bool) -> u16 {
 // Block fit
 // ---------------------------------------------------------------------------
 
-/// Fit two canonical colour endpoints for a 4×4 block of RGBA texels.
-///
-/// - RGB: mean of the visible texels (alpha ≥ 8) plus the two extremes along
-///   the axis from the mean to the farthest texel, so the A/B segment brackets
-///   the block's colour distribution and the modulation weights sample it.
-/// - Alpha: endpoint alpha = max/min of the block (opaque mode when ≥ 250).
-fn fit_block(px: &[u8]) -> BlockColours {
-    debug_assert_eq!(px.len(), 64);
+/// 8-bit representation of an isolated canonical colour: exactly what the
+/// decoder reconstructs when all nine neighbours are this same colour (RGB
+/// expands a 5-bit channel by replication, alpha maps 0-15 to 0-255).
+#[inline]
+fn expand8(c: Colour) -> [u8; 4] {
+    [
+        (c.r << 3) | (c.r >> 2),
+        (c.g << 3) | (c.g >> 2),
+        (c.b << 3) | (c.b >> 2),
+        c.a * 17,
+    ]
+}
+
+/// Builds the two endpoints from candidate RGB positions, applying the same
+/// quantization `fit_base` uses (opaque channels are 5-bit, translucent ones
+/// are stored in 4/3 bits and expanded back).
+fn make_endpoints(p0: [f64; 3], p1: [f64; 3], max_a: u8, min_a: u8) -> BlockColours {
+    let a_opaque = max_a >= 250;
+    let b_opaque = min_a >= 250;
+    let mk = |p: [f64; 3], alpha: u8, opaque: bool, is_a: bool| -> Colour {
+        let (r, g, b) = (q5(p[0]), q5(p[1]), q5(p[2]));
+        if opaque {
+            Colour {
+                r,
+                g,
+                b: q4rep(b),
+                a: 15,
+            }
+        } else if is_a {
+            Colour {
+                r: q4rep(r),
+                g: q4rep(g),
+                b: q3rep(b),
+                a: qa(alpha),
+            }
+        } else {
+            Colour {
+                r: q4rep(r),
+                g: q4rep(g),
+                b: q4rep(b),
+                a: qa(alpha),
+            }
+        }
+    };
+    BlockColours {
+        a: mk(p0, max_a, a_opaque, true),
+        b: mk(p1, min_a, b_opaque, false),
+        a_opaque,
+        b_opaque,
+    }
+}
+
+/// Quantized per-block extents used by every candidate generator: colour
+/// min/max, per-channel mean, farthest visible texel and the alpha pair.
+struct Extents {
+    min_c: [f64; 3],
+    max_c: [f64; 3],
+    mean: [f64; 3],
+    far: [f64; 3],
+    min_a: u8,
+    max_a: u8,
+    visible: Vec<[f64; 3]>,
+}
+
+fn extents(px: &[u8]) -> Extents {
+    let n = px.len() / 4;
+    let mut min_c = [f64::INFINITY; 3];
+    let mut max_c = [f64::NEG_INFINITY; 3];
+    let mut sum = [0f64; 3];
     let mut min_a = 255u8;
     let mut max_a = 0u8;
-    let mut sum_r = 0f64;
-    let mut sum_g = 0f64;
-    let mut sum_b = 0f64;
-    let mut vis = 0f64;
+    let mut visible = Vec::with_capacity(n);
     for c in px.chunks_exact(4) {
-        let a = c[3];
-        min_a = min_a.min(a);
-        max_a = max_a.max(a);
-        if a >= 8 {
-            sum_r += c[0] as f64;
-            sum_g += c[1] as f64;
-            sum_b += c[2] as f64;
-            vis += 1.0;
+        min_a = min_a.min(c[3]);
+        max_a = max_a.max(c[3]);
+        for k in 0..3 {
+            min_c[k] = min_c[k].min(c[k] as f64);
+            max_c[k] = max_c[k].max(c[k] as f64);
+            sum[k] += c[k] as f64;
+        }
+        if c[3] >= 8 {
+            visible.push([c[0] as f64, c[1] as f64, c[2] as f64]);
         }
     }
-    let (mr, mg, mb) = if vis > 0.0 {
-        (sum_r / vis, sum_g / vis, sum_b / vis)
-    } else {
-        (0.0, 0.0, 0.0)
-    };
-
-    // Direction: farthest visible texel from the mean.
-    let mut dir = (0f64, 0f64, 0f64);
+    let mean = [sum[0] / n as f64, sum[1] / n as f64, sum[2] / n as f64];
+    let mut far = mean;
     let mut far2 = -1f64;
-    for c in px.chunks_exact(4) {
-        if c[3] < 8 {
-            continue;
-        }
-        let (dx, dy, dz) = (c[0] as f64 - mr, c[1] as f64 - mg, c[2] as f64 - mb);
-        let d2 = dx * dx + dy * dy + dz * dz;
+    for &v in &visible {
+        let d2 = (0..3)
+            .map(|k| (v[k] - mean[k]) * (v[k] - mean[k]))
+            .sum::<f64>();
         if d2 > far2 {
             far2 = d2;
-            dir = (dx, dy, dz);
+            far = v;
         }
     }
+    Extents {
+        min_c,
+        max_c,
+        mean,
+        far,
+        min_a,
+        max_a,
+        visible,
+    }
+}
 
-    let (ar, ag, ab, br, bg, bb) = if far2 <= 0.25 {
-        (mr, mg, mb, mr, mg, mb)
+/// Fit two canonical colour endpoints for a block of RGBA texels (4×4 for
+/// 4bpp, 8×4 for 2bpp).
+///
+/// - RGB: the baseline is the mean of the visible texels (alpha ≥ 8) plus the
+///   two extremes along the axis from the mean to the farthest texel, so the
+///   A/B segment brackets the block's colour distribution.
+/// - Alpha: endpoint alpha = max/min of the block (opaque mode when ≥ 250).
+///
+/// `quality` (0-7) widens the candidate set before the best pair is kept; 0
+/// reproduces the baseline exactly.
+fn fit_block(px: &[u8], quality: u8, binary: bool) -> BlockColours {
+    let mut best = fit_base(px);
+    let mut best_err = proxy_err(px, &best, binary);
+    if quality == 0 {
+        return best;
+    }
+    for cand in quality_candidates(px, quality) {
+        let e = proxy_err(px, &cand, binary);
+        if e < best_err {
+            best_err = e;
+            best = cand;
+        }
+    }
+    if quality >= 6 {
+        best = refine(px, best, binary, (quality - 5) as usize);
+    }
+    best
+}
+
+/// Baseline fit: mean + farthest visible texel along the dominant axis.
+fn fit_base(px: &[u8]) -> BlockColours {
+    let ex = extents(px);
+    let (mr, mg, mb) = (ex.mean[0], ex.mean[1], ex.mean[2]);
+    let (fr, fg, fb) = (ex.far[0] - mr, ex.far[1] - mg, ex.far[2] - mb);
+    let far2 = fr * fr + fg * fg + fb * fb;
+
+    let (p0, p1) = if far2 <= 0.25 {
+        (ex.mean, ex.mean)
     } else {
         let len = far2.sqrt();
-        let (ux, uy, uz) = (dir.0 / len, dir.1 / len, dir.2 / len);
+        let (ux, uy, uz) = (fr / len, fg / len, fb / len);
         let mut minp = f64::INFINITY;
         let mut maxp = f64::NEG_INFINITY;
-        for c in px.chunks_exact(4) {
-            if c[3] < 8 {
-                continue;
-            }
-            let p = (c[0] as f64 - mr) * ux + (c[1] as f64 - mg) * uy + (c[2] as f64 - mb) * uz;
+        for &v in &ex.visible {
+            let p = (v[0] - mr) * ux + (v[1] - mg) * uy + (v[2] - mb) * uz;
             minp = minp.min(p);
             maxp = maxp.max(p);
         }
         let clamp = |v: f64| v.clamp(0.0, 255.0);
         (
-            clamp(mr + ux * maxp),
-            clamp(mg + uy * maxp),
-            clamp(mb + uz * maxp),
-            clamp(mr + ux * minp),
-            clamp(mg + uy * minp),
-            clamp(mb + uz * minp),
+            [
+                clamp(mr + ux * maxp),
+                clamp(mg + uy * maxp),
+                clamp(mb + uz * maxp),
+            ],
+            [
+                clamp(mr + ux * minp),
+                clamp(mg + uy * minp),
+                clamp(mb + uz * minp),
+            ],
         )
     };
+    make_endpoints(p0, p1, ex.max_a, ex.min_a)
+}
 
-    let a_opaque = max_a >= 250;
-    let b_opaque = min_a >= 250;
-
-    let (ar5, ag5, ab5) = (q5(ar), q5(ag), q5(ab));
-    let (br5, bg5, bb5) = (q5(br), q5(bg), q5(bb));
-
-    let a = if a_opaque {
-        Colour {
-            r: ar5,
-            g: ag5,
-            b: q4rep(ab5),
-            a: 15,
+/// Extra endpoint candidates, gated by `quality` (they are only added when
+/// the caller can afford them, and the best one wins, so quality is
+/// monotonically non-decreasing in the proxy error).
+fn quality_candidates(px: &[u8], quality: u8) -> Vec<BlockColours> {
+    let ex = extents(px);
+    let mut out: Vec<BlockColours> = Vec::new();
+    if quality >= 1 {
+        out.push(make_endpoints(ex.min_c, ex.max_c, ex.max_a, ex.min_a));
+        if let Some(axis) = principal_axis(&ex.visible) {
+            out.push(make_endpoints(axis.0, axis.1, ex.max_a, ex.min_a));
         }
-    } else {
-        Colour {
-            r: q4rep(ar5),
-            g: q4rep(ag5),
-            b: q3rep(ab5),
-            a: qa(max_a),
-        }
-    };
-    let b = if b_opaque {
-        Colour {
-            r: br5,
-            g: bg5,
-            b: q4rep(bb5),
-            a: 15,
-        }
-    } else {
-        Colour {
-            r: q4rep(br5),
-            g: q4rep(bg5),
-            b: q4rep(bb5),
-            a: qa(min_a),
-        }
-    };
-
-    BlockColours {
-        a,
-        b,
-        a_opaque,
-        b_opaque,
     }
+    if quality >= 2 {
+        out.push(make_endpoints(ex.mean, ex.far, ex.max_a, ex.min_a));
+        out.push(make_endpoints(ex.far, ex.mean, ex.max_a, ex.min_a));
+    }
+    if quality >= 3 {
+        for &v in &ex.visible {
+            out.push(make_endpoints(ex.mean, v, ex.max_a, ex.min_a));
+        }
+    }
+    if quality >= 5 && ex.visible.len() >= 8 {
+        // Medias de los semibloques: capturan bloques con dos zonas.
+        let mut top = [0f64; 3];
+        let mut bot = [0f64; 3];
+        let mut left = [0f64; 3];
+        let mut right = [0f64; 3];
+        for (i, c) in px.chunks_exact(4).enumerate() {
+            let row = i / 4;
+            let col = i % 4;
+            if row < 2 {
+                for k in 0..3 {
+                    top[k] += c[k] as f64 / 8.0;
+                }
+            } else {
+                for k in 0..3 {
+                    bot[k] += c[k] as f64 / 8.0;
+                }
+            }
+            if col < 2 {
+                for k in 0..3 {
+                    left[k] += c[k] as f64 / 8.0;
+                }
+            } else {
+                for k in 0..3 {
+                    right[k] += c[k] as f64 / 8.0;
+                }
+            }
+        }
+        out.push(make_endpoints(top, bot, ex.max_a, ex.min_a));
+        out.push(make_endpoints(left, right, ex.max_a, ex.min_a));
+    }
+    out
+}
+
+/// First eigenvector of the covariance matrix by power iteration, used as a
+/// candidate axis (returns the extremes projected onto it).
+fn principal_axis(vis: &[[f64; 3]]) -> Option<([f64; 3], [f64; 3])> {
+    if vis.len() < 2 {
+        return None;
+    }
+    let n = vis.len() as f64;
+    let mut mean = [0f64; 3];
+    for v in vis {
+        for k in 0..3 {
+            mean[k] += v[k] / n;
+        }
+    }
+    let mut cov = [[0f64; 3]; 3];
+    for v in vis {
+        let d = [v[0] - mean[0], v[1] - mean[1], v[2] - mean[2]];
+        for i in 0..3 {
+            for j in 0..3 {
+                cov[i][j] += d[i] * d[j] / n;
+            }
+        }
+    }
+    let mut axis = [1.0f64, 1.0, 1.0];
+    for _ in 0..8 {
+        let mut nv = [0f64; 3];
+        for i in 0..3 {
+            nv[i] = cov[i][0] * axis[0] + cov[i][1] * axis[1] + cov[i][2] * axis[2];
+        }
+        let len = (nv[0] * nv[0] + nv[1] * nv[1] + nv[2] * nv[2]).sqrt();
+        if len < 1e-9 {
+            return None;
+        }
+        axis = [nv[0] / len, nv[1] / len, nv[2] / len];
+    }
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let mut lo_c = mean;
+    let mut hi_c = mean;
+    for &v in vis {
+        let d = [v[0] - mean[0], v[1] - mean[1], v[2] - mean[2]];
+        let t = d[0] * axis[0] + d[1] * axis[1] + d[2] * axis[2];
+        if t < lo {
+            lo = t;
+            lo_c = v;
+        }
+        if t > hi {
+            hi = t;
+            hi_c = v;
+        }
+    }
+    Some((hi_c, lo_c))
+}
+
+/// Canonical value tables actually reachable through `pack_word`/`pack_word`
+/// decoding: a perturbation outside these sets would round-trip to the same
+/// stored word and change nothing.
+const Q4REP_SET: [u8; 16] = [0, 2, 4, 6, 8, 10, 12, 14, 17, 19, 21, 23, 25, 27, 29, 31];
+const Q3REP_SET: [u8; 8] = [0, 4, 8, 12, 17, 21, 25, 29];
+const QA_SET: [u8; 8] = [0, 2, 4, 6, 8, 10, 12, 14];
+
+fn step_in(table: &[u8], v: u8, dir: i32) -> Option<u8> {
+    let i = table.iter().position(|&x| x == v)?;
+    let j = i as i32 + dir;
+    if j < 0 || j as usize >= table.len() {
+        return None;
+    }
+    Some(table[j as usize])
+}
+
+/// Moves one channel of one endpoint by one canonical step, if that step is
+/// representable in the stored word (opacity rules decide which table).
+fn step_endpoint(blk: &BlockColours, is_a: bool, ch: usize, dir: i32) -> Option<BlockColours> {
+    let mut next = *blk;
+    let mut c = if is_a { blk.a } else { blk.b };
+    let opaque = if is_a { blk.a_opaque } else { blk.b_opaque };
+    let moved = match ch {
+        0 | 1 => {
+            let cur = if ch == 0 { c.r } else { c.g };
+            let nv = if opaque {
+                Some((cur as i32 + dir).clamp(0, 31) as u8)
+            } else {
+                step_in(&Q4REP_SET, cur, dir)
+            };
+            nv.filter(|&v| v != cur).map(|v| {
+                if ch == 0 {
+                    c.r = v;
+                } else {
+                    c.g = v;
+                }
+            })
+        }
+        2 => {
+            let nv = if !opaque && is_a {
+                step_in(&Q3REP_SET, c.b, dir)
+            } else {
+                step_in(&Q4REP_SET, c.b, dir)
+            };
+            nv.filter(|&v| v != c.b).map(|v| c.b = v)
+        }
+        3 => {
+            if opaque {
+                None
+            } else {
+                step_in(&QA_SET, c.a, dir)
+                    .filter(|&v| v != c.a)
+                    .map(|v| c.a = v)
+            }
+        }
+        _ => None,
+    };
+    moved?;
+    if is_a {
+        next.a = c;
+    } else {
+        next.b = c;
+    }
+    Some(next)
+}
+
+/// Greedy local search around the winning pair: `rounds` sweeps of ±1
+/// canonical steps over every endpoint channel (quality 6 and 7).
+fn refine(px: &[u8], start: BlockColours, binary: bool, rounds: usize) -> BlockColours {
+    let mut cur = start;
+    let mut cur_err = proxy_err(px, &cur, binary);
+    for _ in 0..rounds {
+        let mut improved = false;
+        for is_a in [true, false] {
+            for ch in 0..4 {
+                for dir in [-1, 1] {
+                    if let Some(next) = step_endpoint(&cur, is_a, ch, dir) {
+                        let e = proxy_err(px, &next, binary);
+                        if e < cur_err {
+                            cur_err = e;
+                            cur = next;
+                            improved = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+    cur
+}
+
+/// Proxy error of a candidate pair: what the block would cost if the
+/// decoder's interpolation returned these exact endpoints (it ignores the
+/// neighbourhood, which is why higher quality is a search, not a guarantee).
+fn proxy_err(px: &[u8], blk: &BlockColours, binary: bool) -> i64 {
+    let a8 = expand8(blk.a);
+    let b8 = expand8(blk.b);
+    let table: &[(i32, u8)] = if binary {
+        &[(0, 0), (8, 1)]
+    } else {
+        &MOD_WEIGHTS
+    };
+    let mut total = 0i64;
+    for c in px.chunks_exact(4) {
+        let mut best = i64::MAX;
+        for &(w, _) in table {
+            let mut e = 0i64;
+            for ch in 0..4 {
+                let v = (a8[ch] as i32 * (8 - w) + b8[ch] as i32 * w) >> 3;
+                let d = c[ch] as i64 - v as i64;
+                e += d * d;
+            }
+            best = best.min(e);
+        }
+        total += best;
+    }
+    total
 }
 
 // ---------------------------------------------------------------------------
@@ -258,25 +543,41 @@ fn fit_block(px: &[u8]) -> BlockColours {
 // ---------------------------------------------------------------------------
 
 /// Per-texel weights over the 3 block columns/rows {−1, 0, +1} for texel
-/// offsets 0..4 — identical to the reference decoder's `INTERP_WEIGHT`.
+/// offsets 0..4 — identical to the reference decoder's `INTERP_WEIGHT`. Used
+/// for both axes of 4bpp blocks and for the Y axis of 2bpp blocks.
 const INTERP: [[i32; 3]; 4] = [[2, 2, 0], [1, 3, 0], [0, 4, 0], [0, 3, 1]];
+
+/// 2bpp X axis: 8 texel offsets, weights summing to 8 (the 2bpp kernel).
+const INTERP_X8: [[i32; 3]; 8] = [
+    [4, 4, 0],
+    [3, 5, 0],
+    [2, 6, 0],
+    [1, 7, 0],
+    [0, 8, 0],
+    [0, 7, 1],
+    [0, 6, 2],
+    [0, 5, 3],
+];
 
 /// One colour plane (A or B) of the block grid.
 struct Plane<'a> {
     blocks: &'a [BlockColours],
     nb_x: usize,
     nb_y: usize,
+    /// `true` for 2bpp (8×4 blocks, different X kernel and expansion).
+    wide: bool,
 }
 
 impl Plane<'_> {
     /// Decoded 8-bit colour at texel (tx, ty) of block (bx, by), obtained by
     /// bilinearly interpolating the 3×3 colour neighbourhood (toroidal wrap)
     /// exactly as the PVRTC decoder does, including the UNORM conversions
-    /// (RGB: `(c >> 1) + (c >> 6)`; alpha: `c + (c >> 4)`).
+    /// (4bpp RGB: `(c >> 1) + (c >> 6)`; alpha: `c + (c >> 4)`; 2bpp scales
+    /// the same result by its 32-wide weight sums).
     fn interpolate(&self, bx: usize, by: usize, tx: usize, ty: usize, use_b: bool) -> [u8; 4] {
         let (blocks, nb_x, nb_y) = (self.blocks, self.nb_x, self.nb_y);
         let row_weights = INTERP[ty];
-        let col_weights = INTERP[tx];
+        let col_weights = if self.wide { INTERP_X8[tx] } else { INTERP[tx] };
         let mut clr = [0i32; 4];
         for (dy, &wy) in row_weights.iter().enumerate() {
             let yb = (by + nb_y - 1 + dy) % nb_y;
@@ -294,14 +595,28 @@ impl Plane<'_> {
                 clr[3] += c.a as i32 * w;
             }
         }
-        [
-            ((clr[0] >> 1) + (clr[0] >> 6)) as u8,
-            ((clr[1] >> 1) + (clr[1] >> 6)) as u8,
-            ((clr[2] >> 1) + (clr[2] >> 6)) as u8,
-            (clr[3] + (clr[3] >> 4)) as u8,
-        ]
+        if self.wide {
+            [
+                (clr[0] >> 2) + (clr[0] >> 7),
+                (clr[1] >> 2) + (clr[1] >> 7),
+                (clr[2] >> 2) + (clr[2] >> 7),
+                (clr[3] >> 1) + (clr[3] >> 5),
+            ]
+        } else {
+            [
+                (clr[0] >> 1) + (clr[0] >> 6),
+                (clr[1] >> 1) + (clr[1] >> 6),
+                (clr[2] >> 1) + (clr[2] >> 6),
+                (clr[3]) + (clr[3] >> 4),
+            ]
+        }
+        .map(|v: i32| v as u8)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Modulation
+// ---------------------------------------------------------------------------
 
 /// Standard modulation weights (M = 0): bits 00/01/10/11 → 0/3/5/8.
 const MOD_WEIGHTS: [(i32, u8); 4] = [(0, 0), (3, 1), (5, 2), (8, 3)];
@@ -321,6 +636,28 @@ fn choose_mod(src: &[u8; 4], a8: &[u8; 4], b8: &[u8; 4]) -> u8 {
         if err < best_err {
             best_err = err;
             best = bits;
+        }
+    }
+    best
+}
+
+/// 2bpp in modulation mode M = 0: one bit per texel, weight 0 or 8. The M = 1
+/// mode would give 4 weights but borrows half of them from neighbouring
+/// blocks, which would make the encoder's result depend on them; M = 0 is
+/// fully local and always decodes to exactly this.
+fn choose_mod_binary(src: &[u8; 4], a8: &[u8; 4], b8: &[u8; 4]) -> u8 {
+    let mut best = 0u8;
+    let mut best_err = i64::MAX;
+    for (bit, w) in [(0u8, 0i32), (1, 8)] {
+        let mut err = 0i64;
+        for ch in 0..4 {
+            let v = ((a8[ch] as i32 * (8 - w) + b8[ch] as i32 * w) >> 3) as u8;
+            let d = src[ch] as i64 - v as i64;
+            err += d * d;
+        }
+        if err < best_err {
+            best_err = err;
+            best = bit;
         }
     }
     best
@@ -350,14 +687,25 @@ fn morton(x: usize, y: usize, min_dim: usize) -> usize {
 // Public encoder
 // ---------------------------------------------------------------------------
 
-/// Encode an RGBA8 image (row-major, 4 bytes per pixel) as raw PVRTC1 4bpp
-/// data: `width * height / 2` bytes, in reflected Morton word order.
+/// Encode an RGBA8 image (row-major, 4 bytes per pixel) as raw PVRTC1 data in
+/// reflected Morton word order: `width * height / 2` bytes at 4bpp and
+/// `width * height / 4` at 2bpp.
+///
+/// `is_2bpp` selects 8×4 blocks with one modulation bit per texel instead of
+/// 4×4 blocks with two; `quality` (0-7) widens the endpoint search (0 keeps
+/// the baseline fit).
 ///
 /// Requires `width` and `height` to be powers of two ≥ 8 (PVRTC1 constraint).
-pub fn encode_pvrtc_4bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+pub fn encode_pvrtc(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    is_2bpp: bool,
+    quality: u8,
+) -> Result<Vec<u8>> {
     if width < 8 || height < 8 || !width.is_power_of_two() || !height.is_power_of_two() {
         return Err(crate::error::TpError::Other(format!(
-            "PVRTC_4BPP requiere dimensiones potencia de dos ≥ 8x8 \
+            "PVRTC requiere dimensiones potencia de dos ≥ 8x8 \
              (se obtuvo {width}x{height})"
         )));
     }
@@ -365,33 +713,35 @@ pub fn encode_pvrtc_4bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec
         return Err("PVRTC: buffer RGBA de tamaño incorrecto".into());
     }
 
-    let nb_x = width / 4;
+    let bw = if is_2bpp { 8 } else { 4 };
+    let nb_x = width / bw;
     let nb_y = height / 4;
     let min_dim = nb_x.min(nb_y);
 
     // Pass 1: independent per-block colour fits.
     let mut blocks = vec![BlockColours::default(); nb_x * nb_y];
-    let mut px = [0u8; 64];
+    let mut px = vec![0u8; bw * 4 * 4];
     for by in 0..nb_y {
         for bx in 0..nb_x {
             let mut i = 0;
             for ty in 0..4 {
                 let y = by * 4 + ty;
-                for tx in 0..4 {
-                    let s = (y * width + bx * 4 + tx) * 4;
+                for tx in 0..bw {
+                    let s = (y * width + bx * bw + tx) * 4;
                     px[i..i + 4].copy_from_slice(&rgba[s..s + 4]);
                     i += 4;
                 }
             }
-            blocks[by * nb_x + bx] = fit_block(&px);
+            blocks[by * nb_x + bx] = fit_block(&px, quality, is_2bpp);
         }
     }
 
     // Pass 2: per-texel modulation search, then assemble the 64-bit words.
-    let plane_a = Plane {
+    let plane = Plane {
         blocks: &blocks,
         nb_x,
         nb_y,
+        wide: is_2bpp,
     };
     let mut out = vec![0u8; nb_x * nb_y * 8];
     for by in 0..nb_y {
@@ -399,14 +749,23 @@ pub fn encode_pvrtc_4bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec
             let mut mod_bits: u32 = 0;
             for ty in 0..4 {
                 let y = by * 4 + ty;
-                for tx in 0..4 {
-                    let x = bx * 4 + tx;
-                    let a8 = plane_a.interpolate(bx, by, tx, ty, false);
-                    let b8 = plane_a.interpolate(bx, by, tx, ty, true);
+                for tx in 0..bw {
+                    let x = bx * bw + tx;
+                    let a8 = plane.interpolate(bx, by, tx, ty, false);
+                    let b8 = plane.interpolate(bx, by, tx, ty, true);
                     let s = (y * width + x) * 4;
                     let src = [rgba[s], rgba[s + 1], rgba[s + 2], rgba[s + 3]];
-                    let bits = choose_mod(&src, &a8, &b8) as u32;
-                    mod_bits |= bits << (2 * (ty * 4 + tx));
+                    let bits = if is_2bpp {
+                        choose_mod_binary(&src, &a8, &b8) as u32
+                    } else {
+                        choose_mod(&src, &a8, &b8) as u32
+                    };
+                    let shift = if is_2bpp {
+                        ty * bw + tx
+                    } else {
+                        2 * (ty * bw + tx)
+                    };
+                    mod_bits |= bits << shift;
                 }
             }
             let blk = blocks[by * nb_x + bx];
@@ -419,6 +778,16 @@ pub fn encode_pvrtc_4bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec
         }
     }
     Ok(out)
+}
+
+/// PVRTC1 4bpp with the default quality (3).
+pub fn encode_pvrtc_4bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+    encode_pvrtc(rgba, width, height, false, 3)
+}
+
+/// PVRTC1 2bpp with the default quality (3).
+pub fn encode_pvrtc_2bpp(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+    encode_pvrtc(rgba, width, height, true, 3)
 }
 
 #[cfg(test)]
@@ -440,6 +809,48 @@ mod tests {
                 ]
             })
             .collect()
+    }
+
+    fn decode2(src: &[u8], w: usize, h: usize) -> Vec<[u8; 4]> {
+        let mut buf = vec![0u32; w * h];
+        texture2ddecoder::decode_pvrtc_2bpp(src, w, h, &mut buf).unwrap();
+        buf.iter()
+            .map(|v| {
+                [
+                    ((v >> 16) & 0xff) as u8,
+                    ((v >> 8) & 0xff) as u8,
+                    (v & 0xff) as u8,
+                    ((v >> 24) & 0xff) as u8,
+                ]
+            })
+            .collect()
+    }
+
+    fn gradient(w: usize, h: usize) -> Vec<u8> {
+        (0..w * h)
+            .flat_map(|i| {
+                let x = i % w;
+                let y = i / w;
+                [
+                    (x * 255 / (w - 1)) as u8,
+                    (y * 255 / (h - 1)) as u8,
+                    ((x + y) * 255 / (w + h - 2)) as u8,
+                    255,
+                ]
+            })
+            .collect()
+    }
+
+    fn mean_err(src: &[u8], dec: &[[u8; 4]], nch: usize) -> f64 {
+        let mut err = 0.0;
+        let mut n = 0usize;
+        for (i, p) in src.chunks_exact(4).enumerate() {
+            for c in 0..nch {
+                err += (p[c] as f64 - dec[i][c] as f64).abs();
+            }
+            n += 1;
+        }
+        err / (n * nch) as f64
     }
 
     fn solid(w: usize, h: usize, c: [u8; 4]) -> Vec<u8> {
@@ -595,5 +1006,49 @@ mod tests {
         // Decoded blue ≈ 25 * 16 * 0.5156 ≈ 206.
         let b = dec[0][2] as i32;
         assert!((b - 206).abs() <= 2, "unexpected blue decode: {b}");
+    }
+
+    #[test]
+    fn two_bpp_roundtrip() {
+        let (w, h) = (16, 16);
+        let src = gradient(w, h);
+        let enc = encode_pvrtc_2bpp(&src, w, h).unwrap();
+        assert_eq!(enc.len(), w * h / 4);
+        let dec = decode2(&enc, w, h);
+        let mean = mean_err(&src, &dec, 4);
+        assert!(mean < 40.0, "error medio {mean:.2}");
+    }
+
+    #[test]
+    fn two_bpp_requires_pot_like_four_bpp() {
+        let src = vec![0u8; 16 * 16 * 4];
+        assert!(encode_pvrtc_2bpp(&src, 12, 16).is_err());
+        assert!(encode_pvrtc_2bpp(&src, 16, 16).is_ok());
+        assert!(encode_pvrtc_2bpp(&src, 4, 4).is_err());
+    }
+
+    #[test]
+    fn higher_quality_is_never_worse() {
+        let (w, h) = (16, 16);
+        let src = gradient(w, h);
+        for is2 in [false, true] {
+            let mut prev: Option<f64> = None;
+            for q in [0u8, 1, 3, 5, 6, 7] {
+                let enc = encode_pvrtc(&src, w, h, is2, q).unwrap();
+                let dec = if is2 {
+                    decode2(&enc, w, h)
+                } else {
+                    decode(&enc, w, h)
+                };
+                let err = mean_err(&src, &dec, 4);
+                if let Some(p) = prev {
+                    assert!(
+                        err <= p + 0.75,
+                        "2bpp={is2} q={q}: {err:.3} peor que el de menor calidad {p:.3}"
+                    );
+                }
+                prev = Some(prev.map_or(err, |p: f64| p.max(err)));
+            }
+        }
     }
 }

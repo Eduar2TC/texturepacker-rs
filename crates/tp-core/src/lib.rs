@@ -21,6 +21,7 @@
 //! Entry point: [`pipeline::run`].
 
 pub mod config;
+pub mod dxt;
 pub mod error;
 pub mod etc2;
 pub mod export;

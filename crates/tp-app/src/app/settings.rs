@@ -3,7 +3,7 @@
 use super::App;
 use eframe::egui;
 use tp_core::config::{
-    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, GpuFormat, PackMode,
+    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GpuFormat, PackMode,
     PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ScaleMode, SizeConstraint,
     SortOrder, TemplateFormat, TrimMode, VariantOptions,
 };
@@ -761,19 +761,36 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 },
                 &mut app.config.gpu_format,
             );
+            // El formato de píxel debe encajar con el formato de textura
+            // elegido: si el usuario cambia de formato y deja un pixel format
+            // insoportable, se vuelve al RGBA8888.
+            if !app
+                .config
+                .pixel_format
+                .is_compatible_with(app.config.gpu_format)
+            {
+                app.config.pixel_format = PixelFormat::Rgba8888;
+            }
+            let gpu = app.config.gpu_format;
             enum_combo(
                 ui,
                 "Formato de píxel",
                 app.config.pixel_format.as_str(),
                 |ui, v| {
-                    ui.selectable_value(v, PixelFormat::Rgba8888, "RGBA8888");
-                    ui.selectable_value(v, PixelFormat::Rgb888, "RGB888 (sobre negro)");
-                    ui.selectable_value(v, PixelFormat::Alpha8, "ALPHA8");
-                    ui.selectable_value(v, PixelFormat::Intensity8, "INTENSITY8");
-                    ui.selectable_value(v, PixelFormat::AlphaIntensity8, "Alpha+Intensity");
-                    ui.selectable_value(v, PixelFormat::Rgba5551, "RGBA5551 (16 bits)");
-                    ui.selectable_value(v, PixelFormat::Rgba5555, "RGBA5555 (20 bits)");
-                    ui.selectable_value(v, PixelFormat::Bgra8888, "BGRA8888");
+                    for &(fmt, label) in SOFT_PIXEL_FORMATS {
+                        ui.selectable_value(v, fmt, label);
+                    }
+                    if GPU_PIXEL_FORMATS
+                        .iter()
+                        .any(|(f, _)| f.is_compatible_with(gpu))
+                    {
+                        ui.separator();
+                        for &(fmt, label) in GPU_PIXEL_FORMATS {
+                            if fmt.is_compatible_with(gpu) {
+                                ui.selectable_value(v, fmt, label);
+                            }
+                        }
+                    }
                 },
                 &mut app.config.pixel_format,
             );
@@ -832,6 +849,55 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 }
                 _ => {}
             }
+            // Calidades por formato de textura (mismos rangos que el original).
+            match app.config.gpu_format {
+                GpuFormat::Pvrtc4Bpp | GpuFormat::Pvr3Gz | GpuFormat::Pvr3Ccz => {
+                    ui.horizontal(|ui| {
+                        ui.label("Calidad PVRTC (0-7)");
+                        ui.add(egui::DragValue::new(&mut app.config.pvr_quality).range(0..=7));
+                    });
+                }
+                GpuFormat::Etc1 | GpuFormat::Etc1Ktx => {
+                    ui.horizontal(|ui| {
+                        ui.label("Calidad ETC1 (0-100)");
+                        ui.add(egui::DragValue::new(&mut app.config.etc1_quality).range(0..=100));
+                    });
+                }
+                GpuFormat::Etc2Rgba => {
+                    ui.horizontal(|ui| {
+                        ui.label("Calidad ETC2 (0-100)");
+                        ui.add(egui::DragValue::new(&mut app.config.etc2_quality).range(0..=100));
+                    });
+                }
+                GpuFormat::Astc4x4 => {
+                    ui.horizontal(|ui| {
+                        ui.label("Calidad ASTC (0-4, 4 = exhaustivo)");
+                        ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
+                    });
+                }
+                _ => {}
+            }
+            if app.config.gpu_format == GpuFormat::Dds
+                && matches!(
+                    app.config.pixel_format,
+                    PixelFormat::Dxt1 | PixelFormat::Dxt5
+                )
+            {
+                enum_combo(
+                    ui,
+                    "Modo DXT",
+                    app.config.dxt_mode.as_str(),
+                    |ui, v| {
+                        ui.selectable_value(v, DxtMode::Linear, "DXT_LINEAR (error uniforme)");
+                        ui.selectable_value(
+                            v,
+                            DxtMode::Perceptual,
+                            "DXT_PERCEPTUAL (pondera la luminancia)",
+                        );
+                    },
+                    &mut app.config.dxt_mode,
+                );
+            }
             if app.config.gpu_format == GpuFormat::Png8 {
                 enum_combo(
                     ui,
@@ -869,7 +935,7 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
     }
     if !app.config.gpu_format.is_supported() {
         warnings.push(
-            "ASTC 4x4 requiere compilar con --features gpu-formats; el publicado fallará.".into(),
+            "ASTC requiere compilar con --features gpu-formats; el publicado fallará.".into(),
         );
     }
     if app.config.flip_vertical && !app.config.gpu_format.is_hardware() {
@@ -879,13 +945,16 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
                 .into(),
         );
     }
-    if app.config.pixel_format != PixelFormat::Rgba8888 && app.config.gpu_format.is_hardware() {
-        warnings.push(
-            "El formato de píxel solo aplica a los formatos de software \
-             (PNG/PNG8/JPG/WebP/BMP/TGA/TIFF/DDS/ZKTX); los formatos de \
-             hardware usan RGBA."
-                .into(),
-        );
+    if !app
+        .config
+        .pixel_format
+        .is_compatible_with(app.config.gpu_format)
+    {
+        warnings.push(format!(
+            "El formato de píxel {} no está soportado por el formato de textura {};              se usará RGBA8888 al publicar.",
+            app.config.pixel_format.as_str(),
+            app.config.gpu_format.as_str()
+        ));
     }
     if app.config.scale_variants.iter().any(|s| s.fract() != 0.0) {
         warnings.push(
@@ -1183,3 +1252,46 @@ fn template_name(t: TemplateFormat) -> &'static str {
         TemplateFormat::PlainText => "Texto plano",
     }
 }
+
+/// Pixel formats de software: siempre disponibles.
+const SOFT_PIXEL_FORMATS: &[(PixelFormat, &str)] = &[
+    (PixelFormat::Rgba8888, "RGBA8888"),
+    (PixelFormat::Rgb888, "RGB888 (sobre negro)"),
+    (PixelFormat::Alpha8, "ALPHA8"),
+    (PixelFormat::Intensity8, "INTENSITY8"),
+    (PixelFormat::AlphaIntensity8, "Alpha+Intensity"),
+    (PixelFormat::Rgba5551, "RGBA5551 (16 bits)"),
+    (PixelFormat::Rgba5555, "RGBA5555 (20 bits)"),
+    (PixelFormat::Bgra8888, "BGRA8888"),
+    (PixelFormat::Rgba4444, "RGBA4444 (16 bits)"),
+    (PixelFormat::Rgb565, "RGB565 (16 bits)"),
+];
+
+/// Pixel formats de hardware; la GUI solo muestra los que soporta el formato
+/// de textura seleccionado («Only pixel formats supported by the selected
+/// Texture Format can be chosen»).
+const GPU_PIXEL_FORMATS: &[(PixelFormat, &str)] = &[
+    (PixelFormat::Pvrtc2BppRgba, "PVRTCI_2BPP_RGBA"),
+    (PixelFormat::Pvrtc4BppRgba, "PVRTCI_4BPP_RGBA"),
+    (PixelFormat::Pvrtc2BppRgb, "PVRTCI_2BPP_RGB"),
+    (PixelFormat::Pvrtc4BppRgb, "PVRTCI_4BPP_RGB"),
+    (PixelFormat::Etc1Rgb, "ETC1_RGB"),
+    (PixelFormat::Etc2Rgb, "ETC2_RGB"),
+    (PixelFormat::Etc2Rgba, "ETC2_RGBA"),
+    (PixelFormat::Dxt1, "DXT1"),
+    (PixelFormat::Dxt5, "DXT5"),
+    (PixelFormat::Astc4x4, "ASTC_4x4"),
+    (PixelFormat::Astc5x4, "ASTC_5x4"),
+    (PixelFormat::Astc5x5, "ASTC_5x5"),
+    (PixelFormat::Astc6x5, "ASTC_6x5"),
+    (PixelFormat::Astc6x6, "ASTC_6x6"),
+    (PixelFormat::Astc8x5, "ASTC_8x5"),
+    (PixelFormat::Astc8x6, "ASTC_8x6"),
+    (PixelFormat::Astc8x8, "ASTC_8x8"),
+    (PixelFormat::Astc10x5, "ASTC_10x5"),
+    (PixelFormat::Astc10x6, "ASTC_10x6"),
+    (PixelFormat::Astc10x8, "ASTC_10x8"),
+    (PixelFormat::Astc10x10, "ASTC_10x10"),
+    (PixelFormat::Astc12x10, "ASTC_12x10"),
+    (PixelFormat::Astc12x12, "ASTC_12x12"),
+];

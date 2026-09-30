@@ -70,10 +70,54 @@ const SUBBLOCK_TABLE: [[usize; 16]; 2] = [
     [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1],
 ];
 
+/// Esfuerzo de búsqueda que corresponde a una calidad 0-100 (`--etc1-quality`
+/// / `--etc2-quality`). El original usa 70 por defecto, que aquí es ya la
+/// búsqueda completa; por debajo se degradan los ejes de búsqueda.
+struct Effort {
+    /// Modos T/H (extensión de ETC2 sobre ETC1).
+    th: bool,
+    /// Modo planar (ETC2).
+    planar: bool,
+    /// Máximo de colores candidatos en la búsqueda T/H (cuadrática).
+    candidates: usize,
+    /// Rotaciones de subbloque que prueba `encode_individual` (1 = solo 4x2).
+    flips: usize,
+    /// Candidatos de base que prueba la búsqueda de la alfa EAC.
+    alpha_bases: usize,
+}
+
+fn effort(quality: u8) -> Effort {
+    match quality.min(100) {
+        0..=39 => Effort {
+            th: false,
+            planar: false,
+            candidates: 4,
+            flips: 1,
+            alpha_bases: 1,
+        },
+        40..=69 => Effort {
+            th: true,
+            planar: false,
+            candidates: 8,
+            flips: 2,
+            alpha_bases: 3,
+        },
+        // 70 (por defecto) y arriba: búsqueda completa.
+        _ => Effort {
+            th: true,
+            planar: true,
+            candidates: 16,
+            flips: 2,
+            alpha_bases: 3,
+        },
+    }
+}
+
 /// Encode an RGBA8 image (width x height, row-major) into ETC2 RGBA8 blocks.
 /// Returns a `Vec<u8>` of 16 bytes per 4x4 block. Non-multiple-of-4
 /// dimensions are handled by edge clamping (padding with the border pixel).
-pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+/// `quality` (0-100) selects the search effort.
+pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
     let blocks_x = width.div_ceil(4);
     let blocks_y = height.div_ceil(4);
     let mut out = Vec::with_capacity(blocks_x * blocks_y * 16);
@@ -94,7 +138,7 @@ pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
                     pixels[py * 4 + pxx] = px(bx * 4 + pxx, by * 4 + py);
                 }
             }
-            let block = encode_block(&pixels);
+            let block = encode_block(&pixels, quality);
             out.extend_from_slice(&block);
         }
     }
@@ -105,7 +149,8 @@ pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
 /// Returns a `Vec<u8>` of 8 bytes per 4x4 block using only the ETC1 modes
 /// (individual + differential), so the result decodes as ETC1 everywhere.
 /// Alpha is ignored; edge clamping works like [`encode_etc2_rgba8`].
-pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
+/// `quality` (0-100) selects the search effort.
+pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
     let blocks_x = width.div_ceil(4);
     let blocks_y = height.div_ceil(4);
     let mut out = Vec::with_capacity(blocks_x * blocks_y * 8);
@@ -129,7 +174,34 @@ pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
             for i in 0..16 {
                 rgb[i] = pixels[stream_to_scan(i)];
             }
-            out.extend_from_slice(&encode_etc1_block(&rgb));
+            out.extend_from_slice(&encode_etc1_block(&rgb, quality));
+        }
+    }
+    out
+}
+
+/// Encode an RGBA8 image into ETC2 RGB blocks (8 bytes per 4x4 block, alpha
+/// dropped). Uses the full ETC2 mode set, so it is *not* ETC1-decodable; use
+/// [`encode_etc1_rgb`] for `.pkm`/ETC1 KTX.
+pub fn encode_etc2_rgb_blocks(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+    let blocks_x = width.div_ceil(4);
+    let blocks_y = height.div_ceil(4);
+    let mut out = Vec::with_capacity(blocks_x * blocks_y * 8);
+    let px = |x: usize, y: usize| -> [u8; 3] {
+        let cx = x.min(width - 1);
+        let cy = y.min(height - 1);
+        let i = (cy * width + cx) * 4;
+        [rgba[i], rgba[i + 1], rgba[i + 2]]
+    };
+    for by in 0..blocks_y {
+        for bx in 0..blocks_x {
+            let mut rgb = [[0u8; 3]; 16];
+            for py in 0..4 {
+                for pxx in 0..4 {
+                    rgb[stream_to_scan(py * 4 + pxx)] = px(bx * 4 + pxx, by * 4 + py);
+                }
+            }
+            out.extend_from_slice(&encode_etc2_rgb(&rgb, quality));
         }
     }
     out
@@ -137,8 +209,8 @@ pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
 
 /// One 4x4 block through the ETC1 mode set only (no T/H/planar, which are
 /// ETC2 extensions and would decode as garbage on ETC1 hardware).
-fn encode_etc1_block(rgb: &[[u8; 3]; 16]) -> [u8; 8] {
-    let (err, best) = encode_individual(rgb);
+fn encode_etc1_block(rgb: &[[u8; 3]; 16], quality: u8) -> [u8; 8] {
+    let (err, best) = encode_individual(rgb, quality);
     match encode_differential(rgb) {
         Some(r) if r.err < err => r.block,
         _ => best,
@@ -158,7 +230,7 @@ const fn stream_xy(i: usize) -> (usize, usize) {
 
 /// Encode one 4x4 block (row-major scan-order pixels) into 16 bytes:
 /// 8 EAC alpha + 8 ETC2 RGB.
-fn encode_block(pixels: &[[u8; 4]; 16]) -> [u8; 16] {
+fn encode_block(pixels: &[[u8; 4]; 16], quality: u8) -> [u8; 16] {
     // RGB: column-major stream order (WRITE_ORDER_TABLE).
     let mut alpha = [0u8; 16];
     let mut rgb = [[0u8; 3]; 16];
@@ -174,8 +246,8 @@ fn encode_block(pixels: &[[u8; 4]; 16]) -> [u8; 16] {
     }
 
     let mut out = [0u8; 16];
-    out[0..8].copy_from_slice(&encode_eac_alpha(&alpha_rev));
-    out[8..16].copy_from_slice(&encode_etc2_rgb(&rgb));
+    out[0..8].copy_from_slice(&encode_eac_alpha(&alpha_rev, quality));
+    out[8..16].copy_from_slice(&encode_etc2_rgb(&rgb, quality));
     out
 }
 
@@ -183,7 +255,7 @@ fn encode_block(pixels: &[[u8; 4]; 16]) -> [u8; 16] {
 // EAC alpha (8 bytes)
 // ---------------------------------------------------------------------------
 
-fn encode_eac_alpha(alpha: &[u8; 16]) -> [u8; 8] {
+fn encode_eac_alpha(alpha: &[u8; 16], quality: u8) -> [u8; 8] {
     let mut out = [0u8; 8];
 
     // Uniform alpha: multiplier 0, constant base.
@@ -202,6 +274,7 @@ fn encode_eac_alpha(alpha: &[u8; 16]) -> [u8; 8] {
     let mut base_candidates = vec![min, (max - 210).max(0), (min + max) / 2];
     base_candidates.sort_unstable();
     base_candidates.dedup();
+    base_candidates.truncate(effort(quality).alpha_bases);
 
     let mut best_err = i64::MAX;
     let mut best_base = 0i32;
@@ -334,7 +407,7 @@ fn best_palette_error(rgb: &[[u8; 3]; 16], palette: &[[i32; 3]; 4]) -> (i64, [u8
 /// every distinct quantized pixel color (a T/H block's palette colors are
 /// always present among the pixels themselves, so this lets the search hit
 /// exact palettes).
-fn color_candidates(rgb: &[[u8; 3]; 16]) -> Vec<[u8; 3]> {
+fn color_candidates(rgb: &[[u8; 3]; 16], max_total: usize) -> Vec<[u8; 3]> {
     let mut min_c = [255u8; 3];
     let mut max_c = [0u8; 3];
     let mut sum = [0i64; 3];
@@ -390,14 +463,15 @@ fn color_candidates(rgb: &[[u8; 3]; 16]) -> Vec<[u8; 3]> {
     // search bounded.
     for p in rgb {
         let c = [q4(p[0]), q4(p[1]), q4(p[2])];
-        if !out.contains(&c) && out.len() < 16 {
+        if !out.contains(&c) && out.len() < max_total {
             out.push(c);
         }
     }
     out
 }
 
-fn encode_etc2_rgb(rgb: &[[u8; 3]; 16]) -> [u8; 8] {
+fn encode_etc2_rgb(rgb: &[[u8; 3]; 16], quality: u8) -> [u8; 8] {
+    let e = effort(quality);
     let mut best_err = i64::MAX;
     let mut best = [0u8; 8];
     let mut consider = |err: i64, block: [u8; 8]| {
@@ -408,20 +482,24 @@ fn encode_etc2_rgb(rgb: &[[u8; 3]; 16]) -> [u8; 8] {
     };
 
     {
-        let (err, block) = encode_individual(rgb);
+        let (err, block) = encode_individual(rgb, quality);
         consider(err, block);
     }
     if let Some(r) = encode_differential(rgb) {
         consider(r.err, r.block);
     }
-    if let Some(r) = encode_t(rgb) {
-        consider(r.err, r.block);
+    if e.th {
+        if let Some(r) = encode_t(rgb, e.candidates) {
+            consider(r.err, r.block);
+        }
+        if let Some(r) = encode_h(rgb, e.candidates) {
+            consider(r.err, r.block);
+        }
     }
-    if let Some(r) = encode_h(rgb) {
-        consider(r.err, r.block);
-    }
-    if let Some(r) = encode_planar(rgb) {
-        consider(r.err, r.block);
+    if e.planar {
+        if let Some(r) = encode_planar(rgb) {
+            consider(r.err, r.block);
+        }
     }
 
     best
@@ -431,7 +509,7 @@ fn encode_etc2_rgb(rgb: &[[u8; 3]; 16]) -> [u8; 8] {
 // Individual mode
 // ---------------------------------------------------------------------------
 
-fn encode_individual(rgb: &[[u8; 3]; 16]) -> (i64, [u8; 8]) {
+fn encode_individual(rgb: &[[u8; 3]; 16], quality: u8) -> (i64, [u8; 8]) {
     let mut out = [0u8; 8];
     let mut best_err = i64::MAX;
     let mut best_flip = 0u8;
@@ -447,7 +525,11 @@ fn encode_individual(rgb: &[[u8; 3]; 16]) -> (i64, [u8; 8]) {
     let mut best_j = 0u16;
     let mut best_k = 0u16;
 
-    for (flip, &sub) in SUBBLOCK_TABLE.iter().enumerate() {
+    for (flip, &sub) in SUBBLOCK_TABLE
+        .iter()
+        .take(effort(quality).flips)
+        .enumerate()
+    {
         let mut sub0: Vec<(usize, [u8; 3])> = Vec::new();
         let mut sub1: Vec<(usize, [u8; 3])> = Vec::new();
         // Track each pixel's STREAM position: the index bits live at
@@ -777,8 +859,8 @@ fn t_overflow_bit(r0: u8) -> u8 {
     (a & c) | (!a & b & c & d) | (a & b & !c & d)
 }
 
-fn encode_t(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
-    let cands = color_candidates(rgb);
+fn encode_t(rgb: &[[u8; 3]; 16], max_candidates: usize) -> Option<EncResult> {
+    let cands = color_candidates(rgb, max_candidates);
     let mut best: Option<EncResult> = None;
 
     for &c0 in &cands {
@@ -838,8 +920,8 @@ fn h_overflow_bit(g0: u8, b0: u8) -> u8 {
     (a & c) | (!a & b & c & d) | (a & b & !c & d)
 }
 
-fn encode_h(rgb: &[[u8; 3]; 16]) -> Option<EncResult> {
-    let cands = color_candidates(rgb);
+fn encode_h(rgb: &[[u8; 3]; 16], max_candidates: usize) -> Option<EncResult> {
+    let cands = color_candidates(rgb, max_candidates);
     let mut best: Option<EncResult> = None;
 
     for &c0 in &cands {
@@ -1355,7 +1437,7 @@ fn expand4_3(c: [u8; 3]) -> [i32; 3] {
 /// Encode one block from RGBA pixels and decode it back (SCAN order).
 #[cfg(test)]
 fn roundtrip(pixels: &[[u8; 4]; 16]) -> [[u8; 3]; 16] {
-    let block = encode_block(pixels);
+    let block = encode_block(pixels, 70);
     decode_etc2_rgb_block(&block[8..16])
 }
 
@@ -1437,8 +1519,8 @@ mod tests {
     #[test]
     fn differential_roundtrip_close() {
         let pixels = gradient_block();
-        let block = encode_block(&pixels);
-        let rgb = encode_etc2_rgb(&rgb_stream(&pixels));
+        let block = encode_block(&pixels, 70);
+        let rgb = encode_etc2_rgb(&rgb_stream(&pixels), 70);
         // Differential must be valid when the diff bit is set.
         assert_eq!(rgb[3] & 2, 2, "diff bit should be set for gradient");
         let decoded = decode_etc2_rgb_block(&block[8..16]);
@@ -1527,7 +1609,7 @@ mod tests {
         }
         let rgb = rgb_stream_of(&colors);
 
-        let enc = encode_t(&rgb).expect("T mode should encode");
+        let enc = encode_t(&rgb, 16).expect("T mode should encode");
         assert_eq!(enc.block[3] & 2, 2, "diff bit");
         let red1 = enc.block[0] >> 3;
         let dred2 = sign_extend3(enc.block[0] & 7);
@@ -1643,7 +1725,7 @@ mod tests {
         }
         let rgb = rgb_stream_of(&colors);
 
-        let enc = encode_h(&rgb).expect("H mode should encode");
+        let enc = encode_h(&rgb, 16).expect("H mode should encode");
         assert_eq!(enc.block[3] & 2, 2, "diff bit");
         let red1 = enc.block[0] >> 3;
         let dred2 = sign_extend3(enc.block[0] & 7);
@@ -1772,7 +1854,7 @@ mod tests {
     fn gradient_block_mode_quality() {
         // The full encoder must produce a decodable block close to the source.
         let pixels = gradient_block();
-        let block = encode_block(&pixels);
+        let block = encode_block(&pixels, 70);
         let decoded = decode_etc2_rgb_block(&block[8..16]);
         let mut total = 0i64;
         for i in 0..16 {
@@ -1790,7 +1872,7 @@ mod tests {
         let pixels = gradient_block();
         let rgb = rgb_stream(&pixels);
 
-        let (err_i, block_i) = encode_individual(&rgb);
+        let (err_i, block_i) = encode_individual(&rgb, 70);
         assert!(err_i >= 0);
         let dec = decode_etc2_rgb_block(&block_i);
         assert_eq!(dec.len(), 16);
@@ -1798,10 +1880,10 @@ mod tests {
         let d = encode_differential(&rgb).expect("differential");
         let _ = decode_etc2_rgb_block(&d.block);
 
-        let t = encode_t(&rgb).expect("t");
+        let t = encode_t(&rgb, 16).expect("t");
         let _ = decode_etc2_rgb_block(&t.block);
 
-        let h = encode_h(&rgb).expect("h");
+        let h = encode_h(&rgb, 16).expect("h");
         let _ = decode_etc2_rgb_block(&h.block);
 
         let p = encode_planar(&rgb).expect("planar");
@@ -1811,7 +1893,7 @@ mod tests {
     #[test]
     fn eac_uniform_alpha() {
         let alpha = [128u8; 16];
-        let out = encode_eac_alpha(&alpha);
+        let out = encode_eac_alpha(&alpha, 70);
         assert_eq!(out[0], 128);
         assert_eq!(out[1] >> 4, 0); // multiplier 0
     }
@@ -1827,7 +1909,7 @@ mod tests {
         for i in 0..16 {
             alpha_rev[i] = alpha[15 - i];
         }
-        let out = encode_eac_alpha(&alpha_rev);
+        let out = encode_eac_alpha(&alpha_rev, 70);
         // Decode per the EAC rules.
         let base = out[0] as i32;
         let mult = (out[1] >> 4) as i32;
@@ -1874,7 +1956,7 @@ mod tests {
     fn debug_independent_mismatch() {
         // Two-half block, individual mode: print both decoders in full.
         let pixels = two_half_block();
-        let block = encode_block(&pixels);
+        let block = encode_block(&pixels, 70);
         let rgb8 = &block[8..16];
         println!("rgb8={:02x?}", rgb8);
         let ours = decode_etc2_rgb_block(rgb8);
@@ -1965,7 +2047,7 @@ mod tests {
             *c = [p[0] as u8, p[1] as u8, p[2] as u8];
         }
         let rgb = rgb_stream_of(&colors);
-        let enc = encode_t(&rgb).unwrap();
+        let enc = encode_t(&rgb, 16).unwrap();
         println!("T block={:02x?} err={}", enc.block, enc.err);
         println!("T ours={:?}", decode_etc2_rgb_block(&enc.block));
         let mut theirs = [0u32; 16];
@@ -2003,7 +2085,7 @@ mod tests {
             *c = [p[0] as u8, p[1] as u8, p[2] as u8];
         }
         let rgb = rgb_stream_of(&colors);
-        let enc = encode_h(&rgb).unwrap();
+        let enc = encode_h(&rgb, 16).unwrap();
         println!("H block={:02x?} err={}", enc.block, enc.err);
         println!("H ours={:?}", decode_etc2_rgb_block(&enc.block));
     }
@@ -2012,20 +2094,20 @@ mod tests {
     fn debug_each_mode_gradient() {
         let pixels = gradient_block();
         let rgb = rgb_stream(&pixels);
-        let (ei, bi) = encode_individual(&rgb);
+        let (ei, bi) = encode_individual(&rgb, 70);
         println!("individual err={} bytes={:02x?}", ei, bi);
         let d = encode_differential(&rgb).unwrap();
         println!("diff err={} bytes={:02x?}", d.err, d.block);
-        let t = encode_t(&rgb).unwrap();
+        let t = encode_t(&rgb, 16).unwrap();
         println!("T err={} bytes={:02x?}", t.err, t.block);
-        let h = encode_h(&rgb).unwrap();
+        let h = encode_h(&rgb, 16).unwrap();
         println!("H err={} bytes={:02x?}", h.err, h.block);
         let p = encode_planar(&rgb).unwrap();
         println!("planar err={} bytes={:02x?}", p.err, p.block);
         let dec = decode_etc2_rgb_block(&p.block);
         println!("planar dec[0]={:?} src[0]={:?}", dec[0], pixels[0]);
         // which mode did the full encoder pick?
-        let full = encode_block(&pixels);
+        let full = encode_block(&pixels, 70);
         let fdec = decode_etc2_rgb_block(&full[8..16]);
         println!(
             "full bytes={:02x?} dec[0]={:?} src[0]={:?}",
@@ -2054,7 +2136,7 @@ mod tests {
         // Check the independent decoder agrees with our in-crate decoder
         // bit-for-bit (both decode the same stream).
         let pixels = two_half_block();
-        let block = encode_block(&pixels);
+        let block = encode_block(&pixels, 70);
         let rgb8 = &block[8..16];
         // The encoder may pick individual or differential for flat halves;
         // both are valid ETC2 modes — only the decode agreement matters here.
@@ -2080,7 +2162,7 @@ mod tests {
         // The independent decoder's output must be close to the source
         // (validates overall quality, not just validity).
         let pixels = two_half_block();
-        let block = encode_block(&pixels);
+        let block = encode_block(&pixels, 70);
         let rgb8 = &block[8..16];
         let to_rgb = |v: u32| -> [u8; 3] {
             [
@@ -2126,7 +2208,7 @@ mod tests {
             ]
         };
         let rgb = rgb_stream_of(&colors);
-        let enc = encode_t(&rgb).unwrap();
+        let enc = encode_t(&rgb, 16).unwrap();
         let ours = decode_etc2_rgb_block(&enc.block);
         let mut theirs = [0u32; 16];
         texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);

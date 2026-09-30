@@ -322,6 +322,87 @@ pub enum PixelFormat {
     /// texturas en orden BGRA (p. ej. cocos2d).
     #[serde(rename = "BGRA8888")]
     Bgra8888,
+    /// 16 bits: R4 G4 B4 A4 (RGBA4444), con replicación de bits al expandir.
+    #[serde(rename = "RGBA4444")]
+    Rgba4444,
+    /// 16 bits: R5 G6 B5 sin alfa (RGB565); la transparencia se compone
+    /// sobre negro.
+    #[serde(rename = "RGB565")]
+    Rgb565,
+    // ---------------------------------------------------------------------
+    // Formatos de píxel de hardware (GPU). Solo se pueden elegir con un
+    // formato de textura que admita la compresión correspondiente; con un
+    // formato de software se ignoran (y la GUI/CLI avisa).
+    // ---------------------------------------------------------------------
+    /// PVRTC1 2 bits/píxel con alfa.
+    #[serde(rename = "PVRTCI_2BPP_RGBA")]
+    Pvrtc2BppRgba,
+    /// PVRTC1 4 bits/píxel con alfa.
+    #[serde(rename = "PVRTCI_4BPP_RGBA")]
+    Pvrtc4BppRgba,
+    /// PVRTC1 2 bits/píxel opaco (sin alfa).
+    #[serde(rename = "PVRTCI_2BPP_RGB")]
+    Pvrtc2BppRgb,
+    /// PVRTC1 4 bits/píxel opaco (sin alfa).
+    #[serde(rename = "PVRTCI_4BPP_RGB")]
+    Pvrtc4BppRgb,
+    /// ETC1 RGB (sin alfa).
+    #[serde(rename = "ETC1_RGB")]
+    Etc1Rgb,
+    /// ETC2 RGB (sin alfa).
+    #[serde(rename = "ETC2_RGB")]
+    Etc2Rgb,
+    /// ETC2 RGBA (color + alfa con EAC).
+    #[serde(rename = "ETC2_RGBA")]
+    Etc2Rgba,
+    /// S3TC/BC1: 4 bits/píxel con 1 bit de alfa.
+    #[serde(rename = "DXT1")]
+    Dxt1,
+    /// S3TC/BC3: 8 bits/píxel con alfa interpolado.
+    #[serde(rename = "DXT5")]
+    Dxt5,
+    /// ASTC con bloque 4x4 (8 bpp).
+    #[serde(rename = "ASTC_4x4")]
+    Astc4x4,
+    /// ASTC con bloque 5x4 (6.40 bpp).
+    #[serde(rename = "ASTC_5x4")]
+    Astc5x4,
+    /// ASTC con bloque 5x5 (5.12 bpp).
+    #[serde(rename = "ASTC_5x5")]
+    Astc5x5,
+    /// ASTC con bloque 6x5 (4.27 bpp).
+    #[serde(rename = "ASTC_6x5")]
+    Astc6x5,
+    /// ASTC con bloque 6x6 (3.56 bpp).
+    #[serde(rename = "ASTC_6x6")]
+    Astc6x6,
+    /// ASTC con bloque 8x5 (3.20 bpp).
+    #[serde(rename = "ASTC_8x5")]
+    Astc8x5,
+    /// ASTC con bloque 8x6 (2.67 bpp).
+    #[serde(rename = "ASTC_8x6")]
+    Astc8x6,
+    /// ASTC con bloque 8x8 (2.00 bpp).
+    #[serde(rename = "ASTC_8x8")]
+    Astc8x8,
+    /// ASTC con bloque 10x5 (2.56 bpp).
+    #[serde(rename = "ASTC_10x5")]
+    Astc10x5,
+    /// ASTC con bloque 10x6 (2.13 bpp).
+    #[serde(rename = "ASTC_10x6")]
+    Astc10x6,
+    /// ASTC con bloque 10x8 (1.60 bpp).
+    #[serde(rename = "ASTC_10x8")]
+    Astc10x8,
+    /// ASTC con bloque 10x10 (1.28 bpp).
+    #[serde(rename = "ASTC_10x10")]
+    Astc10x10,
+    /// ASTC con bloque 12x10 (1.07 bpp).
+    #[serde(rename = "ASTC_12x10")]
+    Astc12x10,
+    /// ASTC con bloque 12x12 (0.89 bpp).
+    #[serde(rename = "ASTC_12x12")]
+    Astc12x12,
 }
 
 impl PixelFormat {
@@ -335,7 +416,147 @@ impl PixelFormat {
             PixelFormat::Rgba5551 => "RGBA5551",
             PixelFormat::Rgba5555 => "RGBA5555",
             PixelFormat::Bgra8888 => "BGRA8888",
+            PixelFormat::Rgba4444 => "RGBA4444",
+            PixelFormat::Rgb565 => "RGB565",
+            PixelFormat::Pvrtc2BppRgba => "PVRTCI_2BPP_RGBA",
+            PixelFormat::Pvrtc4BppRgba => "PVRTCI_4BPP_RGBA",
+            PixelFormat::Pvrtc2BppRgb => "PVRTCI_2BPP_RGB",
+            PixelFormat::Pvrtc4BppRgb => "PVRTCI_4BPP_RGB",
+            PixelFormat::Etc1Rgb => "ETC1_RGB",
+            PixelFormat::Etc2Rgb => "ETC2_RGB",
+            PixelFormat::Etc2Rgba => "ETC2_RGBA",
+            PixelFormat::Dxt1 => "DXT1",
+            PixelFormat::Dxt5 => "DXT5",
+            PixelFormat::Astc4x4 => "ASTC_4x4",
+            PixelFormat::Astc5x4 => "ASTC_5x4",
+            PixelFormat::Astc5x5 => "ASTC_5x5",
+            PixelFormat::Astc6x5 => "ASTC_6x5",
+            PixelFormat::Astc6x6 => "ASTC_6x6",
+            PixelFormat::Astc8x5 => "ASTC_8x5",
+            PixelFormat::Astc8x6 => "ASTC_8x6",
+            PixelFormat::Astc8x8 => "ASTC_8x8",
+            PixelFormat::Astc10x5 => "ASTC_10x5",
+            PixelFormat::Astc10x6 => "ASTC_10x6",
+            PixelFormat::Astc10x8 => "ASTC_10x8",
+            PixelFormat::Astc10x10 => "ASTC_10x10",
+            PixelFormat::Astc12x10 => "ASTC_12x10",
+            PixelFormat::Astc12x12 => "ASTC_12x12",
         }
+    }
+
+    /// Un token de hardware (PVRTC/ETC/DXT/ASTC) en vez de un formato de
+    /// software embebible en PNG/JPG/….
+    pub fn is_gpu(&self) -> bool {
+        !matches!(
+            self,
+            PixelFormat::Rgba8888
+                | PixelFormat::Rgb888
+                | PixelFormat::Alpha8
+                | PixelFormat::Intensity8
+                | PixelFormat::AlphaIntensity8
+                | PixelFormat::Rgba5551
+                | PixelFormat::Rgba5555
+                | PixelFormat::Bgra8888
+                | PixelFormat::Rgba4444
+                | PixelFormat::Rgb565
+        )
+    }
+
+    /// Tamaño de bloque ASTC `(x, y)` cuando el token es `ASTC_*`.
+    pub fn astc_block(&self) -> Option<(u8, u8)> {
+        Some(match self {
+            PixelFormat::Astc4x4 => (4, 4),
+            PixelFormat::Astc5x4 => (5, 4),
+            PixelFormat::Astc5x5 => (5, 5),
+            PixelFormat::Astc6x5 => (6, 5),
+            PixelFormat::Astc6x6 => (6, 6),
+            PixelFormat::Astc8x5 => (8, 5),
+            PixelFormat::Astc8x6 => (8, 6),
+            PixelFormat::Astc8x8 => (8, 8),
+            PixelFormat::Astc10x5 => (10, 5),
+            PixelFormat::Astc10x6 => (10, 6),
+            PixelFormat::Astc10x8 => (10, 8),
+            PixelFormat::Astc10x10 => (10, 10),
+            PixelFormat::Astc12x10 => (12, 10),
+            PixelFormat::Astc12x12 => (12, 12),
+            _ => return None,
+        })
+    }
+
+    /// `true` si el formato de textura pedido puede alojar este pixel format
+    /// (tabla del original: solo se pueden elegir los compatibles). Los
+    /// formatos de software siempre valen: los de hardware los ignoran.
+    pub fn is_compatible_with(&self, format: GpuFormat) -> bool {
+        if !self.is_gpu() {
+            return true;
+        }
+        match self {
+            PixelFormat::Pvrtc2BppRgba
+            | PixelFormat::Pvrtc4BppRgba
+            | PixelFormat::Pvrtc2BppRgb
+            | PixelFormat::Pvrtc4BppRgb => matches!(
+                format,
+                GpuFormat::Pvrtc4Bpp | GpuFormat::Pvr3Gz | GpuFormat::Pvr3Ccz
+            ),
+            PixelFormat::Etc1Rgb => matches!(format, GpuFormat::Etc1 | GpuFormat::Etc1Ktx),
+            PixelFormat::Etc2Rgb | PixelFormat::Etc2Rgba => format == GpuFormat::Etc2Rgba,
+            PixelFormat::Dxt1 | PixelFormat::Dxt5 => format == GpuFormat::Dds,
+            f if f.astc_block().is_some() => format == GpuFormat::Astc4x4,
+            _ => false,
+        }
+    }
+
+    /// Código del pixel format en la cabecera PVR v3 (0=PVRTC1 2bpp RGB,
+    /// 1=2bpp RGBA, 2=4bpp RGB, 3=4bpp RGBA). Un formato de píxel que no es
+    /// PVRTC cae al valor por defecto: 4bpp RGBA.
+    pub fn pvr_header_code(&self) -> u64 {
+        match self {
+            PixelFormat::Pvrtc2BppRgb => 0,
+            PixelFormat::Pvrtc2BppRgba => 1,
+            PixelFormat::Pvrtc4BppRgb => 2,
+            _ => 3,
+        }
+    }
+
+    /// `true` cuando el pixel format PVRTC elegido es de 2 bits/píxel.
+    pub fn is_pvrtc_2bpp(&self) -> bool {
+        matches!(self, PixelFormat::Pvrtc2BppRgb | PixelFormat::Pvrtc2BppRgba)
+    }
+
+    /// `true` cuando el pixel format descarta el canal alfa (PVRTC RGB).
+    pub fn drops_alpha(&self) -> bool {
+        matches!(self, PixelFormat::Pvrtc2BppRgb | PixelFormat::Pvrtc4BppRgb)
+    }
+}
+
+/// Cuantización DXT (`--dxt-mode`): cómo pondera el error el ajuste de los
+/// extremos de cada bloque BC1/BC3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum DxtMode {
+    /// Error uniforme por canal (el más rápido de entender, por defecto).
+    #[default]
+    #[serde(rename = "DXT_LINEAR")]
+    Linear,
+    /// Error ponderado por luminancia: prioriza lo que se ve.
+    #[serde(rename = "DXT_PERCEPTUAL")]
+    Perceptual,
+}
+
+impl DxtMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            DxtMode::Linear => "DXT_LINEAR",
+            DxtMode::Perceptual => "DXT_PERCEPTUAL",
+        }
+    }
+
+    /// Acepta el token del original y sus formas cortas.
+    pub fn parse(v: &str) -> Option<Self> {
+        Some(match v.to_ascii_lowercase().as_str() {
+            "dxt_linear" | "linear" => DxtMode::Linear,
+            "dxt_perceptual" | "perceptual" => DxtMode::Perceptual,
+            _ => return None,
+        })
     }
 }
 
@@ -922,10 +1143,28 @@ pub struct ProjectConfig {
     /// (`--webp-quality`; por defecto sin pérdidas).
     #[serde(default = "default_webp_quality")]
     pub webp_quality: u16,
-    /// Formato de píxel de salida (pixel format); solo formatos de
-    /// software (PNG/PNG8/JPG/WebP/BMP/TGA/TIFF/DDS/ZKTX).
+    /// Formato de píxel de salida (pixel format): software embebible o
+    /// compresión de hardware (PVRTC/ETC/DXT/ASTC), según la tabla del
+    /// original. Solo formatos compatibles con la textura elegida.
     #[serde(default)]
     pub pixel_format: PixelFormat,
+    /// Calidad PVRTC (`--pvr-quality`), 0-7, 3 por defecto: pasadas de
+    /// refinamiento de los extremos de cada bloque.
+    #[serde(default = "default_pvr_quality")]
+    pub pvr_quality: u8,
+    /// Calidad ETC1 (`--etc1-quality`), 0-100, 70 por defecto.
+    #[serde(default = "default_etc1_quality")]
+    pub etc1_quality: u8,
+    /// Calidad ETC2 (`--etc2-quality`), 0-100, 70 por defecto.
+    #[serde(default = "default_etc2_quality")]
+    pub etc2_quality: u8,
+    /// Calidad ASTC (`--astc-quality`), 0-4, 2 por defecto (preset de
+    /// astcenc: fastest/fast/medium/thorough/exhaustive).
+    #[serde(default = "default_astc_quality")]
+    pub astc_quality: u8,
+    /// Cuantización DXT1/DXT5 (`--dxt-mode`).
+    #[serde(default)]
+    pub dxt_mode: DxtMode,
     /// Voltear la textura verticalmente (`--flip-y`); solo formatos
     /// de hardware (ASTC/ETC2/ETC1/PVRTC).
     #[serde(default)]
@@ -1123,6 +1362,22 @@ fn default_jpg_quality() -> u8 {
     80
 }
 
+fn default_pvr_quality() -> u8 {
+    3
+}
+
+fn default_etc1_quality() -> u8 {
+    70
+}
+
+fn default_etc2_quality() -> u8 {
+    70
+}
+
+fn default_astc_quality() -> u8 {
+    2
+}
+
 fn default_webp_quality() -> u16 {
     101
 }
@@ -1163,6 +1418,11 @@ impl Default for ProjectConfig {
             jpg_quality: 80,
             webp_quality: 101,
             pixel_format: PixelFormat::default(),
+            pvr_quality: default_pvr_quality(),
+            etc1_quality: default_etc1_quality(),
+            etc2_quality: default_etc2_quality(),
+            astc_quality: default_astc_quality(),
+            dxt_mode: DxtMode::default(),
             flip_vertical: false,
             encryption_key: None,
             export_template: None,
@@ -1334,6 +1594,35 @@ impl ProjectConfig {
             return Err(TpError::Config(format!(
                 "jpg_quality debe estar entre 0 y 100 (se obtuvo {})",
                 self.jpg_quality
+            )));
+        }
+        if self.pvr_quality > 7 {
+            return Err(TpError::Config(format!(
+                "pvr_quality debe estar entre 0 y 7 (se obtuvo {})",
+                self.pvr_quality
+            )));
+        }
+        for (name, value) in [
+            ("etc1_quality", self.etc1_quality),
+            ("etc2_quality", self.etc2_quality),
+        ] {
+            if value > 100 {
+                return Err(TpError::Config(format!(
+                    "{name} debe estar entre 0 y 100 (se obtuvo {value})"
+                )));
+            }
+        }
+        if self.astc_quality > 4 {
+            return Err(TpError::Config(format!(
+                "astc_quality debe estar entre 0 y 4 (se obtuvo {})",
+                self.astc_quality
+            )));
+        }
+        if !self.pixel_format.is_compatible_with(self.gpu_format) {
+            return Err(TpError::Config(format!(
+                "pixel_format {} no es compatible con el formato de textura {}",
+                self.pixel_format.as_str(),
+                self.gpu_format.as_str()
             )));
         }
         let (div_x, div_y) = self.effective_divisors();

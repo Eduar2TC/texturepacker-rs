@@ -100,9 +100,16 @@ corrección» al final.
   `normal_map_settings_roundtrip_and_validate`,
   `normal_sheet_name_honors_the_custom_base`, `normalmap_flags_parse` y el e2e
   `full_pipeline_with_aliases_rotation_and_normals` (incluye el nombre de hoja propio).
-- **Pixel format / calidades**: 9 formatos de píxel y calidad solo para JPG/WebP; faltan
-  las calidades de PVRTC/ETC/ASTC/BASIS/DXT y los pixel formats de GPU
-  (`PVRTCI_*`, `ETC1_*`, `DXT1/5`, `ASTC_*`, `BASISU_*`).
+- **Pixel format / calidades — hecho**: los 9 formatos de software más `RGBA4444`/`RGB565`
+  y los pixel formats de GPU (`PVRTCI_*`, `ETC1/ETC2_RGB`, `ETC2_RGBA`, `DXT1/5`, `ASTC_*`
+  con sus 14 bloques), con el criterio del original «solo se pueden elegir los formatos de
+  píxel que soporta el formato de textura» (`PixelFormat::is_compatible_with`, validado en
+  `ProjectConfig::validate`, filtrado en el combo de la GUI y comprobado por la CLI), y las
+  calidades del original: `--pvr-quality 0-7` (3), `--etc1-quality 0-100` (70),
+  `--etc2-quality 0-100` (70), `--astc-quality 0-4` (2) y `--dxt-mode
+  DXT_LINEAR|DXT_PERCEPTUAL`. Compresores propios: BC1/BC3 (`dxt.rs`), PVRTC1 2/4bpp
+  (`pvrtc.rs`), ETC1/ETC2 con esfuerzo escalonado (`etc2.rs`) y ASTC con `astcenc-rs`.
+  Solo queda BASIS/BasisU (§3).
 - **Content protection**: AES-GCM propio (más general que el original, que es solo
   Cocos2D + `pvr.ccz`), pero sin gestor de clave global reutilizable.
 
@@ -165,7 +172,8 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (246 tests tras el tercer punto, **250 tras el cuarto**).
+`cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
+**272 tras el quinto**).
 
 ---
 
@@ -196,4 +204,14 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    campos del `.tpproj`, `templates::extra_files` + `ident`, escritura junto a los metadatos
    con anuncio en la vista previa, flags CLI y sección de la GUI. Quedan sin cubrir los 60+
    presets de plantilla del original y la conversión de formato de datos.
-5. **Calidades y pixel formats GPU** — pendiente.
+5. **Calidades y pixel formats GPU** — **hecho** (ver §2 «Pixel format / calidades»):
+   `PixelFormat` ampliado con `RGBA4444`/`RGB565` y todos los de GPU (serde idéntico al
+   original), `is_compatible_with` + `validate()`, campos `pvr_quality`/`etc1_quality`/
+   `etc2_quality`/`astc_quality` y `DxtMode` en `ProjectConfig`, compresores nuevos
+   (`dxt.rs` BC1/BC3 con modo lineal/perceptual, PVRTC 2bpp y calidad en `pvrtc.rs`,
+   esfuerzo escalonado en `etc2.rs`, `.astc` con bloque y preset según calidad),
+   dispatch por pixel format en `export.rs` (DDS con fourcc `DXT1`/`DXT5`, KTX ETC2
+   RGB/RGBA, cabecera PVR con el `pixelFormat` correcto), flags
+   `--pvr-quality --etc1-quality --etc2-quality --astc-quality --dxt-mode` con rangos y
+   compatibilidad validados, y GUI con combo filtrado, calidades por formato y modo DXT.
+   Queda BASIS/BasisU (§3).

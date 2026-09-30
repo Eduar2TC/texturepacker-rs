@@ -8,7 +8,7 @@
 
 use std::path::PathBuf;
 use tp_core::config::{
-    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, GpuFormat, PackMode,
+    AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GpuFormat, PackMode,
     PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ProjectConfig, ScaleMode,
     SizeConstraint, SortOrder, TemplateFormat, TrimMode,
 };
@@ -48,6 +48,13 @@ fn usage() -> ! {
          \x20 --png8-dither T       Dithering PNG-8: low | medium | high\n\
          \x20 --jpg-quality N       Calidad JPG (0-100)\n\
          \x20 --pixel-format T      rgba8888 | rgb888 | alpha8 | intensity8 | alpha-intensity8 | rgba5551 | rgba5555 | bgra8888\n\
+         \x20                        rgba4444 | rgb565 | pvrtc2bpp-rgba | pvrtc4bpp-rgba | pvrtc2bpp-rgb | pvrtc4bpp-rgb\n\
+         \x20                        etc1 | etc2 | etc2-rgb | dxt1 | dxt5 | astc-4x4 | astc-8x8 | astc-12x12\n\
+         \x20 --pvr-quality N       Calidad PVRTC 0-7 (defecto 3)\n\
+         \x20 --etc1-quality N      Calidad ETC1 0-100 (defecto 70)\n\
+         \x20 --etc2-quality N      Calidad ETC2 0-100 (defecto 70)\n\
+         \x20 --astc-quality N      Calidad ASTC 0-4: 0=fastest .. 4=exhaustive (defecto 2)\n\
+         \x20 --dxt-mode T          DXT_LINEAR (error uniforme) | DXT_PERCEPTUAL (ponderado)\n\
          \x20 --strategy T          bssf (ShortSideFit) | baf (AreaFit) | blsf (LongSideFit) | best | bottom-left | contact-point | guillotine (alias: --maxrects-heuristics)\n\
          \x20 --algorithm T         maxrects | polygon | guillotine | grid | basic | manual\n\
          \x20 --auto-folders        pack por carpetas automático: cada subcarpeta de entrada produce su hoja en la subcarpeta de salida\n\
@@ -271,6 +278,36 @@ fn cmd_pack(args: &[String]) {
     }
     if let Some(v) = val("pixel-format") {
         cfg.pixel_format = parse_pixel_format(&v);
+    }
+    if let Some(v) = val("pvr-quality") {
+        cfg.pvr_quality = v
+            .parse()
+            .unwrap_or_else(|_| fail("--pvr-quality inválido".into()));
+    }
+    if let Some(v) = val("etc1-quality") {
+        cfg.etc1_quality = v
+            .parse()
+            .unwrap_or_else(|_| fail("--etc1-quality inválido".into()));
+    }
+    if let Some(v) = val("etc2-quality") {
+        cfg.etc2_quality = v
+            .parse()
+            .unwrap_or_else(|_| fail("--etc2-quality inválido".into()));
+    }
+    if let Some(v) = val("astc-quality") {
+        cfg.astc_quality = v
+            .parse()
+            .unwrap_or_else(|_| fail("--astc-quality inválido".into()));
+    }
+    if let Some(v) = val("dxt-mode") {
+        cfg.dxt_mode = DxtMode::parse(&v).unwrap_or_else(|| {
+            fail(format!(
+                "--dxt-mode inválido: {v} (DXT_LINEAR | DXT_PERCEPTUAL)"
+            ))
+        });
+    }
+    if let Err(e) = check_export_flags(&cfg) {
+        fail(e);
     }
     if let Some(v) = val("strategy").or_else(|| val("maxrects-heuristics")) {
         cfg.packing_strategy = PackingStrategy::parse(v.as_str())
@@ -531,17 +568,85 @@ fn cmd_decrypt(args: &[String]) {
     }
 }
 
+/// Reglas de exportación: rangos de calidades y que el pixel format elegido
+/// sea soportado por el formato de textura. Devuelve el mensaje de error.
+fn check_export_flags(cfg: &ProjectConfig) -> Result<(), String> {
+    if cfg.pvr_quality > 7 {
+        return Err(format!(
+            "--pvr-quality fuera de rango (0-7): {}",
+            cfg.pvr_quality
+        ));
+    }
+    if cfg.etc1_quality > 100 {
+        return Err(format!(
+            "--etc1-quality fuera de rango (0-100): {}",
+            cfg.etc1_quality
+        ));
+    }
+    if cfg.etc2_quality > 100 {
+        return Err(format!(
+            "--etc2-quality fuera de rango (0-100): {}",
+            cfg.etc2_quality
+        ));
+    }
+    if cfg.astc_quality > 4 {
+        return Err(format!(
+            "--astc-quality fuera de rango (0-4): {}",
+            cfg.astc_quality
+        ));
+    }
+    if !cfg.pixel_format.is_compatible_with(cfg.gpu_format) {
+        return Err(format!(
+            "pixel format {} no es soportado por --format {}",
+            cfg.pixel_format.as_str(),
+            cfg.gpu_format.as_str()
+        ));
+    }
+    Ok(())
+}
+
 /// Parseo compartido del flag `--pixel-format` (pack y decrypt).
+/// Mayúsculas/minúsculas y `-`/`_` indiferentes: se normaliza antes de casar.
 fn parse_pixel_format(v: &str) -> PixelFormat {
-    match v.to_ascii_lowercase().as_str() {
+    let norm: String = v
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|c| *c != '-' && *c != '_')
+        .collect();
+    match norm.as_str() {
         "rgba8888" => PixelFormat::Rgba8888,
         "rgb888" => PixelFormat::Rgb888, // compone sobre negro al decodificar
         "alpha8" => PixelFormat::Alpha8, // nivel de alfa → gris
         "intensity8" => PixelFormat::Intensity8,
-        "alpha-intensity8" | "alpha_intensity8" => PixelFormat::AlphaIntensity8,
+        "alphaintensity8" => PixelFormat::AlphaIntensity8,
         "rgba5551" | "5551" => PixelFormat::Rgba5551,
         "rgba5555" | "5555" => PixelFormat::Rgba5555,
         "bgra8888" => PixelFormat::Bgra8888,
+        "rgba4444" | "4444" => PixelFormat::Rgba4444,
+        "rgb565" | "565" => PixelFormat::Rgb565,
+        "pvrtc2bpprgba" | "pvrtci2bpprgba" => PixelFormat::Pvrtc2BppRgba,
+        "pvrtc4bpprgba" | "pvrtci4bpprgba" => PixelFormat::Pvrtc4BppRgba,
+        "pvrtc2bpprgb" | "pvrtci2bpprgb" => PixelFormat::Pvrtc2BppRgb,
+        "pvrtc4bpprgb" | "pvrtci4bpprgb" => PixelFormat::Pvrtc4BppRgb,
+        "etc1" | "etc1rgb" => PixelFormat::Etc1Rgb,
+        "etc2" | "etc2rgba" => PixelFormat::Etc2Rgba,
+        "etc2rgb" => PixelFormat::Etc2Rgb,
+        "dxt1" => PixelFormat::Dxt1,
+        "dxt5" => PixelFormat::Dxt5,
+        "astc4x4" => PixelFormat::Astc4x4,
+        "astc5x4" => PixelFormat::Astc5x4,
+        "astc5x5" => PixelFormat::Astc5x5,
+        "astc6x5" => PixelFormat::Astc6x5,
+        "astc6x6" => PixelFormat::Astc6x6,
+        "astc8x5" => PixelFormat::Astc8x5,
+        "astc8x6" => PixelFormat::Astc8x6,
+        "astc8x8" => PixelFormat::Astc8x8,
+        "astc10x5" => PixelFormat::Astc10x5,
+        "astc10x6" => PixelFormat::Astc10x6,
+        "astc10x8" => PixelFormat::Astc10x8,
+        "astc10x10" => PixelFormat::Astc10x10,
+        "astc12x10" => PixelFormat::Astc12x10,
+        "astc12x12" => PixelFormat::Astc12x12,
         _ => fail(format!("--pixel-format inválido: {v}")),
     }
 }
@@ -569,6 +674,109 @@ mod tests {
         assert!(matches!(
             parse_pixel_format("Alpha-Intensity8"),
             PixelFormat::AlphaIntensity8
+        ));
+    }
+
+    #[test]
+    fn pixel_format_gpu_tokens_and_astc_blocks_parse() {
+        assert!(matches!(
+            parse_pixel_format("PVRTCI_2BPP_RGBA"),
+            PixelFormat::Pvrtc2BppRgba
+        ));
+        assert!(matches!(
+            parse_pixel_format("pvrtc-4bpp-rgb"),
+            PixelFormat::Pvrtc4BppRgb
+        ));
+        assert!(matches!(parse_pixel_format("etc1"), PixelFormat::Etc1Rgb));
+        assert!(matches!(
+            parse_pixel_format("ETC2_RGB"),
+            PixelFormat::Etc2Rgb
+        ));
+        assert!(matches!(parse_pixel_format("dxt5"), PixelFormat::Dxt5));
+        assert!(matches!(
+            parse_pixel_format("astc-12x12"),
+            PixelFormat::Astc12x12
+        ));
+        assert!(matches!(
+            parse_pixel_format("rgba4444"),
+            PixelFormat::Rgba4444
+        ));
+        assert!(matches!(parse_pixel_format("rgb565"), PixelFormat::Rgb565));
+    }
+
+    #[test]
+    fn pixel_format_must_match_the_texture_format() {
+        let mut cfg = ProjectConfig {
+            pixel_format: PixelFormat::Dxt1,
+            gpu_format: GpuFormat::Dds,
+            ..Default::default()
+        };
+        assert!(check_export_flags(&cfg).is_ok());
+
+        cfg.gpu_format = GpuFormat::Png;
+        let err = check_export_flags(&cfg).unwrap_err();
+        assert!(err.contains("DXT1") && err.contains("PNG"), "{err}");
+
+        // Un pixel format de software vale con cualquier formato de textura.
+        cfg.pixel_format = PixelFormat::Rgba8888;
+        assert!(check_export_flags(&cfg).is_ok());
+    }
+
+    #[test]
+    fn quality_flags_must_stay_inside_the_original_ranges() {
+        assert!(check_export_flags(&ProjectConfig {
+            pvr_quality: 8,
+            ..Default::default()
+        })
+        .unwrap_err()
+        .contains("--pvr-quality"));
+        assert!(check_export_flags(&ProjectConfig {
+            astc_quality: 5,
+            ..Default::default()
+        })
+        .unwrap_err()
+        .contains("--astc-quality"));
+        assert!(check_export_flags(&ProjectConfig {
+            etc1_quality: 101,
+            ..Default::default()
+        })
+        .unwrap_err()
+        .contains("--etc1-quality"));
+        assert!(check_export_flags(&ProjectConfig {
+            etc2_quality: 101,
+            ..Default::default()
+        })
+        .unwrap_err()
+        .contains("--etc2-quality"));
+        assert!(check_export_flags(&ProjectConfig {
+            etc2_quality: 0,
+            ..Default::default()
+        })
+        .is_ok());
+    }
+
+    #[test]
+    fn quality_and_dxt_mode_flags_parse() {
+        let (_, values, _) = parse_args(&args(&[
+            "--pvr-quality",
+            "7",
+            "--etc1-quality",
+            "25",
+            "--etc2-quality",
+            "100",
+            "--astc-quality",
+            "4",
+            "--dxt-mode",
+            "DXT_PERCEPTUAL",
+        ]));
+        let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+        assert_eq!(val("pvr-quality").as_deref(), Some("7"));
+        assert_eq!(val("etc1-quality").as_deref(), Some("25"));
+        assert_eq!(val("etc2-quality").as_deref(), Some("100"));
+        assert_eq!(val("astc-quality").as_deref(), Some("4"));
+        assert!(matches!(
+            DxtMode::parse(val("dxt-mode").as_deref().unwrap()),
+            Some(DxtMode::Perceptual)
         ));
     }
 

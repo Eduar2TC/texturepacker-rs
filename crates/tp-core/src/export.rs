@@ -10,7 +10,8 @@
 //! - AES-256-GCM symmetric encryption of generated image files
 //! - Image scaling for @2x/@1x style variants
 
-use crate::config::{GpuFormat, PixelFormat, PngDither, ProjectConfig};
+use crate::config::{DxtMode, GpuFormat, PixelFormat, PngDither, ProjectConfig};
+use crate::dxt;
 use crate::error::{Result, TpError};
 use crate::etc2;
 use crate::pvrtc;
@@ -28,6 +29,18 @@ pub struct EncodeOptions {
     pub jpg_quality: u8,
     pub webp_quality: u16,
     pub pixel_format: PixelFormat,
+    /// Calidad PVRTC (`--pvr-quality`), 0-7, controla el refinamiento de los
+    /// extremos de cada bloque.
+    pub pvr_quality: u8,
+    /// Calidad ETC1 (`--etc1-quality`), 0-100, controla el esfuerzo del
+    /// buscador de estructuras y candidatos.
+    pub etc1_quality: u8,
+    /// Calidad ETC2 (`--etc2-quality`), 0-100.
+    pub etc2_quality: u8,
+    /// Calidad ASTC (`--astc-quality`), 0-4, se traduce al preset de astcenc.
+    pub astc_quality: u8,
+    /// Cuantización de la métrica de error DXT (`--dxt-mode`).
+    pub dxt_mode: DxtMode,
 }
 
 impl Default for EncodeOptions {
@@ -39,6 +52,11 @@ impl Default for EncodeOptions {
             jpg_quality: 80,
             webp_quality: 101,
             pixel_format: PixelFormat::default(),
+            pvr_quality: 3,
+            etc1_quality: 70,
+            etc2_quality: 70,
+            astc_quality: 2,
+            dxt_mode: DxtMode::default(),
         }
     }
 }
@@ -53,6 +71,11 @@ impl EncodeOptions {
             jpg_quality: config.jpg_quality,
             webp_quality: config.webp_quality,
             pixel_format: config.pixel_format,
+            pvr_quality: config.pvr_quality,
+            etc1_quality: config.etc1_quality,
+            etc2_quality: config.etc2_quality,
+            astc_quality: config.astc_quality,
+            dxt_mode: config.dxt_mode,
         }
     }
 }
@@ -82,23 +105,29 @@ pub fn encode_to_bytes(
             encode_webp(&data, width, height, color, opts)
         }
         // Formatos de hardware: comprimen RGBA directamente (ignoran el
-        // formato de píxel, como indica la documentación).
-        GpuFormat::Astc4x4 => encode_astc(rgba, width, height),
-        GpuFormat::Etc2Rgba => Ok(encode_etc2_ktx(rgba, width, height)),
-        GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height),
-        GpuFormat::Pvr3Gz => encode_pvrtc_pvr(rgba, width, height).map(gzip_bytes),
-        GpuFormat::Pvr3Ccz => encode_pvrtc_pvr(rgba, width, height).map(ccz_bytes),
-        GpuFormat::Etc1 => Ok(encode_etc1_pkm(rgba, width, height)),
-        GpuFormat::Etc1Ktx => Ok(encode_etc1_ktx(rgba, width, height)),
+        // pixel format salvo que este fije el bloque, la variante o la
+        // calidad, como en el original).
+        GpuFormat::Astc4x4 => encode_astc(rgba, width, height, opts),
+        GpuFormat::Etc2Rgba => Ok(encode_etc2_ktx(rgba, width, height, opts)),
+        GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height, opts),
+        GpuFormat::Pvr3Gz => encode_pvrtc_pvr(rgba, width, height, opts).map(gzip_bytes),
+        GpuFormat::Pvr3Ccz => encode_pvrtc_pvr(rgba, width, height, opts).map(ccz_bytes),
+        GpuFormat::Etc1 => Ok(encode_etc1_pkm(rgba, width, height, opts.etc1_quality)),
+        GpuFormat::Etc1Ktx => Ok(encode_etc1_ktx(rgba, width, height, opts.etc1_quality)),
         // Formatos de software: pasan por la conversión de pixel format.
         GpuFormat::Bmp | GpuFormat::Tga | GpuFormat::Tiff => {
             let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
             encode_image_format(&data, width, height, color, opts.format)
         }
-        GpuFormat::Dds => {
-            let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
-            encode_dds(&data, width, height, color)
-        }
+        GpuFormat::Dds => match opts.pixel_format {
+            // Bloques DXT: la cabecera lleva el fourcc y el payload son los
+            // bloques BC1/BC3 codificados con el dxt-mode elegido.
+            PixelFormat::Dxt1 | PixelFormat::Dxt5 => encode_dds_dxt(rgba, width, height, opts),
+            _ => {
+                let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
+                encode_dds(&data, width, height, color)
+            }
+        },
         GpuFormat::Zktx => {
             let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
             let ktx = ktx1_rgba8(width, height, color, &data);
@@ -172,6 +201,43 @@ fn apply_pixel_format(rgba: &[u8], format: PixelFormat) -> (Vec<u8>, image::Exte
                 out.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
             }
             (out, Ct::Rgba8)
+        }
+        // RGBA4444 (16 bits): cada canal a 4 bits con replicación al
+        // expandir (el archivo sigue siendo RGBA8 con la rejilla 4 bits).
+        PixelFormat::Rgba4444 => {
+            let q4 = |c: u8| ((c as u16 * 15 + 127) / 255) as u8;
+            let expand = |v: u8| (v << 4) | v;
+            let mut out = Vec::with_capacity(rgba.len());
+            for px in rgba.chunks_exact(4) {
+                out.extend_from_slice(&[
+                    expand(q4(px[0])),
+                    expand(q4(px[1])),
+                    expand(q4(px[2])),
+                    expand(q4(px[3])),
+                ]);
+            }
+            (out, Ct::Rgba8)
+        }
+        // RGB565 (16 bits): sin alfa (compuesto sobre negro) y con la
+        // rejilla 5-6-5 expandida por replicación.
+        PixelFormat::Rgb565 => {
+            let q5 = |c: u8| ((c as u16 * 31 + 127) / 255) as u8;
+            let q6 = |c: u8| ((c as u16 * 63 + 127) / 255) as u8;
+            let e5 = |v: u8| (v << 3) | (v >> 2);
+            let e6 = |v: u8| (v << 2) | (v >> 4);
+            let mut out = Vec::with_capacity(rgba.len() / 4 * 3);
+            for px in rgba.chunks_exact(4) {
+                let c = composite_black(px);
+                out.extend_from_slice(&[e5(q5(c[0])), e6(q6(c[1])), e5(q5(c[2]))]);
+            }
+            (out, Ct::Rgb8)
+        }
+        // Un pixel format de hardware no puede embeberse en un formato de
+        // software: `ProjectConfig::validate` lo rechaza, y aquí se cae de
+        // forma segura a RGBA8888 por si se codifica en caliente.
+        other => {
+            let _ = other;
+            (rgba.to_vec(), Ct::Rgba8)
         }
     }
 }
@@ -738,14 +804,27 @@ fn encode_webp_lossless(rgba: &[u8], width: usize, height: usize) -> Result<Vec<
     Ok(buf)
 }
 
-/// ASTC 4x4: ARM astcenc + `.astc` container.
-fn encode_astc(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
+/// ASTC (bloque elegido por el pixel format `ASTC_*`, 4x4 por defecto) con
+/// preset según `--astc-quality` 0-4: fastest, fast, medium, thorough,
+/// exhaustive. El contenedor es `.astc`.
+fn encode_astc(rgba: &[u8], width: usize, height: usize, opts: &EncodeOptions) -> Result<Vec<u8>> {
+    let (bx, by) = opts.pixel_format.astc_block().unwrap_or((4, 4));
     #[cfg(feature = "gpu-formats")]
     {
-        use astcenc_rs::{ConfigBuilder, Context, Extents, Image, Profile, Swizzle, PRESET_MEDIUM};
+        use astcenc_rs::{
+            ConfigBuilder, Context, Extents, Image, Profile, Swizzle, PRESET_EXHAUSTIVE,
+            PRESET_FAST, PRESET_FASTEST, PRESET_MEDIUM, PRESET_THOROUGH,
+        };
+        let preset = match opts.astc_quality.min(4) {
+            0 => PRESET_FASTEST,
+            1 => PRESET_FAST,
+            2 => PRESET_MEDIUM,
+            3 => PRESET_THOROUGH,
+            _ => PRESET_EXHAUSTIVE,
+        };
         let cfg = ConfigBuilder::new()
-            .with_block_size(Extents::new(4, 4))
-            .with_preset(PRESET_MEDIUM)
+            .with_block_size(Extents::new(bx as u32, by as u32))
+            .with_preset(preset)
             .with_profile(Profile::LdrRgba)
             .build()
             .map_err(|e| TpError::Other(format!("Config ASTC inválida: {e:?}")))?;
@@ -762,8 +841,8 @@ fn encode_astc(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
         // .astc header (16 bytes): magic, block dims, x/y/z size (24-bit LE).
         let mut out = Vec::with_capacity(16 + blocks.len());
         out.extend_from_slice(&[0x13, 0xAB, 0xA1, 0x5C]); // magic 0x5CA1AB13
-        out.push(4); // block_x
-        out.push(4); // block_y
+        out.push(bx); // block_x
+        out.push(by); // block_y
         out.push(1); // block_z
         out.extend_from_slice(&(width as u32).to_le_bytes()[..3]);
         out.extend_from_slice(&(height as u32).to_le_bytes()[..3]);
@@ -773,23 +852,41 @@ fn encode_astc(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
     }
     #[cfg(not(feature = "gpu-formats"))]
     {
-        let _ = (rgba, width, height);
+        let _ = (rgba, width, height, opts, bx, by);
         Err(TpError::Other(
-            "ASTC_4x4 requiere compilar con la feature `gpu-formats` \
+            "ASTC requiere compilar con la feature `gpu-formats` \
              (cargo build --features gpu-formats)"
                 .to_string(),
         ))
     }
 }
 
-/// PVRTC1 4bpp in a PVR v3 container (`.pvr`).
-fn encode_pvrtc_pvr(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>> {
-    let blocks = pvrtc::encode_pvrtc_4bpp(rgba, width, height)?;
+/// PVRTC1 2/4bpp (según el pixel format `PVRTC*`) in a PVR v3 container
+/// (`.pvr`). El pixel format también decide si se descarta el alfa y el
+/// código `pixelFormat` de la cabecera; la calidad (`--pvr-quality`, 0-7)
+/// controla el refinamiento de extremos.
+fn encode_pvrtc_pvr(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    opts: &EncodeOptions,
+) -> Result<Vec<u8>> {
+    let pf = opts.pixel_format;
+    let src: Vec<u8> = if pf.drops_alpha() {
+        let mut v = rgba.to_vec();
+        for px in v.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        v
+    } else {
+        rgba.to_vec()
+    };
+    let blocks = pvrtc::encode_pvrtc(&src, width, height, pf.is_pvrtc_2bpp(), opts.pvr_quality)?;
     let mut out = Vec::with_capacity(52 + blocks.len());
     // PVR v3 header (52 bytes), all little-endian.
     out.extend_from_slice(b"PVR\x03"); // version
     out.extend_from_slice(&0u32.to_le_bytes()); // flags
-    out.extend_from_slice(&0u64.to_le_bytes()); // pixel_format: PVRTC1 4bpp RGBA
+    out.extend_from_slice(&pf.pvr_header_code().to_le_bytes()); // pixel_format
     out.extend_from_slice(&0u32.to_le_bytes()); // colour_space: linearRGB
     out.extend_from_slice(&0u32.to_le_bytes()); // channel_type: unsigned byte
     out.extend_from_slice(&(height as u32).to_le_bytes());
@@ -803,16 +900,24 @@ fn encode_pvrtc_pvr(rgba: &[u8], width: usize, height: usize) -> Result<Vec<u8>>
     Ok(out)
 }
 
-/// ETC2 RGBA8 in a KTX container.
-fn encode_etc2_ktx(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
-    let blocks = etc2::encode_etc2_rgba8(rgba, width, height);
-    // GL_COMPRESSED_RGBA8_ETC2_EAC sobre GL_RGBA.
-    ktx1_container(0, 0, 0x9278, 0x1908, width, height, &blocks)
+/// ETC2 in a KTX container. `ETC2_RGBA` (8 bytes de alfa EAC + 8 de ETC2) o
+/// `ETC2_RGB` según el pixel format, con `--etc2-quality` (0-100).
+fn encode_etc2_ktx(rgba: &[u8], width: usize, height: usize, opts: &EncodeOptions) -> Vec<u8> {
+    let q = opts.etc2_quality;
+    if opts.pixel_format == PixelFormat::Etc2Rgb {
+        let blocks = etc2::encode_etc2_rgb_blocks(rgba, width, height, q);
+        // GL_COMPRESSED_RGB8_ETC2 sobre GL_RGB.
+        ktx1_container(0, 0, 0x9274, 0x1907, width, height, &blocks)
+    } else {
+        let blocks = etc2::encode_etc2_rgba8(rgba, width, height, q);
+        // GL_COMPRESSED_RGBA8_ETC2_EAC sobre GL_RGBA.
+        ktx1_container(0, 0, 0x9278, 0x1908, width, height, &blocks)
+    }
 }
 
 /// ETC1 RGB in a PKM container (`.pkm`), the format PowerVR/GLES tools expect.
-fn encode_etc1_pkm(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
-    let blocks = etc2::encode_etc1_rgb(rgba, width, height);
+fn encode_etc1_pkm(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+    let blocks = etc2::encode_etc1_rgb(rgba, width, height, quality);
     let ext_w = width.next_multiple_of(4);
     let ext_h = height.next_multiple_of(4);
     let mut out = Vec::with_capacity(16 + blocks.len());
@@ -827,8 +932,8 @@ fn encode_etc1_pkm(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
 }
 
 /// ETC1 RGB in a KTX container (`.ktx`).
-fn encode_etc1_ktx(rgba: &[u8], width: usize, height: usize) -> Vec<u8> {
-    let blocks = etc2::encode_etc1_rgb(rgba, width, height);
+fn encode_etc1_ktx(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+    let blocks = etc2::encode_etc1_rgb(rgba, width, height, quality);
     // GL_ETC1_RGB8_OES sobre GL_RGB.
     ktx1_container(0, 0, 0x8D60, 0x1907, width, height, &blocks)
 }
@@ -998,6 +1103,60 @@ fn encode_dds(
     out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps4
     out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved2
     out.extend_from_slice(&pixels);
+    Ok(out)
+}
+
+/// DDS con bloques DXT (fourcc `DXT1`/`DXT5`): cabecera legacy de 128 bytes
+/// con `DDSD_LINEARSIZE` y el payload ya comprimido por [`dxt`].
+fn encode_dds_dxt(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    opts: &EncodeOptions,
+) -> Result<Vec<u8>> {
+    let (fourcc, blocks) = match opts.pixel_format {
+        PixelFormat::Dxt1 => (
+            *b"DXT1",
+            dxt::encode_dxt1(rgba, width, height, opts.dxt_mode),
+        ),
+        PixelFormat::Dxt5 => (
+            *b"DXT5",
+            dxt::encode_dxt5(rgba, width, height, opts.dxt_mode),
+        ),
+        other => {
+            return Err(TpError::Other(format!(
+                "{} no es un formato DXT comprimible en DDS",
+                other.as_str()
+            )))
+        }
+    };
+    let mut out = Vec::with_capacity(128 + blocks.len());
+    out.extend_from_slice(b"DDS ");
+    out.extend_from_slice(&124u32.to_le_bytes()); // dwSize
+                                                  // CAPS | HEIGHT | WIDTH | PIXELFORMAT | LINEARSIZE
+    out.extend_from_slice(&0x0008_1007u32.to_le_bytes());
+    out.extend_from_slice(&(height as u32).to_le_bytes());
+    out.extend_from_slice(&(width as u32).to_le_bytes());
+    out.extend_from_slice(&(blocks.len() as u32).to_le_bytes()); // linear size
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwDepth
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwMipMapCount
+    for _ in 0..11 {
+        out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved1
+    }
+    // DDS_PIXELFORMAT (32 bytes): FOURCC, sin máscaras de canal.
+    out.extend_from_slice(&32u32.to_le_bytes());
+    out.extend_from_slice(&0x4u32.to_le_bytes()); // DDPF_FOURCC
+    out.extend_from_slice(&fourcc);
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwRGBBitCount
+    for _ in 0..4 {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    out.extend_from_slice(&0x0000_1000u32.to_le_bytes()); // dwCaps: TEXTURE
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps2
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps3
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps4
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved2
+    out.extend_from_slice(&blocks);
     Ok(out)
 }
 
@@ -1733,7 +1892,7 @@ mod tests {
 
     #[test]
     fn etc2_ktx_header() {
-        let bytes = encode_etc2_ktx(&vec![0u8; 8 * 8 * 4], 8, 8);
+        let bytes = encode_etc2_ktx(&vec![0u8; 8 * 8 * 4], 8, 8, &EncodeOptions::default());
         assert_eq!(&bytes[..12], b"\xABKTX 11\xBB\r\n\x1A\n");
         // internal format at offset 28 (12 magic + 4*4 header fields)
         let internal = u32::from_le_bytes(bytes[28..32].try_into().unwrap());
@@ -2178,7 +2337,7 @@ mod tests {
             let v = ((i as u16 * 16) % 256) as u8;
             px.copy_from_slice(&[v, 255 - v, ((u16::from(v) * 3) % 256) as u8, 255]);
         }
-        let blocks = crate::etc2::encode_etc1_rgb(&rgba, 4, 4);
+        let blocks = crate::etc2::encode_etc1_rgb(&rgba, 4, 4, 70);
         assert_eq!(blocks.len(), 8);
         // Ningún bloque puede salirse del conjunto de modos ETC1: con el bit
         // de diferencial activo, base + delta debe caber en 5 bits (si no,
@@ -2198,5 +2357,171 @@ mod tests {
         let mut buf = vec![0u32; 16];
         texture2ddecoder::decode_etc1(&blocks, 4, 4, &mut buf).unwrap();
         assert!(mean_channel_error(&rgba, &buf) < 48.0);
+    }
+
+    #[test]
+    fn encode_options_from_config_carry_the_quality_knobs() {
+        let cfg = ProjectConfig {
+            pvr_quality: 7,
+            etc1_quality: 12,
+            etc2_quality: 88,
+            astc_quality: 4,
+            dxt_mode: DxtMode::Perceptual,
+            ..Default::default()
+        };
+        let o = EncodeOptions::from_config(&cfg);
+        assert_eq!(
+            (
+                o.pvr_quality,
+                o.etc1_quality,
+                o.etc2_quality,
+                o.astc_quality
+            ),
+            (7, 12, 88, 4)
+        );
+        assert_eq!(o.dxt_mode, DxtMode::Perceptual);
+    }
+
+    /// Campo `pixelFormat` (u64 LE) de la cabecera PVR v3, en 8..16.
+    fn pvr_pixel_format(bytes: &[u8]) -> u64 {
+        u64::from_le_bytes(bytes[8..16].try_into().unwrap())
+    }
+
+    /// Campo `glInternalFormat` (u32 LE) de un KTX v1, en 28..32.
+    fn ktx_internal_format(bytes: &[u8]) -> u32 {
+        u32::from_le_bytes(bytes[28..32].try_into().unwrap())
+    }
+
+    #[test]
+    fn pvr_container_reports_the_selected_pvrtc_variant() {
+        let rgba = four_color_image();
+        let mut o = opts(GpuFormat::Pvrtc4Bpp);
+
+        o.pixel_format = PixelFormat::Pvrtc4BppRgba;
+        let pvr4 = encode_pvrtc_pvr(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(pvr_pixel_format(&pvr4), 3, "4bpp RGBA = 3");
+        assert_eq!(pvr4.len(), 52 + 8 * 8 / 2, "4bpp son w*h/2 bytes");
+
+        o.pixel_format = PixelFormat::Pvrtc2BppRgba;
+        let pvr2 = encode_pvrtc_pvr(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(pvr_pixel_format(&pvr2), 1, "2bpp RGBA = 1");
+        assert_eq!(pvr2.len(), 52 + 8 * 8 / 4, "2bpp son w*h/4 bytes");
+        assert_ne!(
+            &pvr2[52..],
+            &pvr4[52..],
+            "el número de bits cambia el payload"
+        );
+
+        // La variante RGB aplana el alfa: su payload es el de la misma imagen
+        // ya opaca.
+        o.pixel_format = PixelFormat::Pvrtc4BppRgb;
+        let pvr_rgb = encode_pvrtc_pvr(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(pvr_pixel_format(&pvr_rgb), 2, "4bpp RGB = 2");
+        let mut flat = rgba.clone();
+        for px in flat.chunks_exact_mut(4) {
+            px[3] = 255;
+        }
+        o.pixel_format = PixelFormat::Pvrtc4BppRgba;
+        let pvr_flat = encode_pvrtc_pvr(&flat, 8, 8, &o).unwrap();
+        assert_eq!(&pvr_rgb[52..], &pvr_flat[52..], "RGB descarta el alfa");
+    }
+
+    #[test]
+    fn etc2_pixel_format_switches_the_ktx_internal_format() {
+        let rgba = four_color_image();
+        let mut o = opts(GpuFormat::Etc2Rgba);
+
+        o.pixel_format = PixelFormat::Etc2Rgba;
+        let rgba_ktx = encode_etc2_ktx(&rgba, 8, 8, &o);
+        assert_eq!(ktx_internal_format(&rgba_ktx), 0x9278); // RGBA8_ETC2_EAC
+
+        o.pixel_format = PixelFormat::Etc2Rgb;
+        let rgb_ktx = encode_etc2_ktx(&rgba, 8, 8, &o);
+        assert_eq!(ktx_internal_format(&rgb_ktx), 0x9274); // RGB8_ETC2
+                                                           // 4 bloques de 8x8: RGBA lleva la mitad de datos que RGB no.
+        assert_eq!(rgba_ktx.len(), rgb_ktx.len() + 4 * 8);
+    }
+
+    #[test]
+    fn dds_with_dxt_pixel_format_uses_the_fourcc() {
+        let rgba = four_color_image();
+        let mut o = opts(GpuFormat::Dds);
+
+        o.pixel_format = PixelFormat::Dxt1;
+        let dds = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(&dds[..4], b"DDS ");
+        // CAPS | HEIGHT | WIDTH | PIXELFORMAT | LINEARSIZE
+        assert_eq!(u32::from_le_bytes(dds[8..12].try_into().unwrap()), 0x81007);
+        assert_eq!(&dds[84..88], b"DXT1");
+        let linear = u32::from_le_bytes(dds[20..24].try_into().unwrap()) as usize;
+        assert_eq!(linear, 4 * 8, "4 bloques de 4x4 a 8 bytes");
+        assert_eq!(dds.len(), 128 + linear);
+        let mut buf = vec![0u32; 64];
+        texture2ddecoder::decode_bc1(&dds[128..], 8, 8, &mut buf).expect("bc1");
+
+        o.pixel_format = PixelFormat::Dxt5;
+        let dds5 = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(&dds5[84..88], b"DXT5");
+        assert_eq!(dds5.len(), 128 + 4 * 16, "BC3 son 16 bytes por bloque");
+        let mut buf5 = vec![0u32; 64];
+        texture2ddecoder::decode_bc3(&dds5[128..], 8, 8, &mut buf5).expect("bc3");
+        assert!(mean_channel_error(&rgba, &buf5) < 48.0);
+    }
+
+    #[test]
+    fn dxt_mode_changes_the_encoded_blocks() {
+        // Ruido determinista: con pesos de luminancia el codificador elige
+        // extremos e índices distintos para los mismos bloques.
+        let mut rgba = Vec::with_capacity(8 * 8 * 4);
+        let mut st = 12345u32;
+        for _ in 0..64 {
+            st = st.wrapping_mul(1103515245).wrapping_add(12345);
+            let r = (st >> 16) as u8;
+            st = st.wrapping_mul(1103515245).wrapping_add(12345);
+            let g = (st >> 16) as u8;
+            st = st.wrapping_mul(1103515245).wrapping_add(12345);
+            let b = (st >> 16) as u8;
+            rgba.extend_from_slice(&[r, g, b, 255]);
+        }
+        let mut o = opts(GpuFormat::Dds);
+        o.pixel_format = PixelFormat::Dxt1;
+
+        o.dxt_mode = DxtMode::Linear;
+        let linear = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        o.dxt_mode = DxtMode::Perceptual;
+        let perceptual = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        assert_ne!(linear, perceptual, "DXT_LINEAR y DXT_PERCEPTUAL difieren");
+        assert_eq!(&linear[84..88], b"DXT1");
+        assert_eq!(&perceptual[84..88], b"DXT1");
+
+        // Ambos siguen siendo BC1 válido y fieles al original.
+        let mut buf = vec![0u32; 64];
+        texture2ddecoder::decode_bc1(&perceptual[128..], 8, 8, &mut buf).expect("bc1");
+        assert!(
+            mean_channel_error(&rgba, &buf) < 64.0,
+            "error {}",
+            mean_channel_error(&rgba, &buf)
+        );
+    }
+
+    #[cfg(feature = "gpu-formats")]
+    #[test]
+    fn astc_block_size_and_quality_follow_the_pixel_format() {
+        let rgba = four_color_image();
+        let mut o = opts(GpuFormat::Astc4x4);
+        o.pixel_format = PixelFormat::Astc8x8;
+        o.astc_quality = 0;
+        let file = encode_astc(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(&file[..4], &[0x13, 0xAB, 0xA1, 0x5C], "magic ASTC");
+        assert_eq!(file[4], 8, "block_x");
+        assert_eq!(file[5], 8, "block_y");
+        // 1 bloque de 8x8 con 16 bytes por bloque.
+        assert_eq!(file.len(), 16 + 16);
+
+        o.pixel_format = PixelFormat::Astc4x4;
+        let four = encode_astc(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(four[4], 4, "block_x");
+        assert_eq!(four[5], 4, "block_y");
+        assert_eq!(four.len(), 16 + 4 * 16, "4 bloques de 4x4");
     }
 }
