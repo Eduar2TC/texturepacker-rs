@@ -21,6 +21,9 @@ sha2 = "0.10"
 png = "0.18"
 webp = { version = "0.3", default-features = false }
 astcenc-rs = { workspace = true, optional = true }
+# Compresor Basis Universal (ETC1S) para `.basis`; envuelve el FFI de Binomial
+# (el único `unsafe` del workspace, aislado en su propio crate).
+tp-basis = { path = "../tp-basis", optional = true }
 flate2.workspace = true
 # Decodificación de bloques GPU al leer .ktx / .astc de entrada (MIT/Apache).
 texture2ddecoder = "0.1.2"
@@ -31,8 +34,9 @@ resvg = "0.48"
 
 [features]
 default = []
-# GPU texture encoders (ASTC via ARM's astcenc, ETC2 built-in). Requires a C/C++ toolchain.
-gpu-formats = ["dep:astcenc-rs"]
+# GPU texture encoders (ASTC via ARM's astcenc, ETC2 built-in, Basis Universal
+# via tp-basis). Requires a C/C++ toolchain.
+gpu-formats = ["dep:astcenc-rs", "dep:tp-basis"]
 
 [lints]
 workspace = true

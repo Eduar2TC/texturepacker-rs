@@ -43,22 +43,38 @@ corrección» al final.
   `--source-file` y `--spriteids-file`. Tests: `extra_files_generate_cpp_swift_and_id_list`,
   `extra_data_file_settings_roundtrip_and_default_empty`, `extra_data_file_flags_parse` y el
   e2e `lote10_extra_data_files_export`.
-- **Formatos de textura de salida** **[PARCIAL]**: 16 de los 19 del original. A PNG/PNG8/
-  JPG/WebP/ETC2/PVRTC se les han sumado **BMP, TGA y TIFF** (codificador de `image`),
-  **DDS** (cabecera legacy de 124 bytes con máscaras de canal y payload crudo),
+- **Formatos de textura de salida** **[RESUELTO]**: los **17 de los 17** que enumera la
+  documentación vigente del original (el `--help` antiguo sumaba `atf` y `pvr2`, que el
+  propio TexturePacker retiró en la 6.0.2, de ahí la vieja cuenta «16 de los 19»). A
+  PNG/PNG8/JPG/WebP/ETC2/PVRTC se les han sumado **BMP, TGA y TIFF** (codificador de
+  `image`), **DDS** (cabecera legacy de 124 bytes con máscaras de canal y payload crudo),
   **ZKTX** (KTX v1 en zlib), **PVR3GZ y PVR3CCZ** (el PVR3 de PVRTC en gzip y en el
   contenedor CCZ de Cocos2D) y **ETC1** en contenedor PKM (`.pkm`) y en KTX
   (`glInternalFormat 0x8D60`), con un codificador ETC1 propio que reutiliza los modos
   individual + diferencial de `etc2.rs` y descarta T/H/planar (son extensiones ETC2, y
-  un bloque así se leería mal en hardware ETC1). Compresión con `flate2`, variantes en
-  `GpuFormat` (+ `GpuFormat::parse` para el CLI), combo de «Formato de publicación»,
-  flags `--format bmp|tga|tiff|dds|zktx|pvr3gz|pvr3ccz|pkm|ktx`. Tests:
-  `bmp_tga_tiff_roundtrip_the_rgba_pixels`, `dds_writes_a_valid_legacy_header_and_raw_pixels`,
-  `zktx_is_a_zlib_compressed_ktx`, `pvr3_gz_and_ccz_wrap_the_pvr3_file`,
-  `etc1_pkm_and_ktx_decode_close_to_the_source`, `output_format_tokens_and_extensions`
-  y el e2e `lote9_software_and_container_formats_export`. Siguen sin existir **`ktx2`**
-  (contenedor con su DFD obligatorio) y **`basis`** (necesita un codificador Basis
-  Universal externo, como astcenc lo fue para ASTC).
+  un bloque así se leería mal en hardware ETC1); y ahora también **KTX2** (contenedor
+  2.0 sin comprimir: identificador de 12 bytes, índice de un solo nivel, DFD [KDF14]
+  con modelo RGBSDA/BT.709/transferencia lineal y una muestra de 8 bits por canal,
+  `KTXorientation` = `rd` y `KTXwriter` en la KVD ordenadas por clave, vkFormat
+  37/10/9 para RGBA8/RGB8/R8) y **Basis Universal** en `.basis` (ETC1S vía la crate
+  `basis-universal`, que se aísla en el crate **`tp-basis`**, la única excepción del
+  workspace a `unsafe_code = "forbid"`: sus dos llamadas `unsafe` de FFI viven ahí).
+  Compresión con `flate2`, variantes en `GpuFormat` (+ `GpuFormat::parse` para el CLI),
+  combo de «Formato de publicación», flags
+  `--format bmp|tga|tiff|dds|zktx|pvr3gz|pvr3ccz|pkm|ktx|ktx2|basis` y `--basis-quality`.
+  Tests: `bmp_tga_tiff_roundtrip_the_rgba_pixels`,
+  `dds_writes_a_valid_legacy_header_and_raw_pixels`, `zktx_is_a_zlib_compressed_ktx`,
+  `pvr3_gz_and_ccz_wrap_the_pvr3_file`, `etc1_pkm_and_ktx_decode_close_to_the_source`,
+  `output_format_tokens_and_extensions`, `ktx2_writes_a_spec_container_with_dfd_and_kvd`,
+  `ktx2_pixel_formats_round_trip_through_the_reader`,
+  `ktx2_reports_pixel_formats_it_cannot_describe`, `basis_file_transcodes_back_to_rgba`,
+  los 3 de `tp-basis` y los e2e `lote9_software_and_container_formats_export` y
+  `lote13_ktx2_container_and_basis_export`. Desviaciones: la calidad Basis se llama
+  `basis_quality`/`--basis-quality` y va 0-100 (defecto 50), no `--basisu-quality` 0-4
+  como el original; KTX2 solo describe RGBA8/RGB8/R8 crudos (sin `BASISU_*` dentro del
+  contenedor ni supercompresión) y no entra en el conjunto de flip-y, mientras que el
+  original lo lista; y `basis` es solo ETC1S (sin UASTC ni la opción de transcodificar
+  a la hora de publicar).
 - **ASTC** **[RESUELTO]**: `tp-app` y `tp-cli` activan `tp-core/gpu-formats` en su
   `Cargo.toml`, así que `GpuFormat::is_supported()` es `true`, astcenc se compila y el
   test `etc2_pvrtc_and_astc_export_paths` exporta `atlas.astc` de verdad. La advertencia
@@ -230,7 +246,7 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
-305 tras el noveno, **310 tras el décimo**).
+305 tras el noveno, 310 tras el décimo, **318 tras el undécimo**).
 
 ---
 
@@ -254,9 +270,9 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    (sufijo, filtro, auto-detect y nombre de la hoja bajo el checkbox) y flags
    `--normalmap-*` en el CLI. Tests citados en §2.
 3. **Formatos de salida faltantes** — **hecho** (ver §2 «Formatos de textura de salida
-   [PARCIAL] 16/19»): BMP/TGA/TIFF/DDS/ZKTX/PVR3GZ/PVR3CCZ/ETC1(PKM)/ETC1(KTX) nuevos,
-   con `GpuFormat::parse`, combo de la GUI, `--format` ampliado y e2e propio. Faltan
-   `ktx2` y `basis`.
+   [RESUELTO] 17/17»): BMP/TGA/TIFF/DDS/ZKTX/PVR3GZ/PVR3CCZ/ETC1(PKM)/ETC1(KTX)/
+   KTX2/BASIS, con `GpuFormat::parse`, combo de la GUI, `--format` ampliado y e2e
+   propio.
 4. **Exportadores (ficheros extra)** — **hecho** (ver §2 «Exportadores [PARCIAL]»): los cuatro
    campos del `.tpproj`, `templates::extra_files` + `ident`, escritura junto a los metadatos
    con anuncio en la vista previa, flags CLI y sección de la GUI. Quedan sin cubrir los 60+
@@ -301,7 +317,8 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 9. **Entrada de imágenes** — **hecho** (ver §3 «Entrada de imágenes»): `pnm` en las
    features de `image` y el módulo `reader` con los decoders escritos a mano (XBM, XPM,
    ASTC, KTX1, KTX2, PSD, SVG) más el despacho por extensión en `ingest::is_image_file`/
-   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. Queda `basis`.
+   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. Queda
+   **leer** `.basis` como entrada (la *salida* Basis es el punto 11).
 10. **PSD y SVG** — **hecho** (ver §3 «Entrada de imágenes»): `psd` (crate del mismo
     nombre, `Psd::from_bytes` → `rgba()`, el compuesto aplanado) y `svg` (`resvg` 0.48 +
     `usvg` + `tiny-skia`, fuentes del sistema en un `OnceLock` compartido, pixmap
@@ -309,3 +326,20 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
     ampliados. Tests: `psd_reads_the_flattened_rgb_composite`,
     `psd_reports_broken_documents`, `svg_rasterizes_shapes_with_straight_alpha`,
     `svg_reports_malformed_markup` y el e2e `lote12_ingests_psd_and_svg_inputs`.
+11. **Salidas KTX2 y Basis** — **hecho** (ver §2 «Formatos de textura de salida
+    [RESUELTO] 17/17»): variantes `GpuFormat::Ktx2`/`GpuFormat::Basis` con su
+    `file_extension`/`is_hardware`/`is_supported` (Basis, como ASTC, depende de
+    `gpu-formats`), el campo `basis_quality` (0-100, defecto 50) con `#[serde(default)]`
+    y su validación, `encode_ktx2` en `export.rs` (cabecera de 80 bytes + índice de un
+    nivel + DFD [KDF14] con RGBSDA/BT.709 lineal y una muestra por canal + KVD
+    `KTXorientation`/`KTXwriter` ordenadas por clave, vkFormat 37/10/9) y `encode_basis`
+    (ETC1S) tras `gpu-formats`, con el FFI aislado en el crate **`tp-basis`** (única
+    excepción del workspace a `unsafe_code = "forbid"`, API segura `encode_etc1s` y
+    `transcode_rgba`). Flags `--basis-quality` con rango validado, combo con las dos
+    entradas nuevas y DragValue de calidad en Ajustes. Tests: los 4 de `export.rs`
+    (`ktx2_writes_a_spec_container_with_dfd_and_kvd`,
+    `ktx2_pixel_formats_round_trip_through_the_reader`,
+    `ktx2_reports_pixel_formats_it_cannot_describe`,
+    `basis_file_transcodes_back_to_rgba`, más `basis_requires_the_gpu_formats_feature`
+    sin la feature), los 3 de `tp-basis`, los casos de config/CLI actualizados y el e2e
+    `lote13_ktx2_container_and_basis_export`.

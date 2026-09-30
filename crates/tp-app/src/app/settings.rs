@@ -880,8 +880,10 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     ui.selectable_value(v, GpuFormat::Etc1, "ETC1 (pkm)");
                     ui.selectable_value(v, GpuFormat::Etc1Ktx, "ETC1 en KTX (ktx)");
                     ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP (pvr)");
+                    ui.selectable_value(v, GpuFormat::Basis, "Basis (basis)");
                     ui.separator();
                     ui.selectable_value(v, GpuFormat::Zktx, "KTX con zlib (zktx)");
+                    ui.selectable_value(v, GpuFormat::Ktx2, "KTX2 sin comprimir (ktx2)");
                     ui.selectable_value(v, GpuFormat::Pvr3Gz, "PVR3 en gzip (pvr.gz)");
                     ui.selectable_value(v, GpuFormat::Pvr3Ccz, "PVR3 en CCZ (pvr.ccz)");
                 },
@@ -999,6 +1001,12 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     ui.horizontal(|ui| {
                         ui.label("Calidad ASTC (0-4, 4 = exhaustivo)");
                         ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
+                    });
+                }
+                GpuFormat::Basis => {
+                    ui.horizontal(|ui| {
+                        ui.label("Calidad Basis ETC1S (0-100)");
+                        ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
                     });
                 }
                 _ => {}

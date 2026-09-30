@@ -202,6 +202,13 @@ pub enum GpuFormat {
     Etc2Rgba,
     #[serde(rename = "PVRTC_4BPP")]
     Pvrtc4Bpp,
+    /// KTX v2 con el contenido crudo (vkFormat 37/43 + DFD), sin
+    /// supercompresión.
+    #[serde(rename = "KTX2")]
+    Ktx2,
+    /// Basis Universal ETC1S (`.basis`), transcodificable en tiempo de carga.
+    #[serde(rename = "BASIS")]
+    Basis,
 }
 
 impl GpuFormat {
@@ -223,13 +230,15 @@ impl GpuFormat {
             GpuFormat::Astc4x4 => "ASTC_4x4",
             GpuFormat::Etc2Rgba => "ETC2_RGBA",
             GpuFormat::Pvrtc4Bpp => "PVRTC_4BPP",
+            GpuFormat::Ktx2 => "KTX2",
+            GpuFormat::Basis => "BASIS",
         }
     }
 
-    /// Whether this build can encode the format (`ASTC_4x4` needs the
-    /// `gpu-formats` feature; every other format is always available).
+    /// Whether this build can encode the format (`ASTC_4x4` and `BASIS` need
+    /// the `gpu-formats` feature; every other format is always available).
     pub fn is_supported(&self) -> bool {
-        !matches!(self, GpuFormat::Astc4x4) || cfg!(feature = "gpu-formats")
+        !matches!(self, GpuFormat::Astc4x4 | GpuFormat::Basis) || cfg!(feature = "gpu-formats")
     }
 
     /// Hardware-compressed formats (flip-y solo aplica a estos).
@@ -243,6 +252,7 @@ impl GpuFormat {
                 | GpuFormat::Pvr3Ccz
                 | GpuFormat::Etc1
                 | GpuFormat::Etc1Ktx
+                | GpuFormat::Basis
         )
     }
 
@@ -263,6 +273,8 @@ impl GpuFormat {
             GpuFormat::Astc4x4 => "astc",
             GpuFormat::Etc2Rgba => "ktx",
             GpuFormat::Pvrtc4Bpp => "pvr",
+            GpuFormat::Ktx2 => "ktx2",
+            GpuFormat::Basis => "basis",
         }
     }
 
@@ -286,6 +298,8 @@ impl GpuFormat {
             "astc" => GpuFormat::Astc4x4,
             "etc2" => GpuFormat::Etc2Rgba,
             "pvrtc" | "pvr3" => GpuFormat::Pvrtc4Bpp,
+            "ktx2" => GpuFormat::Ktx2,
+            "basis" => GpuFormat::Basis,
             _ => return None,
         })
     }
@@ -1286,6 +1300,10 @@ pub struct ProjectConfig {
     /// astcenc: fastest/fast/medium/thorough/exhaustive).
     #[serde(default = "default_astc_quality")]
     pub astc_quality: u8,
+    /// Calidad Basis ETC1S (`--basis-quality`), 0-100, 50 por defecto
+    /// (≈128, la calidad por defecto de Basis).
+    #[serde(default = "default_basis_quality")]
+    pub basis_quality: u8,
     /// Cuantización DXT1/DXT5 (`--dxt-mode`).
     #[serde(default)]
     pub dxt_mode: DxtMode,
@@ -1520,6 +1538,10 @@ fn default_astc_quality() -> u8 {
     2
 }
 
+fn default_basis_quality() -> u8 {
+    50
+}
+
 fn default_webp_quality() -> u16 {
     101
 }
@@ -1564,6 +1586,7 @@ impl Default for ProjectConfig {
             etc1_quality: default_etc1_quality(),
             etc2_quality: default_etc2_quality(),
             astc_quality: default_astc_quality(),
+            basis_quality: default_basis_quality(),
             dxt_mode: DxtMode::default(),
             cache_busting: false,
             gdx_filter: GdxFilter::default(),
@@ -1845,6 +1868,7 @@ impl ProjectConfig {
         for (name, value) in [
             ("etc1_quality", self.etc1_quality),
             ("etc2_quality", self.etc2_quality),
+            ("basis_quality", self.basis_quality),
         ] {
             if value > 100 {
                 return Err(TpError::Config(format!(
@@ -2229,9 +2253,16 @@ mod tests {
         };
         assert!(bad_jpg.validate().is_err());
 
+        let bad_basis = ProjectConfig {
+            basis_quality: 101,
+            ..ProjectConfig::default()
+        };
+        assert!(bad_basis.validate().is_err());
+
         let ok = ProjectConfig {
             png_opt_level: 7,
             jpg_quality: 100,
+            basis_quality: 100,
             ..ProjectConfig::default()
         };
         assert!(ok.validate().is_ok());
@@ -2308,6 +2339,7 @@ mod tests {
             "webp_quality",
             "pixel_format",
             "flip_vertical",
+            "basis_quality",
         ] {
             if let Some(line) = text
                 .lines()
@@ -2343,6 +2375,7 @@ mod tests {
         assert_eq!(back.webp_quality, 101);
         assert_eq!(back.pixel_format, PixelFormat::Rgba8888);
         assert!(!back.flip_vertical);
+        assert_eq!(back.basis_quality, 50, "calidad ETC1S por defecto");
         assert!(back.validate().is_ok());
     }
 
@@ -2631,6 +2664,8 @@ mod tests {
             ("etc2", GpuFormat::Etc2Rgba, "ktx"),
             ("pvrtc", GpuFormat::Pvrtc4Bpp, "pvr"),
             ("pvr3", GpuFormat::Pvrtc4Bpp, "pvr"),
+            ("ktx2", GpuFormat::Ktx2, "ktx2"),
+            ("basis", GpuFormat::Basis, "basis"),
         ];
         for (token, want, ext) in cases {
             let got = GpuFormat::parse(token).unwrap_or_else(|| panic!("token {token}"));
@@ -2642,13 +2677,27 @@ mod tests {
         // Los formatos de hardware siguen distinguiéndose de los de software.
         assert!(GpuFormat::Etc1.is_hardware());
         assert!(GpuFormat::Pvr3Ccz.is_hardware());
+        assert!(GpuFormat::Basis.is_hardware(), "Basis comprime en GPU");
         assert!(!GpuFormat::Bmp.is_hardware());
         assert!(!GpuFormat::Dds.is_hardware());
         assert!(!GpuFormat::Zktx.is_hardware());
+        assert!(!GpuFormat::Ktx2.is_hardware(), "KTX2 guarda crudo");
         assert!(GpuFormat::Etc1.is_supported() && GpuFormat::Bmp.is_supported());
+        assert!(GpuFormat::Ktx2.is_supported(), "KTX2 no necesita C++");
+        assert_eq!(
+            GpuFormat::Basis.is_supported(),
+            cfg!(feature = "gpu-formats"),
+            "Basis depende de la feature gpu-formats"
+        );
 
         // Serde: los nombres del TOML vuelven a la misma variante.
-        for format in [GpuFormat::Bmp, GpuFormat::Pvr3Gz, GpuFormat::Etc1Ktx] {
+        for format in [
+            GpuFormat::Bmp,
+            GpuFormat::Pvr3Gz,
+            GpuFormat::Etc1Ktx,
+            GpuFormat::Ktx2,
+            GpuFormat::Basis,
+        ] {
             let cfg = ProjectConfig {
                 gpu_format: format,
                 ..ProjectConfig::default()

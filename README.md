@@ -123,7 +123,7 @@ cargo run -p tp-app --bin tp-smoke
 # CLI
 cargo run -p tp-cli -- --help
 
-# Con soporte ASTC (compila ARM astcenc desde fuente; ~1-2 min extra)
+# Con soporte ASTC y Basis (compila astcenc y Basis Universal desde fuente; ~1-2 min extra)
 cargo build --features gpu-formats
 
 # Tests
@@ -247,6 +247,8 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 | ASTC 4x4                                       | ✅*    | *Con `--features gpu-formats` (ARM astcenc oficial) |
 | ETC2 RGBA (EAC + ETC2)                         | ✅     | Encoder propio validado contra decodificador independiente |
 | PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación) en `.pvr` v3, validado contra `texture2ddecoder` |
+| KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
+| Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
 | Cifrado simétrico de textura (AES-GCM)         | ✅     | AES-256-GCM; archivos `*.tpenc`, `tp-cli decrypt` |
 | Motor de plantillas (Mustache)                 | ✅     | handlebars; JSON, XML (libgdx), Plist (cocos2d), C++ header, TSV, texto + plantillas personalizadas |
 | Auto-detect animations                         | ✅     | `walk_001..walk_003` se agrupan como animación `walk` en `meta.animations` (JSON) y en la sección `animations` del Plist; desactivable (`enable_auto_detect_animations`, `--no-auto-animations`) |
@@ -395,13 +397,16 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
   (se rechaza con un mensaje claro); se lee el primer nivel de mipmap. El PSD
   se abre como el compuesto aplanado (capas fundidas) y el SVG se rasteriza a
   su tamaño intrínseco (o 100×100 si no lo trae) con las fuentes del sistema.
-- **Formatos de salida**: escribe PNG, PNG8, JPG, WebP y los contenedores de
-  hardware ASTC/ETC2(KTX)/PVRTC(.pvr); no escribe BMP/TGA/TIFF/DDS/PVR-gz/
-  KTX2/Basis.
+- **Formatos de salida**: escribe los 17 de la documentación vigente del
+  original (PNG, PNG8, JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ,
+  PKM, KTX, KTX2, ZKTX, ASTC y Basis). KTX2 guarda el contenido **crudo**
+  (RGBA8/RGB8/R8, sin supercompresión Basis dentro del contenedor) y `basis`
+  es solo ETC1S; no se implementan los formatos retirados del propio
+  TexturePacker (`atf`, `pvr2`).
 - **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
   especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
   BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp); otros
-  formatos (ETC1, DXT, ASTC de otros tamaños de bloque, Basis Universal, ...)
+  formatos (ETC1, DXT, ASTC de otros tamaños de bloque, Basis UASTC, ...)
   no están incluidos.
 - **winit parcheado (`third_party/winit`)**: winit 0.30 no implementa el
   drag-and-drop de ficheros en Wayland (solo XDND en X11), de modo que en
@@ -416,7 +421,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 190 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 318 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
@@ -427,7 +432,7 @@ cuando faltan placeholders y error con `multipack = false`), round-trip de ETC2 
 + EAC) y PVRTC 4BPP (opaco, gradientes, transparencia y layout morton) contra un
 decodificador independiente (`texture2ddecoder`), cifrado/descifrado, plantillas,
 configuración (round-trip TOML de los ajustes nuevos), CLI (flags y parseo de
-argumentos), y 17 pruebas end-to-end que generan sprites reales en disco y
+argumentos), y 40 pruebas end-to-end que generan sprites reales en disco y
 verifican aliases, rotación, normal maps, variantes, multi-atlas, los tres
 formatos GPU (ETC2/PVRTC/ASTC), los ajustes de Lote 5 (padding de borde,
 divisor común, nombres con subcarpeta/extensión, `texture_path`, premultiply y
@@ -437,7 +442,9 @@ frames, nomenclatura implícita con aviso, variantes `{v}` y multipack
 desactivado), además de los del **Lote 8** (JPG/PNG8/WebP y formatos de píxel,
 flip vertical solo en formatos GPU e ingesta de TGA/BMP/QOI con deduplicación
 por hash) y del **Lote 9** (bordes 9-patch desde `borders.json` hasta los
-metadatos `border` del JSON).
+metadatos `border` del JSON), además de los del **Lote 13** (la hoja publicada
+en KTX2 se vuelve a leer byte a byte y el `.basis` sale con su firma y con la
+calidad moviendo el tamaño).
 
 Además, `cargo run -p tp-app --bin tp-smoke` compila un **autotest binario
 de la app completa**: genera en un directorio temporal sprites de ejemplo y un

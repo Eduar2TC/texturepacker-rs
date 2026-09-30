@@ -1,0 +1,22 @@
+[package]
+name = "tp-basis"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Basis Universal (ETC1S) encoder for TexturePacker-RS: the workspace's single unsafe exception"
+
+[dependencies]
+basis-universal = "0.3"
+
+# Hereda las lints del workspace *excepto* `unsafe_code`, que aquí se permite
+# de forma explícita: es el único sitio del repositorio que toca el FFI de
+# Binomial (`Compressor::init`/`process` son `unsafe fn`). El resto de crates
+# siguen con `unsafe_code = "forbid"`.
+[lints.rust]
+unsafe_code = "allow"
+unknown_lints = "allow"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+chunks_exact_to_as_chunks = { level = "allow", priority = 1 }

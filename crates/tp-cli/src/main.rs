@@ -44,6 +44,7 @@ fn usage() -> ! {
          \x20 --texture-path RUTA   Prefijo de la textura en los metadatos (p. ej. /assets)\n\
          \x20 --format T            png | png8 | jpg | webp | bmp | tga | tiff | dds\n\
          \x20                        zktx | pvr3gz | pvr3ccz | pkm | ktx | astc | etc2 | pvrtc\n\
+         \x20                        ktx2 | basis\n\
          \x20 --png-opt-level N     Optimización PNG sin pérdida, 0-7 (1 = indexa si ≤256 colores)\n\
          \x20 --png8-dither T       Dithering PNG-8: low | medium | high\n\
          \x20 --jpg-quality N       Calidad JPG (0-100)\n\
@@ -54,6 +55,7 @@ fn usage() -> ! {
          \x20 --etc1-quality N      Calidad ETC1 0-100 (defecto 70)\n\
          \x20 --etc2-quality N      Calidad ETC2 0-100 (defecto 70)\n\
          \x20 --astc-quality N      Calidad ASTC 0-4: 0=fastest .. 4=exhaustive (defecto 2)\n\
+         \x20 --basis-quality N     Calidad Basis ETC1S 0-100 (defecto 50)\n\
          \x20 --dxt-mode T          DXT_LINEAR (error uniforme) | DXT_PERCEPTUAL (ponderado)\n\
          \x20 --strategy T          bssf (ShortSideFit) | baf (AreaFit) | blsf (LongSideFit) | best | bottom-left | contact-point | guillotine (alias: --maxrects-heuristics)\n\
          \x20 --algorithm T         maxrects | polygon | guillotine | grid | basic | manual\n\
@@ -356,7 +358,7 @@ fn cmd_pack(args: &[String]) {
         cfg.gpu_format = GpuFormat::parse(&v).unwrap_or_else(|| {
             fail(format!(
                 "--format inválido: {v} (usa png | png8 | jpg | webp | bmp | tga | tiff | \
-                 dds | zktx | pvr3gz | pvr3ccz | pkm | ktx | astc | etc2 | pvrtc)"
+                 dds | zktx | pvr3gz | pvr3ccz | pkm | ktx | astc | etc2 | pvrtc | ktx2 | basis)"
             ))
         });
     }
@@ -405,6 +407,11 @@ fn cmd_pack(args: &[String]) {
         cfg.astc_quality = v
             .parse()
             .unwrap_or_else(|_| fail("--astc-quality inválido".into()));
+    }
+    if let Some(v) = val("basis-quality") {
+        cfg.basis_quality = v
+            .parse()
+            .unwrap_or_else(|_| fail("--basis-quality inválido".into()));
     }
     if let Some(v) = val("dxt-mode") {
         cfg.dxt_mode = DxtMode::parse(&v).unwrap_or_else(|| {
@@ -698,6 +705,12 @@ fn check_export_flags(cfg: &ProjectConfig) -> Result<(), String> {
             cfg.astc_quality
         ));
     }
+    if cfg.basis_quality > 100 {
+        return Err(format!(
+            "--basis-quality fuera de rango (0-100): {}",
+            cfg.basis_quality
+        ));
+    }
     if !cfg.pixel_format.is_compatible_with(cfg.gpu_format) {
         return Err(format!(
             "pixel format {} no es soportado por --format {}",
@@ -881,6 +894,12 @@ mod tests {
         .unwrap_err()
         .contains("--etc2-quality"));
         assert!(check_export_flags(&ProjectConfig {
+            basis_quality: 101,
+            ..Default::default()
+        })
+        .unwrap_err()
+        .contains("--basis-quality"));
+        assert!(check_export_flags(&ProjectConfig {
             etc2_quality: 0,
             ..Default::default()
         })
@@ -898,6 +917,8 @@ mod tests {
             "100",
             "--astc-quality",
             "4",
+            "--basis-quality",
+            "60",
             "--dxt-mode",
             "DXT_PERCEPTUAL",
         ]));
@@ -906,6 +927,7 @@ mod tests {
         assert_eq!(val("etc1-quality").as_deref(), Some("25"));
         assert_eq!(val("etc2-quality").as_deref(), Some("100"));
         assert_eq!(val("astc-quality").as_deref(), Some("4"));
+        assert_eq!(val("basis-quality").as_deref(), Some("60"));
         assert!(matches!(
             DxtMode::parse(val("dxt-mode").as_deref().unwrap()),
             Some(DxtMode::Perceptual)

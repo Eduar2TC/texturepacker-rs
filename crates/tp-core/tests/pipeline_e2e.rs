@@ -8,7 +8,7 @@ use tp_core::config::{
     ProjectConfig, SizeConstraint, TemplateFormat, VariantOptions,
 };
 use tp_core::types::Rect;
-use tp_core::{export, pipeline};
+use tp_core::{export, pipeline, reader};
 
 /// Write a solid-color PNG to `path`.
 fn write_png(path: &Path, w: u32, h: u32, color: [u8; 4]) {
@@ -2563,4 +2563,73 @@ fn lote12_ingests_psd_and_svg_inputs() {
         (i32::from(half[2]) - 255).abs() <= 8 && (i32::from(half[3]) - 128).abs() <= 4,
         "SVG: azul al 50% sin premultiplicar: {half:?}"
     );
+}
+
+#[test]
+fn lote13_ktx2_container_and_basis_export() {
+    let fx = Fixture::new("lote13_ktx2_basis");
+    let input = make_input_dir(&fx.dir, "in");
+    for i in 0..4 {
+        write_png(
+            &input.join(format!("s{i}.png")),
+            8,
+            8,
+            [i * 60, 255 - i * 50, i * 30, 255],
+        );
+    }
+    let pack = |output: PathBuf, format: GpuFormat, basis_quality: u8| {
+        let cfg = ProjectConfig {
+            input_directory: input.clone(),
+            output_directory: output,
+            max_texture_size: 64,
+            gpu_format: format,
+            basis_quality,
+            ..ProjectConfig::default()
+        };
+        let out = pipeline::run(&cfg).expect("pipeline should succeed");
+        assert_eq!(out.result.pages[0].format, format.as_str());
+        out
+    };
+
+    // ---- KTX2: la misma hoja que el PNG, byte a byte ------------------------
+    let png_dir = fx.dir.join("out_png");
+    pack(png_dir.clone(), GpuFormat::Png, 50);
+    let ktx_dir = fx.dir.join("out_ktx2");
+    let out = pack(ktx_dir.clone(), GpuFormat::Ktx2, 50);
+    let file = std::fs::read(ktx_dir.join("atlas.ktx2")).unwrap();
+    assert_eq!(
+        &file[..12],
+        b"\xABKTX 20\xBB\r\n\x1A\n",
+        "identificador KTX2"
+    );
+
+    let (pw, ph, png_px) = reader::load_image_rgba(&png_dir.join("atlas.png")).unwrap();
+    let (kw, kh, ktx_px) = reader::load_image_rgba(&ktx_dir.join("atlas.ktx2")).unwrap();
+    assert_eq!((kw, kh), (pw, ph), "mismas dimensiones que el PNG");
+    assert_eq!(
+        (kw, kh),
+        (out.pages[0].width, out.pages[0].height),
+        "la hoja publicada mide lo que informa el pipeline"
+    );
+    assert_eq!(ktx_px, png_px, "KTX2 no pierde ni un byte frente al PNG");
+
+    // ---- BASIS: firma correcta y la calidad mueve el tamaño ----------------
+    #[cfg(feature = "gpu-formats")]
+    {
+        let basis = |quality: u8| {
+            let dir = fx.dir.join(format!("out_basis_{quality}"));
+            pack(dir.clone(), GpuFormat::Basis, quality);
+            std::fs::read(dir.join("atlas.basis")).unwrap()
+        };
+        let lo = basis(10);
+        let hi = basis(95);
+        assert_eq!(&lo[..2], b"sB", "firma de un .basis");
+        assert_eq!(&hi[..2], b"sB", "firma de un .basis");
+        assert!(
+            lo.len() <= hi.len(),
+            "más calidad ETC1S no puede achicar el fichero: {} > {}",
+            lo.len(),
+            hi.len()
+        );
+    }
 }
