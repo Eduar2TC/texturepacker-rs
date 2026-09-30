@@ -49,6 +49,14 @@ pub struct IngestOptions<'a> {
     pub trim_margin: i32,
     /// Pair `*_normal.*` companions instead of treating them as sprites.
     pub enable_normal_maps: bool,
+    /// Suffix of the normal-map file of a sprite (`hero` → `hero<n>`); empty
+    /// disables matching by name.
+    pub normal_map_suffix: String,
+    /// Substring the relative path must contain for the file to be treated as
+    /// a normal map (e.g. `normals/`); empty disables the path filter.
+    pub normal_map_filter: String,
+    /// Classify the remaining images as normal maps from their color.
+    pub normal_map_auto_detect: bool,
     /// Recurse into subdirectories of `input_directory`.
     pub recursive: bool,
     /// Extra sprite files or folders added on top of `input_directory`
@@ -270,22 +278,68 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
         return result;
     }
 
-    // Build a map base -> path so we can find `foo_normal.png` for `foo.png`.
-    // Keyed by the extension-stripped relative id, so `hero/foo.png` pairs with
-    // `hero/foo_normal.png` (and not with a `foo.png` in another folder).
-    let normal_candidates: HashMap<String, PathBuf> = if options.enable_normal_maps {
-        files
+    // Build the set of normal maps: suffix and/or path filter first, then
+    // (optionally) the color heuristic over whatever is left. Normals are
+    // attached as companions and never returned as sprites.
+    let normal_set: HashSet<PathBuf> = if options.enable_normal_maps {
+        let mut set: HashSet<PathBuf> = files
             .iter()
-            .filter(|p| is_normal_file(p))
-            .map(|p| {
-                let rel = sprite_rel_path(p, options);
-                let base = rel.strip_suffix("_normal").unwrap_or(&rel).to_string();
-                (base, p.clone())
+            .filter(|p| {
+                is_normal_map(
+                    &sprite_rel_path(p, options),
+                    &options.normal_map_suffix,
+                    &options.normal_map_filter,
+                )
             })
-            .collect()
+            .cloned()
+            .collect();
+        if options.normal_map_auto_detect {
+            let detected: Vec<PathBuf> = files
+                .par_iter()
+                .filter(|p| !set.contains(*p))
+                .filter_map(|p| {
+                    let (w, h, rgba) = load_image_rgba(p).ok()?;
+                    (w > 0 && h > 0 && looks_like_normal_map(&rgba)).then(|| p.clone())
+                })
+                .collect();
+            if !detected.is_empty() {
+                result.warnings.push(format!(
+                    "{} imagen(es) clasificada(s) como mapa de normales por su color",
+                    detected.len()
+                ));
+            }
+            set.extend(detected);
+        }
+        set
     } else {
-        HashMap::new()
+        HashSet::new()
     };
+
+    // Matching indexes: by id base (suffix, or the last `_`/`-` group of the
+    // name) and by bare file name (normales kept in another folder). A name
+    // shared by two normal maps is dropped so the fallback never guesses.
+    let mut normal_by_base: HashMap<String, PathBuf> = HashMap::new();
+    let mut normal_by_name: HashMap<String, PathBuf> = HashMap::new();
+    let mut duplicated_names: HashSet<String> = HashSet::new();
+    for p in &normal_set {
+        let rel = sprite_rel_path(p, options);
+        normal_by_base
+            .entry(normal_pair_key(&rel, &options.normal_map_suffix))
+            .or_insert_with(|| p.clone());
+        let name = file_name_of(&rel).to_string();
+        if normal_by_name.insert(name.clone(), p.clone()).is_some() {
+            duplicated_names.insert(name);
+        }
+    }
+    normal_by_name.retain(|name, _| !duplicated_names.contains(name));
+
+    // Sprites sharing a file name also block the fallback pairing.
+    let mut sprite_name_counts: HashMap<String, usize> = HashMap::new();
+    for p in files.iter().filter(|p| !normal_set.contains(*p)) {
+        *sprite_name_counts
+            .entry(file_name_of(&sprite_rel_path(p, options)).to_string())
+            .or_default() += 1;
+    }
 
     let trim_mode = options.trim_mode;
     let margin = options.trim_margin.max(0);
@@ -293,7 +347,7 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
     // Parallel load + trim + hash.
     let loaded: Vec<Result<Option<IngestedSprite>>> = files
         .par_iter()
-        .filter(|p| !(options.enable_normal_maps && is_normal_file(p)))
+        .filter(|p| !normal_set.contains(*p))
         .map(|path| {
             let (w, h, rgba) = load_image_rgba(path)?;
             let (mut bounds, mut pixels) = if trim_mode.trims() {
@@ -317,7 +371,14 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
                 pixels = p;
             }
             let rel = sprite_rel_path(path, options);
-            let normal_path = normal_candidates.get(&rel).cloned();
+            let normal_path = normal_by_base.get(&rel).cloned().or_else(|| {
+                let name = file_name_of(&rel);
+                // Fallback: same file name in another folder, and only when
+                // exactly one sprite carries that name.
+                (sprite_name_counts.get(name) == Some(&1))
+                    .then(|| normal_by_name.get(name).cloned())
+                    .flatten()
+            });
             let id = if options.trim_sprite_names {
                 rel
             } else {
@@ -364,7 +425,7 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
 
     if options.enable_normal_maps {
         // Warn about normal maps without a matching diffuse.
-        for path in files.iter().filter(|p| is_normal_file(p)) {
+        for path in normal_set.iter() {
             if !used_normals.contains(path) {
                 result.warnings.push(format!(
                     "Mapa de normales sin difusa asociada: {}",
@@ -377,11 +438,71 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
     result
 }
 
-pub fn is_normal_file(path: &Path) -> bool {
-    let Some(stem) = file_stem(path) else {
+/// Is this *file path* the normal map of a sprite, judging by its suffix?
+///
+/// [`ingest`] works on the relative id instead; this helper is for callers
+/// that only hold a path (the app skips border detection on normals).
+pub fn is_normal_file(path: &Path, suffix: &str) -> bool {
+    if suffix.is_empty() {
         return false;
-    };
-    stem.ends_with("_normal")
+    }
+    file_stem(path).is_some_and(|s| s.ends_with(suffix))
+}
+
+/// Is this relative id (extension-stripped, `/` separators) a normal map?
+/// Matches the configured suffix *or* the path filter (case-insensitive
+/// substring, e.g. `normals/`).
+pub fn is_normal_map(rel_path: &str, suffix: &str, filter: &str) -> bool {
+    if !filter.is_empty() && rel_path.to_lowercase().contains(&filter.to_lowercase()) {
+        return true;
+    }
+    if suffix.is_empty() {
+        return false;
+    }
+    file_name_of(rel_path).ends_with(suffix)
+}
+
+/// Key a normal map is indexed under so its sprite finds it: the id without
+/// the suffix, or without the last `_`/`-`/`.` group of the file name so that
+/// `hero-n.png` still matches `hero.png`.
+fn normal_pair_key(rel: &str, suffix: &str) -> String {
+    if !suffix.is_empty() && rel.ends_with(suffix) {
+        return rel[..rel.len() - suffix.len()].to_string();
+    }
+    let name = file_name_of(rel);
+    if let Some(i) = name.rfind(['_', '-', '.']) {
+        if i > 0 && i + 1 < name.len() {
+            let mut key = rel[..rel.len() - name.len()].to_string();
+            key.push_str(&name[..i]);
+            return key;
+        }
+    }
+    rel.to_string()
+}
+
+/// Last `/`-separated component of an extension-stripped relative id.
+fn file_name_of(rel: &str) -> &str {
+    rel.rsplit('/').next().unwrap_or(rel)
+}
+
+/// Color heuristic for tangent-space normal maps: R and G hover around the
+/// middle of the range while B dominates. Used by the optional auto-detect.
+pub fn looks_like_normal_map(rgba: &[u8]) -> bool {
+    let (mut sr, mut sg, mut sb, mut n) = (0u64, 0u64, 0u64, 0u64);
+    for px in rgba.chunks_exact(4) {
+        if px[3] == 0 {
+            continue;
+        }
+        sr += u64::from(px[0]);
+        sg += u64::from(px[1]);
+        sb += u64::from(px[2]);
+        n += 1;
+    }
+    if n == 0 {
+        return false;
+    }
+    let (r, g, b) = (sr / n, sg / n, sb / n);
+    b > r && b > g && b >= 160 && r.abs_diff(128) <= 48 && g.abs_diff(128) <= 48
 }
 
 /// File stem without extension (lowercased handling kept as-is).
@@ -798,6 +919,9 @@ mod tests {
             trim_mode: TrimMode::Trim,
             trim_margin: 0,
             enable_normal_maps: false,
+            normal_map_suffix: "_normal".into(),
+            normal_map_filter: String::new(),
+            normal_map_auto_detect: false,
             recursive: true,
             extra_inputs: std::slice::from_ref(&extra),
             excluded_inputs: &[],
@@ -883,6 +1007,9 @@ mod tests {
             trim_mode: TrimMode::None,
             trim_margin: 0,
             enable_normal_maps: false,
+            normal_map_suffix: "_normal".into(),
+            normal_map_filter: String::new(),
+            normal_map_auto_detect: false,
             recursive: true,
             extra_inputs: &[],
             excluded_inputs: &[],
@@ -945,6 +1072,9 @@ mod tests {
             trim_mode: TrimMode::Trim,
             trim_margin: 0,
             enable_normal_maps: false,
+            normal_map_suffix: "_normal".into(),
+            normal_map_filter: String::new(),
+            normal_map_auto_detect: false,
             recursive: true,
             extra_inputs: no_extras,
             excluded_inputs: &[],
@@ -1017,6 +1147,9 @@ mod tests {
             trim_mode: TrimMode::Trim,
             trim_margin: 0,
             enable_normal_maps: false,
+            normal_map_suffix: "_normal".into(),
+            normal_map_filter: String::new(),
+            normal_map_auto_detect: false,
             recursive: true,
             extra_inputs: &[],
             excluded_inputs: &[],
@@ -1061,6 +1194,9 @@ mod tests {
             trim_mode: TrimMode::Trim,
             trim_margin: 0,
             enable_normal_maps: true,
+            normal_map_suffix: "_normal".into(),
+            normal_map_filter: String::new(),
+            normal_map_auto_detect: false,
             recursive: true,
             extra_inputs: &[],
             excluded_inputs: &[],
@@ -1082,6 +1218,87 @@ mod tests {
             .any(|w| w.contains("sin difusa asociada")));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn normal_maps_honor_suffix_filter_and_color() {
+        let root = std::env::temp_dir().join(format!("tp_normals_opt_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("normals")).unwrap();
+        let write = |path: &Path, rgb: [u8; 3]| {
+            image::RgbaImage::from_pixel(2, 2, image::Rgba([rgb[0], rgb[1], rgb[2], 255]))
+                .save(path)
+                .unwrap();
+        };
+        // Difusas de colores vivos; normales en azul tangente (128,128,255).
+        write(&root.join("hero.png"), [255, 0, 0]);
+        write(&root.join("hero_n.png"), [128, 128, 255]); // sufijo `_n`
+        write(&root.join("box.png"), [10, 200, 10]);
+        write(&root.join("normals/box.png"), [128, 128, 255]); // filtro `normals/`
+        write(&root.join("orb.png"), [120, 40, 40]);
+        write(&root.join("orb-det.png"), [128, 128, 255]); // solo por color
+
+        let options = IngestOptions {
+            input_directory: &root,
+            trim_threshold: 1,
+            trim_mode: TrimMode::Trim,
+            trim_margin: 0,
+            enable_normal_maps: true,
+            normal_map_suffix: "_n".into(),
+            normal_map_filter: "normals/".into(),
+            normal_map_auto_detect: true,
+            recursive: true,
+            extra_inputs: &[],
+            excluded_inputs: &[],
+            trim_sprite_names: false,
+            prepend_folder_name: false,
+            common_divisor_x: 1,
+            common_divisor_y: 1,
+        };
+        let out = ingest(&options);
+
+        let mut ids: Vec<&str> = out.sprites.iter().map(|s| s.id.as_str()).collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec!["box.png", "hero.png", "orb.png"]);
+        for s in &out.sprites {
+            assert!(
+                s.normal_path.is_some(),
+                "a {} le falta su mapa de normales",
+                s.id
+            );
+        }
+        // `normals/box.png` empareja por nombre de fichero y `orb-det.png`
+        // (detectada por color) por el último grupo del nombre.
+        let normal_of = |id: &str| {
+            let s = out.sprites.iter().find(|s| s.id == id).unwrap();
+            s.normal_path.as_ref().unwrap().display().to_string()
+        };
+        assert!(normal_of("box.png").ends_with("normals/box.png"));
+        assert!(normal_of("orb.png").ends_with("orb-det.png"));
+        assert!(normal_of("hero.png").ends_with("hero_n.png"));
+        assert!(
+            out.warnings
+                .iter()
+                .any(|w| w.contains("clasificada(s) como mapa de normales")),
+            "falta el aviso del auto-detect: {:?}",
+            out.warnings
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn color_heuristic_accepts_normals_and_rejects_art() {
+        let solid = |rgb: [u8; 4]| rgb.repeat(4 * 4);
+        assert!(looks_like_normal_map(&solid([128, 128, 255, 255])));
+        assert!(looks_like_normal_map(&solid([110, 140, 230, 255])));
+        assert!(!looks_like_normal_map(&solid([255, 0, 0, 255])), "rojo");
+        assert!(!looks_like_normal_map(&solid([0, 200, 0, 255])), "verde");
+        assert!(
+            !looks_like_normal_map(&solid([135, 196, 244, 255])),
+            "cielo"
+        );
+        assert!(!looks_like_normal_map(&[0u8; 16]), "todo transparente");
     }
 
     fn rgba(w: i32, h: i32, solid: impl Fn(i32, i32) -> [u8; 4]) -> Vec<u8> {

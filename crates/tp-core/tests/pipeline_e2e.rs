@@ -181,6 +181,22 @@ fn full_pipeline_with_aliases_rotation_and_normals() {
     assert_eq!(&n[i..i + 4], &[128, 128, 255, 255]);
     assert!(output.join("atlas_normal.png").exists());
 
+    // ---- A custom normal sheet name replaces `<imagen>_normal` -------------
+    let custom_dir = output.join("custom_sheet");
+    let cfg2 = ProjectConfig {
+        output_directory: custom_dir.clone(),
+        normal_map_sheet: "norms".into(),
+        ..cfg.clone()
+    };
+    let out2 = pipeline::run(&cfg2).expect("second pipeline run should succeed");
+    assert!(
+        custom_dir.join("norms.png").exists(),
+        "falta la hoja de normales con nombre propio"
+    );
+    assert!(!custom_dir.join("atlas_normal.png").exists());
+    let coin2 = out2.result.sprites.iter().find(|s| s.id == "coin").unwrap();
+    assert!(coin2.normal_source_path.is_some());
+
     // ---- On-disk PNG matches the in-memory page ----------------------------
     let disk = image::open(output.join("atlas.png")).expect("atlas.png decodes");
     let disk_rgba = disk.to_rgba8();

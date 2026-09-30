@@ -59,11 +59,23 @@ corrección» al final.
   Los modos de pixel art solo corren en su factor entero exacto y, si la variante pide
   otra escala, caen a `Smooth` con un aviso (`pipeline::execute` y los avisos de la
   GUI). Sigue faltando **`Hq2x`**: su tabla de 256 patrones solo existe en
-  implementaciones LGPL 2.1 (el algoritmo original y el crate `hqx`), así que está
-  pendiente de decisión (dependencia opcional LGPL vs. omitirlo).
-- **Normal maps**: sí se genera una hoja de normales por página, pero el sufijo es fijo
-  `_normal` (`crates/tp-core/src/ingest.rs:380-385`); faltan auto-detect por color, path
-  filter, sufijo configurable y nombre propio de la hoja de normales.
+  implementaciones LGPL 2.1 (el algoritmo original y el crate `hqx`), así que **se ha
+  decidido omitirlo** para no meter código LGPL en un proyecto MIT.
+- **Normal maps** **[RESUELTO]**: sufijo, filtro de ruta y detección por color son
+  configurables (`normal_map_suffix`, `normal_map_filter`, `normal_map_auto_detect` en
+  `crates/tp-core/src/config.rs`, clasificados en `ingest.rs` por `is_normal_map` y
+  `looks_like_normal_map`; el auto-detect está **apagado por defecto** y emite un aviso
+  con el nº de imágenes clasificadas) y la hoja de normales admite nombre propio
+  (`normal_map_sheet`, rechazado por `validate()` si es una ruta). El emparejamiento
+  difusa↔normal cubre sufijo, filtro, el último grupo del nombre (`hero-det.png` →
+  `hero.png`) y, de último recurso, el mismo nombre de fichero en otra carpeta solo si
+  no está duplicado; las normales sin difusa siguen avisando. Nuevos flags
+  `--normalmap-suffix/--normalmap-filter/--normalmap-sheet/--normalmap-detect` y campos
+  en Ajustes. Tests: `normal_maps_honor_suffix_filter_and_color`,
+  `color_heuristic_accepts_normals_and_rejects_art`,
+  `normal_map_settings_roundtrip_and_validate`,
+  `normal_sheet_name_honors_the_custom_base`, `normalmap_flags_parse` y el e2e
+  `full_pipeline_with_aliases_rotation_and_normals` (incluye el nombre de hoja propio).
 - **Pixel format / calidades**: 9 formatos de píxel y calidad solo para JPG/WebP; faltan
   las calidades de PVRTC/ETC/ASTC/BASIS/DXT y los pixel formats de GPU
   (`PVRTCI_*`, `ETC1_*`, `DXT1/5`, `ASTC_*`, `BASISU_*`).
@@ -129,13 +141,13 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
-`cargo test --workspace` en verde (231 tests tras el primer punto de §2/§3).
+`cargo test --workspace` en verde (236 tests tras el segundo punto de §2/§3).
 
 ---
 
 ## Progreso de §2/§3 (orden elegido)
 
-1. **Scale modes + dithering** — **hecho** (con `Hq2x` pendiente de decisión, ver §2):
+1. **Scale modes + dithering** — **hecho** (`Hq2x` omitido por licencia, ver §2):
    `Scale2x`/`Scale3x`/`Scale4x`/`Eagle` en `scale_rgba`
    (`crates/tp-core/src/export.rs`), que solo corren en su factor entero y caen a
    `Smooth` con aviso (`pipeline::execute` + avisos de la GUI); `NearestNeighbour` y
@@ -146,7 +158,12 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    `pixel_art_scalers_keep_the_palette_and_the_right_size`,
    `pixel_art_modes_fall_back_to_smooth_off_their_factor`,
    `nearest_neighbour_dither_rounds_without_diffusion`.
-2. **Normal maps** — pendiente.
+2. **Normal maps** — **hecho** (ver §2 «Normal maps [RESUELTO]»): sufijo/filtro/auto-detect
+   por color con aviso (`ingest::is_normal_map` + `looks_like_normal_map`), emparejamiento
+   por sufijo → filtro → último grupo del nombre → nombre de fichero inequívoco,
+   `normal_map_sheet` para la hoja (validado en `ProjectConfig::validate`), UI de Ajustes
+   (sufijo, filtro, auto-detect y nombre de la hoja bajo el checkbox) y flags
+   `--normalmap-*` en el CLI. Tests citados en §2.
 3. **Formatos de salida faltantes** — pendiente.
 4. **Exportadores** — pendiente.
 5. **Calidades y pixel formats GPU** — pendiente.

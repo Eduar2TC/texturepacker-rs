@@ -61,6 +61,10 @@ fn usage() -> ! {
          \x20 --template-format T   json | xml | plist | cpp | tsv | text\n\
          \x20 --key CLAVE           Cifrar texturas con AES-256-GCM\n\
          \x20 --no-normals          No empaquetar mapas de normales\n\
+         \x20 --normalmap-suffix T  Sufijo del mapa de normales (defecto _normal)\n\
+         \x20 --normalmap-filter T  Ficheros con esta subcadena en la ruta son normales\n\
+         \x20 --normalmap-sheet N   Nombre base de la hoja de normales (defecto <imagen>_normal)\n\
+         \x20 --normalmap-detect    Detectar mapas de normales por su color\n\
          \x20 --no-recursive        No buscar en subdirectorios\n\
          \x20 --base-name NOMBRE    Nombre base de la salida (admite {{n}} {{n1}} {{v}})\n\
          \x20 --no-multipack        No emitir varias hojas (falla si no caben en una)\n\
@@ -380,6 +384,18 @@ fn cmd_pack(args: &[String]) {
     if flags.iter().any(|f| f == "no-normals") {
         cfg.enable_normal_maps = false;
     }
+    if let Some(v) = val("normalmap-suffix") {
+        cfg.normal_map_suffix = v;
+    }
+    if let Some(v) = val("normalmap-filter") {
+        cfg.normal_map_filter = v;
+    }
+    if let Some(v) = val("normalmap-sheet") {
+        cfg.normal_map_sheet = v;
+    }
+    if flags.iter().any(|f| f == "normalmap-detect") {
+        cfg.normal_map_auto_detect = true;
+    }
     if flags.iter().any(|f| f == "keep-extension") {
         cfg.trim_sprite_names = false;
     }
@@ -650,6 +666,26 @@ mod tests {
         assert_eq!(val("png8-dither").as_deref(), Some("low"));
         assert_eq!(val("pixel-format").as_deref(), Some("rgb888"));
         assert!(flags.iter().any(|f| f == "flip-y"));
+    }
+
+    #[test]
+    fn normalmap_flags_parse() {
+        let (_, values, flags) = parse_args(&args(&[
+            "--normalmap-suffix",
+            "_n",
+            "--normalmap-filter",
+            "normals/",
+            "--normalmap-sheet",
+            "norms",
+            "--normalmap-detect",
+            "--no-normals",
+        ]));
+        let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+        assert_eq!(val("normalmap-suffix").as_deref(), Some("_n"));
+        assert_eq!(val("normalmap-filter").as_deref(), Some("normals/"));
+        assert_eq!(val("normalmap-sheet").as_deref(), Some("norms"));
+        assert!(flags.iter().any(|f| f == "normalmap-detect"));
+        assert!(flags.iter().any(|f| f == "no-normals"));
     }
 
     #[test]

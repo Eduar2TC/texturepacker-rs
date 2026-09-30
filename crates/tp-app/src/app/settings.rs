@@ -530,6 +530,54 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 &mut app.config.enable_normal_maps,
                 "Empaquetar mapas de normales",
             );
+            if app.config.enable_normal_maps {
+                ui.horizontal(|ui| {
+                    ui.label("Sufijo");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut app.config.normal_map_suffix)
+                                .desired_width(110.0),
+                        )
+                        .changed()
+                    {
+                        app.on_config_changed();
+                    }
+                    ui.label("Filtro de ruta");
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut app.config.normal_map_filter)
+                                .desired_width(130.0),
+                        )
+                        .changed()
+                    {
+                        app.on_config_changed();
+                    }
+                });
+                if ui
+                    .checkbox(
+                        &mut app.config.normal_map_auto_detect,
+                        "Detectar por color (auto-detect)",
+                    )
+                    .changed()
+                {
+                    app.on_config_changed();
+                }
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("Hoja de normales (vacío = <imagen>_normal)")
+                            .weak(),
+                    );
+                    if ui
+                        .add(
+                            egui::TextEdit::singleline(&mut app.config.normal_map_sheet)
+                                .desired_width(150.0),
+                        )
+                        .changed()
+                    {
+                        app.on_config_changed();
+                    }
+                });
+            }
             ui.add_enabled_ui(!polygon_auto, |ui| {
                 ui.checkbox(&mut app.config.enable_polygon, "Modo polígono (mallas)");
             });

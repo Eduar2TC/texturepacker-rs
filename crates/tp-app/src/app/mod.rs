@@ -1502,7 +1502,7 @@ impl App {
             };
             let path = std::path::PathBuf::from(&sprite.source_path);
             // Los normal maps comparten frame: no detectar sobre ellos.
-            if tp_core::ingest::is_normal_file(&path) {
+            if tp_core::ingest::is_normal_file(&path, &self.config.normal_map_suffix) {
                 continue;
             }
             let id = sprite.id.clone();

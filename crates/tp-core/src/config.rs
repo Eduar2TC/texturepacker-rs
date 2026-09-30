@@ -922,6 +922,22 @@ pub struct ProjectConfig {
     pub variant_options: Vec<VariantOptions>,
     /// Auto co-pack `*_normal.png` companions in the same frames.
     pub enable_normal_maps: bool,
+    /// Suffix that marks a file as the normal map of a sprite: `hero` looks
+    /// for `hero<normalsuffix>`. Empty = never match by name.
+    #[serde(default = "default_normal_map_suffix")]
+    pub normal_map_suffix: String,
+    /// Substring a file's relative path must contain to count as a normal
+    /// map (e.g. `normals/`). Empty = no path filter.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub normal_map_filter: String,
+    /// Classify images as normal maps from their color when neither the
+    /// suffix nor the filter matches (blue-dominant heuristic, as in
+    /// TexturePacker's *Auto-detect*).
+    #[serde(default)]
+    pub normal_map_auto_detect: bool,
+    /// Base file name of the normal-map sheet; empty = `<base_file_name>_normal`.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub normal_map_sheet: String,
     /// Default normalized pivot for all sprites.
     pub default_pivot_x: f32,
     pub default_pivot_y: f32,
@@ -1030,6 +1046,10 @@ fn default_folder_groups() -> Vec<FolderGroup> {
     vec![FolderGroup::default()]
 }
 
+fn default_normal_map_suffix() -> String {
+    "_normal".to_string()
+}
+
 impl Default for ProjectConfig {
     fn default() -> Self {
         Self {
@@ -1073,6 +1093,10 @@ impl Default for ProjectConfig {
             variant_names: Vec::new(),
             variant_options: Vec::new(),
             enable_normal_maps: true,
+            normal_map_suffix: default_normal_map_suffix(),
+            normal_map_filter: String::new(),
+            normal_map_auto_detect: false,
+            normal_map_sheet: String::new(),
             default_pivot_x: 0.5,
             default_pivot_y: 0.5,
             pivot_overrides: HashMap::new(),
@@ -1246,6 +1270,13 @@ impl ProjectConfig {
         if self.polygon_tolerance < 0.0 {
             return Err(TpError::Config(
                 "polygon_tolerance no puede ser negativa".to_string(),
+            ));
+        }
+        // La hoja de normales es un nombre base, no una ruta.
+        let sheet = self.normal_map_sheet.trim();
+        if sheet.contains('/') || sheet.contains('\\') || sheet.contains("..") {
+            return Err(TpError::Config(
+                "normal_map_sheet debe ser un nombre de fichero, no una ruta".to_string(),
             ));
         }
         if self.scale_variants.is_empty() {
@@ -1691,6 +1722,62 @@ mod tests {
         assert_eq!(back.pixel_format, PixelFormat::Rgba8888);
         assert!(!back.flip_vertical);
         assert!(back.validate().is_ok());
+    }
+
+    #[test]
+    fn normal_map_settings_roundtrip_and_validate() {
+        let cfg = ProjectConfig {
+            enable_normal_maps: true,
+            normal_map_suffix: "_n".into(),
+            normal_map_filter: "normals/".into(),
+            normal_map_auto_detect: true,
+            normal_map_sheet: "mynorms".into(),
+            ..ProjectConfig::default()
+        };
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert_eq!(back.normal_map_suffix, "_n");
+        assert_eq!(back.normal_map_filter, "normals/");
+        assert!(back.normal_map_auto_detect);
+        assert_eq!(back.normal_map_sheet, "mynorms");
+        assert!(back.validate().is_ok());
+
+        // Los campos nuevos no son obligatorios en un `.tpproj` antiguo.
+        let mut text = ProjectConfig::default().to_toml().unwrap();
+        for field in [
+            "normal_map_suffix",
+            "normal_map_filter",
+            "normal_map_auto_detect",
+            "normal_map_sheet",
+        ] {
+            if let Some(line) = text
+                .lines()
+                .find(|l| l.starts_with(field))
+                .map(str::to_string)
+            {
+                text = text.replace(&line, "");
+            }
+        }
+        assert!(!text.contains("normal_map_"));
+        let legacy = ProjectConfig::from_toml(&text).unwrap();
+        assert_eq!(legacy.normal_map_suffix, "_normal");
+        assert_eq!(legacy.normal_map_filter, "");
+        assert!(!legacy.normal_map_auto_detect);
+        assert_eq!(legacy.normal_map_sheet, "");
+
+        // La hoja de normales es un nombre de fichero, no una ruta.
+        for sheet in ["out/norms", "out\\norms", "../norms"] {
+            let bad = ProjectConfig {
+                normal_map_sheet: sheet.into(),
+                ..ProjectConfig::default()
+            };
+            let err = bad
+                .validate()
+                .expect_err("normal_map_sheet debería rechazar rutas");
+            assert!(
+                err.to_string().contains("normal_map_sheet"),
+                "mensaje raro: {err}"
+            );
+        }
     }
 
     #[test]

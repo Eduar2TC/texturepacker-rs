@@ -133,6 +133,9 @@ fn execute(
         trim_mode: config.effective_trim_mode(),
         trim_margin: config.trim_margin,
         enable_normal_maps: config.enable_normal_maps,
+        normal_map_suffix: config.normal_map_suffix.clone(),
+        normal_map_filter: config.normal_map_filter.clone(),
+        normal_map_auto_detect: config.normal_map_auto_detect,
         recursive: config.recursive,
         extra_inputs: &config.extra_inputs,
         excluded_inputs: &config.excluded_inputs,
@@ -1328,7 +1331,12 @@ fn page_file_name(config: &ProjectConfig, index: usize, variant: &str) -> String
 }
 
 fn normal_page_file_name(config: &ProjectConfig, index: usize, variant: &str) -> String {
-    let stem = expand_name(&format!("{}_normal", config.base_file_name), index, variant);
+    let base = if config.normal_map_sheet.trim().is_empty() {
+        format!("{}_normal", config.base_file_name)
+    } else {
+        config.normal_map_sheet.clone()
+    };
+    let stem = expand_name(&base, index, variant);
     with_ext(&stem, config.gpu_format.file_extension())
 }
 
@@ -1410,6 +1418,28 @@ mod tests {
         assert_eq!(expand_name("atlas", 1, ""), "atlas_1");
         assert_eq!(expand_name("atlas", 0, "_0.5x"), "atlas_0.5x");
         assert_eq!(expand_name("atlas", 1, "_0.5x"), "atlas_1_0.5x");
+    }
+
+    #[test]
+    fn normal_sheet_name_honors_the_custom_base() {
+        // Por defecto la hoja de normales sigue a la imagen.
+        let base = ProjectConfig {
+            base_file_name: "atlas".to_string(),
+            ..ProjectConfig::default()
+        };
+        assert_eq!(normal_page_file_name(&base, 0, ""), "atlas_normal.png");
+        // Con `normal_map_sheet` manda ese nombre base (con sus placeholders).
+        let cfg = ProjectConfig {
+            normal_map_sheet: "mynorms".to_string(),
+            ..base
+        };
+        assert_eq!(normal_page_file_name(&cfg, 0, ""), "mynorms.png");
+        assert_eq!(normal_page_file_name(&cfg, 1, ""), "mynorms_1.png");
+        let cfg = ProjectConfig {
+            normal_map_sheet: "n{n1}{v}".to_string(),
+            ..cfg
+        };
+        assert_eq!(normal_page_file_name(&cfg, 2, "-hd"), "n3-hd.png");
     }
 
     #[test]
