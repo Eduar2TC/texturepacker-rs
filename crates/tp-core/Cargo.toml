@@ -22,14 +22,13 @@ png = "0.18"
 webp = { version = "0.3", default-features = false }
 astcenc-rs = { workspace = true, optional = true }
 flate2.workspace = true
+# Decodificación de bloques GPU al leer .ktx / .astc de entrada (MIT/Apache).
+texture2ddecoder = "0.1.2"
 
 [features]
 default = []
 # GPU texture encoders (ASTC via ARM's astcenc, ETC2 built-in). Requires a C/C++ toolchain.
 gpu-formats = ["dep:astcenc-rs"]
-
-[dev-dependencies]
-texture2ddecoder = "0.1.2"
 
 [lints]
 workspace = true

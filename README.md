@@ -149,7 +149,8 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 
 1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
    **➕** / **Carpeta**, o rellena **Directorio de entrada**)
-   (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS y QOI).
+   (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM,
+   XBM, XPM, ASTC y KTX/KTX2).
    Cada cambio de ajustes reempaqueta la vista al instante (debounce de
    120 ms), como en la herramienta original.
 2. Ajusta tamaño de atlas, padding/extrude, rotación, recorte, polígonos, profundidad de color, formato y cifrado.
@@ -205,7 +206,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 
 | Módulo de la especificación                    | Estado | Detalles |
 |------------------------------------------------|--------|----------|
-| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS y QOI |
+| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, ASTC y KTX/KTX2 |
 | Alpha trimming + bounding box                  | ✅     | Umbral configurable (0-255) |
 | Deduplicación por hashing (aliases)            | ✅     | xxh3 + comparación byte-exacta; los aliases no ocupan espacio |
 | Auto-downscaling (@2x/@1x)                     | ✅     | `scale_variants` (p. ej. `1.0, 0.5`) con metadatos escalados |
@@ -389,7 +390,9 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
   atlas, por lo que no produce artefactos visibles).
 - Los formatos de entrada BMP/GIF/ICO/TIFF/DDS heredan las limitaciones de los
   decodificadores de la crate `image`; los GIF animados se leen como su primer
-  fotograma.
+  fotograma. XBM/XPM se leen como máscara (bit encendido = negro opaco) y los
+  `.ktx2` con payload Basis Universal no se pueden decodificar sin un transcoder
+  (se rechaza con un mensaje claro); se lee el primer nivel de mipmap.
 - **Formatos de salida**: escribe PNG, PNG8, JPG, WebP y los contenedores de
   hardware ASTC/ETC2(KTX)/PVRTC(.pvr); no escribe BMP/TGA/TIFF/DDS/PVR-gz/
   KTX2/Basis.

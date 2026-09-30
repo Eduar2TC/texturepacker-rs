@@ -142,8 +142,20 @@ corrección» al final.
 
 ## 3) Prácticamente inexistentes
 
-- **Entrada de imágenes**: faltan `psd, svg, ktx, ktx2, pbm, pgm, ppm, xbm, xpm, astc, basis`
-  (`crates/tp-core/src/ingest.rs:135-144`); el original lista ~29 formatos.
+- **Entrada de imágenes — hecho**: `pbm`/`pgm`/`ppm` (y `pnm`) entran por la feature `pnm`
+  de `image`; `xbm`, `xpm`, `astc` y los contenedores `ktx`/`ktx2` se decodifican en el
+  nuevo `crates/tp-core/src/reader.rs` — XBM con `#define *_width/_height` y bits LSB-first
+  (verificado contra el `atobm` de X11: bit encendido = negro opaco), XPM1/XPM2 con paleta
+  `None`/hex/X11, `.astc` por cabecera de 16 bytes + `texture2ddecoder::decode_astc`, KTX1
+  (RGBA8/RGB8 crudos y ETC1/ETC2/DXT/ASTC vía `texture2ddecoder`) y KTX2 (RGBA8/BGRA8/RGB8/R8,
+  con supercompresión zlib; Basis Universal se rechaza con un mensaje claro porque necesita
+  un transcoder, igual que su escritura). La detección KTX1/KTX2 es por contenido
+  (los dos comparten identificador: el byte 12 es la endianness `01 02 03 04` en v1), así
+  que un `.ktx` con payload v2 también se lee. `is_image_file` y los filtros del diálogo
+  de la GUI/hoja están ampliados. Faltan `psd, svg, basis`; el original lista ~29 formatos.
+  Tests: 13 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
+  codificador, embebido en hexadecimal) y el e2e
+  `lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs`.
 - **Extras de data format — hecho**: `cache_busting` añade `?v=<hash>` a la textura citada
   en los metadatos (hash de 8 hex del fichero publicado, `hash::hash_bytes_short`), igual
   que los data formats de Pixi/Phaser; `gdx_filter` declara `filter: Linear, Linear` /
@@ -210,7 +222,8 @@ Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
-272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, **291 tras el octavo**).
+272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
+**305 tras el noveno**).
 
 ---
 
@@ -278,3 +291,8 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    completa de `--variant` (filtro, `allowfraction`, tamaño) en el CLI, con
    `apply_variant_flags` extraído para poder testearlo. Tests: 4 de config, 1 de CLI y el
    e2e.
+9. **Entrada de imágenes** — **hecho** (ver §3 «Entrada de imágenes»): `pnm` en las
+   features de `image` y el módulo `reader` con los decoders escritos a mano (XBM, XPM,
+   ASTC, KTX1, KTX2) más el despacho por extensión en `ingest::is_image_file`/
+   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. Quedan `psd`,
+   `svg` y `basis`.

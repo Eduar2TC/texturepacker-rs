@@ -146,17 +146,18 @@ pub fn is_image_file(path: &Path) -> bool {
         Some(e) if matches!(
             e.as_str(),
             "png" | "webp" | "jpg" | "jpeg" | "tga" | "bmp" | "gif" | "ico" | "tiff"
-                | "tif" | "dds" | "qoi"
+                | "tif" | "dds" | "qoi" | "pbm" | "pgm" | "ppm" | "pnm" | "xbm" | "xpm"
+                | "astc" | "ktx" | "ktx2"
         )
     )
 }
 
 /// Load one image file into RGBA8 pixels. Returns `Err` with a message.
+///
+/// Formats `image` cannot read (XBM, XPM and the GPU containers) are handled
+/// by [`crate::reader`].
 pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
-    let img = image::open(path).map_err(|e| TpError::Other(format!("{}: {e}", path.display())))?;
-    let rgba = img.to_rgba8();
-    let (w, h) = rgba.dimensions();
-    Ok((w as i32, h as i32, rgba.into_raw()))
+    crate::reader::load_image_rgba(path)
 }
 
 /// Compute the bounding box of pixels with alpha > `threshold` and return the

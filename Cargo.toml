@@ -20,6 +20,7 @@ thiserror = "2"
 rayon = "1.10"
 image = { version = "0.25", default-features = false, features = [
     "png", "webp", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "dds", "qoi",
+    "pnm",
 ] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 aes-gcm = "0.10"

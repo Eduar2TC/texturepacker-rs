@@ -2379,3 +2379,114 @@ fn variant_common_divisor_keeps_the_base_sheet_on_integer_coordinates() {
         out.result.warnings
     );
 }
+
+#[test]
+fn lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs() {
+    let fx = Fixture::new("input_formats");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+
+    // XBM: 8x8 con la primera fila encendida (negro) y el resto apagado; el
+    // trim la reduce a 8x1.
+    std::fs::write(
+        input.join("mask.xbm"),
+        "#define mask_width 8\n#define mask_height 8\nstatic unsigned char mask_bits[] = {\n 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };\n",
+    )
+    .unwrap();
+
+    // XPM: 4x4 con un cuadrado rojo de 2x2 y fondo transparente (None).
+    std::fs::write(
+        input.join("icon.xpm"),
+        "/* XPM */\nstatic char * icon[] = {\n\"4 4 2 1\",\n\"  c None\",\n\". c #ff0000\",\n\"..  \",\n\"..  \",\n\"    \",\n\"    \"\n};\n",
+    )
+    .unwrap();
+
+    // PPM (P6) 6x4 de un color plano: tiene que volver intacto.
+    let mut ppm = b"P6\n6 4\n255\n".to_vec();
+    for _ in 0..6 * 4 {
+        ppm.extend_from_slice(&[12, 34, 56]);
+    }
+    std::fs::write(input.join("photo.ppm"), ppm).unwrap();
+
+    // KTX v1 con payload RGBA8 crudo (4x4 de [77, 88, 99, 255]).
+    let solid: Vec<u8> = (0..4 * 4).flat_map(|_| [77u8, 88, 99, 255]).collect();
+    let mut ktx = Vec::new();
+    ktx.extend_from_slice(&[
+        0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32, 0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+    ]);
+    ktx.extend_from_slice(&0x0403_0201u32.to_le_bytes());
+    ktx.extend_from_slice(&0x1401u32.to_le_bytes()); // glType UNSIGNED_BYTE
+    ktx.extend_from_slice(&1u32.to_le_bytes()); // glTypeSize
+    ktx.extend_from_slice(&0x1908u32.to_le_bytes()); // GL_RGBA
+    ktx.extend_from_slice(&0x8058u32.to_le_bytes()); // GL_RGBA8
+    ktx.extend_from_slice(&0x1908u32.to_le_bytes()); // base
+    ktx.extend_from_slice(&4u32.to_le_bytes()); // width
+    ktx.extend_from_slice(&4u32.to_le_bytes()); // height
+    ktx.extend_from_slice(&[0u8; 16]); // depth, array, faces, mips
+    ktx.extend_from_slice(&0u32.to_le_bytes()); // kvd
+    ktx.extend_from_slice(&(solid.len() as u32).to_le_bytes());
+    ktx.extend_from_slice(&solid);
+    std::fs::write(input.join("tex.ktx"), ktx).unwrap();
+
+    // ASTC: el atlas real que exporta nuestro codificador (12x12 con cuatro
+    // cuadrantes de color y relleno transparente).
+    const ASTC_HEX: &str = "\
+        13aba15c0404010c00000c0000010000428001fe0100000000fe01003f3f3f0022c8090d00000000ff3f000000f0f0f0\
+        4280010000fe010000fe0100fcfcfc002288651500f8ffff000000f0873f3f3f4288830504000140840020260f0ff0f0\
+        42888203840880c300000080fcfc000042800100000000fe01fe0100003f3f3f43c842148000104200001300a4949492\
+        428001fe01fe01000090010000fcfcfc";
+    let astc: Vec<u8> = (0..ASTC_HEX.len() / 2)
+        .map(|i| u8::from_str_radix(&ASTC_HEX[i * 2..i * 2 + 2], 16).unwrap())
+        .collect();
+    std::fs::write(input.join("quad.astc"), astc).unwrap();
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output,
+        // Sin rotación: las verificaciones de píxeles son directas.
+        allow_rotation: false,
+        ..ProjectConfig::default()
+    };
+    let out = pipeline::run(&cfg).unwrap();
+    let mut ids: Vec<&str> = out.result.sprites.iter().map(|s| s.id.as_str()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["icon", "mask", "photo", "quad", "tex"],
+        "los 5 formatos nuevos (más el XPM) se ingestean como sprites"
+    );
+    assert_eq!(out.result.alias_count, 0);
+
+    // Verificación de píxeles dentro de la hoja publicada.
+    let sample = |id: &str, dx: i32, dy: i32| -> [u8; 4] {
+        let sprite = out.result.sprites.iter().find(|s| s.id == id).unwrap();
+        let page = &out.pages[sprite.atlas_page_index as usize];
+        let f = &sprite.visible_frame;
+        let i = ((f.y + dy) * page.width + f.x + dx) as usize * 4;
+        [
+            page.pixels[i],
+            page.pixels[i + 1],
+            page.pixels[i + 2],
+            page.pixels[i + 3],
+        ]
+    };
+    assert_eq!(sample("photo", 3, 2), [12, 34, 56, 255], "PPM intacto");
+    assert_eq!(sample("tex", 1, 1), [77, 88, 99, 255], "KTX1 intacto");
+    assert_eq!(
+        sample("mask", 0, 0),
+        [0, 0, 0, 255],
+        "XBM: bit encendido = negro"
+    );
+    assert_eq!(sample("mask", 7, 0), [0, 0, 0, 255], "XBM: toda la fila 1");
+    assert_eq!(sample("icon", 0, 0), [255, 0, 0, 255], "XPM: #ff0000");
+    let quad = sample("quad", 1, 1);
+    assert!(
+        (quad[0] as i32 - 255).abs() <= 32 && quad[1] < 32 && quad[2] < 32,
+        "ASTC decodificado: {quad:?}"
+    );
+
+    assert!(
+        fx.dir.join("out").join("atlas.png").exists(),
+        "la hoja se publica igual que con cualquier otro formato"
+    );
+}

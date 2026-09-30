@@ -33,6 +33,7 @@ pub mod pipeline;
 pub mod pixels;
 pub mod polygon;
 pub mod pvrtc;
+pub mod reader;
 pub mod split;
 pub mod templates;
 pub mod types;
