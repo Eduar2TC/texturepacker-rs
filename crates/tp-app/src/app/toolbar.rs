@@ -6,6 +6,10 @@
 use super::{App, LogKind};
 use eframe::egui;
 
+/// La misma página que abre el botón «Tutorial» del original: la de
+/// tutoriales de TexturePacker en el navegador del usuario.
+pub(crate) const TUTORIAL_URL: &str = "https://www.codeandweb.com/texturepacker/tutorials";
+
 pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -96,6 +100,19 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             {
                 app.show_animation = true;
             }
+            // Como en el original, «Tutorial» abre la página de tutoriales
+            // en el navegador (egui-winit → `webbrowser`).
+            if ui
+                .button("Tutorial")
+                .on_hover_text("Abre la página de tutoriales de TexturePacker en el navegador")
+                .clicked()
+            {
+                ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
+                app.log(
+                    LogKind::Info,
+                    "Abriendo la página de tutoriales en el navegador.".into(),
+                );
+            }
 
             // --- Acción principal, destacada a la derecha ---
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -160,6 +177,19 @@ pub(super) fn add_smart_folder_dialog(app: &mut App) {
         app.log(
             LogKind::Warning,
             "La carpeta ya está en el proyecto.".into(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TUTORIAL_URL;
+
+    #[test]
+    fn tutorial_url_points_at_the_official_page() {
+        assert_eq!(
+            TUTORIAL_URL,
+            "https://www.codeandweb.com/texturepacker/tutorials"
         );
     }
 }

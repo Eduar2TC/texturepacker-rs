@@ -229,7 +229,12 @@ corrección» al final.
   `gdx_filter_is_declared_on_the_xml_atlas`, `shape_debug_draws_the_borders_and_keeps_the_interior`,
   `shape_debug_clips_out_of_canvas_shapes`, `data_format_extra_flags_parse` y el e2e
   `cache_busting_and_shape_debug_reach_the_published_files`.
-- **Tutoriales**: el botón de la toolbar del original no existe aquí (menor).
+- **Tutoriales** **[RESUELTO]**: el botón «Tutorial» de la toolbar del original
+  («Opens TexturePacker's tutorial page in your web browser») existe ahora en la
+  toolbar de la app y abre <https://www.codeandweb.com/texturepacker/tutorials>
+  con `ctx.open_url(OpenUrl::new_tab(…))`, que egui-winit resuelve con la crate
+  `webbrowser` (feature `links`, ya activa), y deja constancia en el Log. El enlace
+  vive en `TUTORIAL_URL` (`crates/tp-app/src/app/toolbar.rs`), con test de contrato.
 
 ## 4) Verificado como completo y bien cableado
 
@@ -278,13 +283,16 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
    normales, metadatos y `.tpenc`) y la pestaña indica si los ficheros están
    escritos o por escribir; test `preview_lists_exactly_the_files_publish_writes`.
 
-Pendientes fuera del orden acordado: el resto de la lista de §2/§3.
+Pendientes fuera del orden acordado: ninguno — la lista de §2/§3 está cerrada,
+salvo «Scale mode», que queda **[PARCIAL]** a propósito (el Hq2x se omitió por su
+licencia LGPL, decisión acordada).
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
-305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, **327 tras el duodécimo**).
+305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, 327 tras el duodécimo,
+**328 tras el decimotercero**).
 
 ---
 
@@ -400,3 +408,10 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
     Tests: 5 de `dataformats`, 1 de `config`, 1 de CLI, `json_array_keeps_its_original_contract`
     y los e2e `data_format_presets_publish_their_own_data_file` y
     `data_format_families_render_their_own_shape`.
+
+13. **Botón «Tutorial»** — **hecho** (ver §2 «Tutoriales [RESUELTO]»): `TUTORIAL_URL` en
+    `crates/tp-app/src/app/toolbar.rs` (la página de tutoriales del original), el botón
+    «Tutorial» de la toolbar que la abre con `ctx.open_url(OpenUrl::new_tab(…))` —
+    egui-winit la resuelve con la crate `webbrowser`, ya activa vía la feature `links` —,
+    y aviso en el Log. Sólo toca la GUI: el test de contrato del enlace deja el total en
+    328.
