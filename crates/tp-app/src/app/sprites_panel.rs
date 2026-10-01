@@ -101,14 +101,14 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button("⊖")
+                .small_button("−")
                 .on_hover_text("Plegar todas las carpetas")
                 .clicked()
             {
                 app.tree_force_open = Some(false);
             }
             if ui
-                .small_button("⊕")
+                .small_button("+")
                 .on_hover_text("Desplegar todas las carpetas")
                 .clicked()
             {
@@ -137,7 +137,7 @@ parte de la ventana."
         };
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("🗂").size(28.0));
+            ui.label(egui::RichText::new("📁").size(28.0));
             ui.label(egui::RichText::new(msg).weak());
         });
         return;
@@ -363,7 +363,7 @@ fn render_sheet(
     };
     let mut open = group.name.is_empty();
     let header = egui::CollapsingHeader::new(
-        egui::RichText::new(format!("🗂 {title} ({})", group.sprites.len())).strong(),
+        egui::RichText::new(format!("📂 {title} ({})", group.sprites.len())).strong(),
     )
     .id_salt(id)
     .default_open(group.name.is_empty());
@@ -1008,7 +1008,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                         ui.strong("(hoja principal)");
                     } else {
                         if ui
-                            .small_button("✕")
+                            .small_button("×")
                             .on_hover_text(
                                 "Quitar este grupo (sus sprites vuelven a la hoja principal)",
                             )
@@ -1027,7 +1027,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                     if !g.name.is_empty()
                         && !app.selected_paths.is_empty()
                         && ui
-                            .small_button("← Selección")
+                            .small_button("↪ Selección")
                             .on_hover_text("Mover los sprites seleccionados a este grupo")
                             .clicked()
                     {

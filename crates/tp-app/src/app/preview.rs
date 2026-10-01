@@ -62,7 +62,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
             }
             PreviewState::Stale => {
                 ui.label(
-                    egui::RichText::new("● Desactualizado")
+                    egui::RichText::new("⚠ Desactualizado")
                         .color(egui::Color32::from_rgb(230, 180, 60)),
                 );
             }
@@ -314,7 +314,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     if !resumen.is_empty() {
                         ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new(format!("✓ Recién añadido: {resumen}"))
+                            egui::RichText::new(format!("✔ Recién añadido: {resumen}"))
                                 .color(super::JUST_ADDED_COLOR),
                         );
                     }
@@ -595,7 +595,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                             ));
                             if s.is_alias {
                                 ui.label(format!(
-                                    "alias → {}",
+                                    "alias ➡ {}",
                                     s.alias_target_id.as_deref().unwrap_or("?")
                                 ));
                             }

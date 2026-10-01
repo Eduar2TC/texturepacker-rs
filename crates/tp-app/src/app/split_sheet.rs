@@ -238,7 +238,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             run_split(app, &spec, cells.len());
         }
         if can_split {
-            ui.label(format!("→ {}", spec.default_out_dir().display()));
+            ui.label(format!("➡ {}", spec.default_out_dir().display()));
         }
     });
 }

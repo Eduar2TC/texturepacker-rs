@@ -2925,7 +2925,7 @@ mod tests {
             &[1, 1, 1, 0],
             "RGBSDA, BT.709, lineal, flags"
         );
-        assert_eq!(&file[120..124], &[0, 0, 0, 0], "texel 1×1 ⇒ dimensiones 0");
+        assert_eq!(&file[120..124], &[0, 0, 0, 0], "texel 1×1 -> dimensiones 0");
         assert_eq!(file[124], 4, "bytesPlane[0] = 4 bytes por texel");
         // Una muestra de 8 bits por canal: R, G, B y alfa en el canal 15.
         let channels = [0u32, 1, 2, 15];

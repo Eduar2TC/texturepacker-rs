@@ -218,7 +218,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                 };
                 app.on_config_changed();
             }
-            ui.label("Scaling variants (p. ej. 2, 0.5 → @2x, -hd)");
+            ui.label("Escalado de variantes (p. ej. 2, 0.5 ➡ @2x, -hd)");
             if ui
                 .add(egui::TextEdit::singleline(&mut app.variants_text).desired_width(190.0))
                 .changed()
@@ -744,7 +744,7 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             if polygon_auto {
                 ui.label(
                     egui::RichText::new(
-                        "Empaqueta sprites por su contorno (Marching Squares → RDP → Earcut). Activo por el Trim mode Polygon.",
+                        "Empaqueta sprites por su contorno (Marching Squares ➡ RDP ➡ Earcut). Activo por el modo de recorte Polígono.",
                     )
                     .weak(),
                 );
@@ -1258,7 +1258,7 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
                     let mut changed = false;
 
                     ui.label(format!(
-                        "{scale} → {}",
+                        "{scale} ➡ {}",
                         tp_core::pipeline::variant_suffix(scale)
                     ))
                     .on_hover_text(

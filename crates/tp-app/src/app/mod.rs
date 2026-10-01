@@ -1188,7 +1188,7 @@ impl App {
                     self.log(LogKind::Info, format!("  [{stage}] {ms} ms"));
                 }
                 for f in &out.result.output_files {
-                    self.log(LogKind::Info, format!("  → {f}"));
+                    self.log(LogKind::Info, format!("  ➡ {f}"));
                 }
                 self.apply_output(ctx, out, true);
                 self.fit_zoom();
@@ -2208,7 +2208,7 @@ mod on_demand_tests {
         let total_after = app.result().unwrap().result.total_sprites;
         assert!(
             total_after > total_before,
-            "el nuevo sprite debe aparecer en la vista ({total_before} → {total_after})"
+            "el nuevo sprite debe aparecer en la vista ({total_before} -> {total_after})"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -2398,7 +2398,7 @@ mod on_demand_tests {
         let total_after = app.result().unwrap().result.total_sprites;
         assert!(
             total_after > total_before,
-            "el sprite soltado debe aparecer en la vista ({total_before} → {total_after})"
+            "el sprite soltado debe aparecer en la vista ({total_before} -> {total_after})"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -2419,7 +2419,7 @@ mod on_demand_tests {
         }
         assert_eq!(
             app.change_seq, seq0,
-            "frames en reposo bumpearon change_seq ({seq0} → {}): la \
+            "frames en reposo bumpearon change_seq ({seq0} -> {}): la \
              comparación de variantes es textual y se repite sin fin",
             app.change_seq
         );

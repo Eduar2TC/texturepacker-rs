@@ -6,7 +6,7 @@ use eframe::egui;
 pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // Plegar/desplegar el panel (chevron como en cualquier herramienta).
-        let chevron = if app.bottom_collapsed { "▸" } else { "▾" };
+        let chevron = if app.bottom_collapsed { "⏵" } else { "⏷" };
         if ui
             .small_button(chevron)
             .on_hover_text(if app.bottom_collapsed {
@@ -41,7 +41,7 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
                     .small_button(
-                        egui::RichText::new("● Error")
+                        egui::RichText::new("✖ Error")
                             .color(egui::Color32::from_rgb(255, 110, 110)),
                     )
                     .on_hover_text("Ir al Log")
@@ -109,7 +109,7 @@ fn output_view(app: &App, ui: &mut egui::Ui) {
                 ui.label("(ninguno: añade sprites y publica)");
             }
             for f in &result.output_files {
-                ui.monospace(format!("  \u{2192} {f}"));
+                ui.monospace(format!("  ➡ {f}"));
             }
             ui.horizontal(|ui| {
                 ui.strong("Tiempos por etapa");
@@ -179,12 +179,12 @@ fn sprites_view(app: &mut App, ui: &mut egui::Ui) {
                         ui.label(if s.is_rotated { "90°" } else { "—" });
                         ui.label(s.atlas_page_index.to_string());
                         ui.label(if s.is_alias {
-                            format!("→ {}", s.alias_target_id.as_deref().unwrap_or("?"))
+                            format!("➡ {}", s.alias_target_id.as_deref().unwrap_or("?"))
                         } else {
                             "—".into()
                         });
                         ui.label(format!("({:.2},{:.2})", s.pivot.x, s.pivot.y));
-                        ui.label(if s.mesh.is_some() { "✓" } else { "—" });
+                        ui.label(if s.mesh.is_some() { "✔" } else { "—" });
                         ui.end_row();
                     }
                 });

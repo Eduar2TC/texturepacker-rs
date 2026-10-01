@@ -6,6 +6,11 @@
 
 mod app;
 
+/// Chequeo de que ningún literal de la UI use un carácter sin glifo (sólo en
+/// tests: no aporta código a la app).
+#[cfg(test)]
+mod glyph_guard;
+
 /// Soporte para pruebas (proyecto de ejemplo headless). `doc(hidden)`: no es
 /// API pública de la app, la usan `tp-smoke` y los tests de integración.
 #[doc(hidden)]
