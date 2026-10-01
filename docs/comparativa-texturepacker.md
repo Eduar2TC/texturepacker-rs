@@ -318,6 +318,13 @@ Tests: `phase_c_value_flags_reach_the_config`, `scale_flag_multiplies_every_vari
 `exporter_only_options_are_registered_and_rejected` y el e2e
 `fase_c_renderiza_prefijo_css_media_query_y_plantilla_propia`.
 
+Las cinco opciones de exportación (prefijo y media query CSS, `string_property`,
+`bool_property` y el directorio de exportadores propios) no se quedaron en el
+CLI: la GUI las enseña en dos colapsables de «Datos» detrás de «Avanzados», y
+la selección usa los mismos métodos del core (`select_custom_exporter` /
+`clear_custom_exporter`), de modo que `data_format` sigue intacto. Detalle en
+el punto 18.
+
 ### Renombrados (aceptamos los dos nombres)
 
 `--texture-path`/`--texturepath`, `--dither`/`--dither-type`,
@@ -401,9 +408,10 @@ numeración se aplica igual y se avisa. Tests: `sheet_and_data_share_one_base_na
 
 Pendientes fuera del orden acordado: ninguno — la lista de §2/§3 está cerrada,
 salvo «Scale mode», que queda **[PARCIAL]** a propósito (el Hq2x se omitió por su
-licencia, decisión acordada). §5 (paridad del CLI) se cierra con los puntos 16 y
-17 de la lista: el 16 con las Fases A+B y el 17 con la Fase C, de modo que ya no
-queda ningún hueco de alcance marcado como pendiente.
+licencia, decisión acordada). §5 (paridad del CLI) se cierra con los puntos 16,
+17 y 18 de la lista: el 16 con las Fases A+B, el 17 con la Fase C del CLI y el
+18 al llevarla a la GUI, de modo que ya no queda ningún hueco de alcance marcado
+como pendiente.
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
@@ -411,7 +419,8 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all 
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
 305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, 327 tras el duodécimo,
 328 tras el decimotercero, 332 tras el decimocuarto, 340 tras el decimoquinto,
-351 tras el decimosexto, **359 tras el decimoséptimo**).
+351 tras el decimosexto, 359 tras el decimoséptimo,
+**366 tras el decimoctavo**).
 
 ---
 
@@ -624,3 +633,24 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all 
     `convert_texture_writes_the_requested_format` y el e2e
     `fase_c_renderiza_prefijo_css_media_query_y_plantilla_propia`. El total
     queda en **359**.
+
+18. **La Fase C, en la GUI** — **hecho**: el panel «Ajustes» enseña lo que el
+    punto 17 sólo dejaba en el `.tpproj` o en el CLI, en dos colapsables nuevos
+    de «Datos» (tras «Plantilla Mustache») que sólo se pintan con «Avanzados»
+    activado. **«Exportadores propios»**: directorio con botón «…», combo con
+    los `<id>.hbs` y «— ninguno —»; la selección llama a
+    `select_custom_exporter`/`clear_custom_exporter` del core (commit 1), así
+    que nunca se escribe `data_format` y `validate()` sigue eligiendo el formato
+    por su propia cabecera, no por el que pida la plantilla — misma regla que
+    en el original. **«Propiedades de la plantilla»**: prefijo de clase y media
+    query 2× sólo con la familia CSS (con aviso si no lo están) y las
+    `string_property`/`bool_property` con tri-estado para que un `false` se
+    pueda poner. Los tres avisos del panel se actualizaron: el obsoleto «la
+    plantilla se ignora con el formato JSON» es falso desde la Fase C (ahora sí
+    la usa) y se sustituye por plantilla que no existe, directorio sin ningún
+    `<id>.hbs` y props CSS en una familia que no es CSS. Tests nuevos (4):
+    `active_custom_exporter_id_only_reads_ids_inside_the_directory`,
+    `plain_bool_choice_is_a_faithful_tri_state`,
+    `empty_strings_become_none_like_texture_path` y
+    `the_new_sections_render_in_every_state` (render en los tres estados con
+    «Avanzados»). El total queda en **366**.
