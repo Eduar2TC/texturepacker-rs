@@ -1584,6 +1584,26 @@ pub struct ProjectConfig {
     /// (`--force-publish`); by default identical files are left untouched.
     #[serde(default)]
     pub force_publish: bool,
+    /// Media query wrapping the CSS of variants above 1×
+    /// (`--css-media-query-2x`). `None` leaves the rules unwrapped.
+    #[serde(default)]
+    pub css_media_query_2x: Option<String>,
+    /// Prefix for every CSS class name (`--css-sprite-prefix`, e.g. `icon-`).
+    #[serde(default)]
+    pub css_sprite_prefix: Option<String>,
+    /// Demo exporter property, available to templates as
+    /// `exporterProperties.string_property` (`--plain-string-property`).
+    #[serde(default)]
+    pub plain_string_property: Option<String>,
+    /// Same, as a boolean, for `exporterProperties.bool_property`
+    /// (`--plain-bool-property`).
+    #[serde(default)]
+    pub plain_bool_property: Option<bool>,
+    /// Extra directory of `<id>.hbs` data formats
+    /// (`--custom-exporters-directory`) accepted by `--format` and
+    /// `--template-format`.
+    #[serde(default)]
+    pub custom_exporters_directory: Option<PathBuf>,
 }
 
 fn default_detect_border_max_search() -> i32 {
@@ -1729,6 +1749,11 @@ impl Default for ProjectConfig {
             dpi: None,
             heuristic_mask: false,
             force_publish: false,
+            css_media_query_2x: None,
+            css_sprite_prefix: None,
+            plain_string_property: None,
+            plain_bool_property: None,
+            custom_exporters_directory: None,
             manual_grid: None,
             auto_folder_groups: false,
         }

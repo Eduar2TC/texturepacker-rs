@@ -389,19 +389,26 @@ pub fn render(
     scale: f32,
     config: &ProjectConfig,
 ) -> Result<String> {
-    let ctx = build_context(
+    let mut ctx = build_context(
         result,
         page_infos,
         image_files,
         scale,
         config.effective_trim_mode(),
     );
+    apply_exporter_properties(&mut ctx, config);
+    if config.template_format == TemplateFormat::Css {
+        apply_css_sprite_prefix(&mut ctx, config);
+    }
 
-    match config.template_format {
+    let rendered = match config.template_format {
         // «spritesheet-only»: el pipeline no llama a `render`, pero por si
         // acaso no se dibuja nada.
-        TemplateFormat::SpriteSheetOnly => Ok(String::new()),
-        TemplateFormat::Json => {
+        TemplateFormat::SpriteSheetOnly => String::new(),
+        // El JSON sólo se serializa cuando no hay plantilla propia: un
+        // exportador de `--custom-exporters-directory` (o un `--template`)
+        // manda incluso con la familia json por defecto.
+        TemplateFormat::Json if config.export_template.is_none() => {
             // El JSON con `frames` en lista expone solo su contrato de
             // siempre: `sheets` y los offsets nuevos son internos de los
             // otros exportadores, y por frame se descartan (los recortes de
@@ -437,7 +444,7 @@ pub fn render(
                 "meta": ctx.get("meta").cloned().unwrap_or(Value::Null),
                 "frames": Value::Array(frames),
             });
-            serde_json::to_string_pretty(&out).map_err(crate::error::TpError::Json)
+            serde_json::to_string_pretty(&out).map_err(crate::error::TpError::Json)?
         }
         other => {
             let template = match &config.export_template {
@@ -449,8 +456,76 @@ pub fn render(
                 })?,
                 None => builtin_template(other).to_string(),
             };
-            render_mustache(&template, &ctx)
+            render_mustache(&template, &ctx)?
         }
+    };
+    Ok(wrap_css_media_query(rendered, config, scale))
+}
+
+/// `--plain-string-property` / `--plain-bool-property`: las propiedades de
+/// demo del exportador quedan en la raíz del contexto como
+/// `exporterProperties.{string_property,bool_property}`. Los marcadores
+/// `has_string`/`has_bool` dicen a la plantilla cuáles existen, porque un
+/// `false` también hay que escribirlo.
+fn apply_exporter_properties(ctx: &mut Value, config: &ProjectConfig) {
+    if config.plain_string_property.is_none() && config.plain_bool_property.is_none() {
+        return;
+    }
+    let mut props = serde_json::Map::new();
+    if let Some(text) = &config.plain_string_property {
+        props.insert("string_property".to_string(), Value::String(text.clone()));
+        props.insert("has_string".to_string(), Value::Bool(true));
+    }
+    if let Some(flag) = config.plain_bool_property {
+        props.insert("bool_property".to_string(), Value::Bool(flag));
+        props.insert("has_bool".to_string(), Value::Bool(true));
+    }
+    if let Some(root) = ctx.as_object_mut() {
+        root.insert("exporterProperties".to_string(), Value::Object(props));
+    }
+}
+
+/// `--css-sprite-prefix`: prefijo de cada clase CSS (`icon-hero`), en la
+/// raíz y en las páginas. Sólo se llama con la familia CSS.
+fn apply_css_sprite_prefix(ctx: &mut Value, config: &ProjectConfig) {
+    let Some(prefix) = &config.css_sprite_prefix else {
+        return;
+    };
+    fn prefix_frames(frames: &mut [Value], prefix: &str) {
+        for frame in frames.iter_mut() {
+            let Some(class) = frame.get("cssClass").and_then(Value::as_str) else {
+                continue;
+            };
+            let value = format!("{prefix}{class}");
+            if let Some(obj) = frame.as_object_mut() {
+                obj.insert("cssClass".to_string(), Value::String(value));
+            }
+        }
+    }
+    if let Some(frames) = ctx.get_mut("frames").and_then(Value::as_array_mut) {
+        prefix_frames(frames, prefix);
+    }
+    if let Some(sheets) = ctx.get_mut("sheets").and_then(Value::as_array_mut) {
+        for sheet in sheets.iter_mut() {
+            if let Some(frames) = sheet.get_mut("frames").and_then(Value::as_array_mut) {
+                prefix_frames(frames, prefix);
+            }
+        }
+    }
+}
+
+/// `--css-media-query-2x`: envuelve en la media query pedida la hoja CSS de
+/// las variantes por encima de 1× (la «variante -2x»); la base queda como
+/// está. Los demás formatos salen intactos.
+fn wrap_css_media_query(rendered: String, config: &ProjectConfig, scale: f32) -> String {
+    if config.template_format != TemplateFormat::Css || scale <= 1.0 {
+        return rendered;
+    }
+    match &config.css_media_query_2x {
+        Some(query) if !query.trim().is_empty() => {
+            format!("@media {} {{\n{rendered}}}\n", query.trim())
+        }
+        _ => rendered,
     }
 }
 
@@ -805,7 +880,7 @@ static constexpr int kSpriteCount = {{frames.length}};
             "name\tx\ty\tw\th\toffsetX\toffsetY\toriginalWidth\toriginalHeight\trotated\tpage\tpivotX\tpivotY\n{{#each frames}}{{this.filename}}\t{{this.frame.x}}\t{{this.frame.y}}\t{{this.frame.w}}\t{{this.frame.h}}\t{{this.spriteSourceSize.x}}\t{{this.spriteSourceSize.y}}\t{{this.sourceSize.w}}\t{{this.sourceSize.h}}\t{{#if this.rotated}}1{{else}}0{{/if}}\t{{this.page}}\t{{this.pivot.x}}\t{{this.pivot.y}}\n{{/each}}"
         }
         TemplateFormat::PlainText => {
-            "{{#each frames}}{{this.filename}}: frame=({{this.frame.x}},{{this.frame.y}},{{this.frame.w}},{{this.frame.h}}) rotated={{#if this.rotated}}true{{else}}false{{/if}} page={{this.page}} pivot=({{this.pivot.x}},{{this.pivot.y}}) offset=({{this.spriteSourceSize.x}},{{this.spriteSourceSize.y}}) size=({{this.sourceSize.w}},{{this.sourceSize.h}}){{#if this.aliased}} alias-of={{this.aliasTarget}}{{/if}}\n{{/each}}"
+            "{{#each frames}}{{this.filename}}: frame=({{this.frame.x}},{{this.frame.y}},{{this.frame.w}},{{this.frame.h}}) rotated={{#if this.rotated}}true{{else}}false{{/if}} page={{this.page}} pivot=({{this.pivot.x}},{{this.pivot.y}}) offset=({{this.spriteSourceSize.x}},{{this.spriteSourceSize.y}}) size=({{this.sourceSize.w}},{{this.sourceSize.h}}){{#if this.aliased}} alias-of={{this.aliasTarget}}{{/if}}\n{{/each}}{{#if exporterProperties.has_string}}string_property: {{exporterProperties.string_property}}\n{{/if}}{{#if exporterProperties.has_bool}}bool_property: {{exporterProperties.bool_property}}\n{{/if}}"
         }
         TemplateFormat::Json => unreachable!("JSON is serialized directly"),
     }

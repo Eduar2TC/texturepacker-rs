@@ -30,20 +30,27 @@ const PACK_VALUES: &[&str] = &[
     "basisu-quality",
     "border-padding",
     "class-file",
+    "classfile-file",
     "color-depth",
     "common-divisor",
     "common-divisor-x",
     "common-divisor-y",
+    "convert-texture",
+    "css-media-query-2x",
+    "css-sprite-prefix",
+    "custom-exporters-directory",
     "data",
     "default-pivot-point",
     "dither",
     "dither-type",
     "dpi",
     "dxt-mode",
+    "easeljs-framerate",
     "etc1-quality",
     "etc2-quality",
     "extrude",
     "format",
+    "gamemaker-texturegroup-frame-speed",
     "gdx-filter",
     "header-file",
     "height",
@@ -52,6 +59,7 @@ const PACK_VALUES: &[&str] = &[
     "jpg-quality",
     "key",
     "key-name",
+    "libgdx-legacy-output",
     "maxrects-heuristics",
     "max-size",
     "max-height",
@@ -60,10 +68,17 @@ const PACK_VALUES: &[&str] = &[
     "normalmap-sheet",
     "normalmap-suffix",
     "opt",
+    "orx-includeComments",
+    "orx-keyDuration",
+    "orx-keepInCache",
+    "orx-optimizeSectionNames",
+    "orx-pixelSnap",
     "output",
     "pack-mode",
     "padding",
     "pixel-format",
+    "plain-bool-property",
+    "plain-string-property",
     "png8-dither",
     "png-opt-level",
     "pvr-quality",
@@ -76,7 +91,9 @@ const PACK_VALUES: &[&str] = &[
     "shape-padding",
     "size-constraints",
     "source-file",
+    "spine-legacy-output",
     "spriteids-file",
+    "spritestudio-writePivots",
     "strategy",
     "template",
     "template-format",
@@ -91,6 +108,7 @@ const PACK_VALUES: &[&str] = &[
     "variants",
     "webp-quality",
     "width",
+    "zim-framerate",
 ];
 
 /// Opciones de `pack` sin valor. Se reconocen antes de mirar si les sigue un
@@ -99,6 +117,8 @@ const PACK_FLAGS: &[&str] = &[
     "auto-folders",
     "cache-busting",
     "disable-auto-alias",
+    "disable-rotation",
+    "enable-cache-busting",
     "enable-rotation",
     "exporter-list",
     "flip-pvr",
@@ -110,6 +130,7 @@ const PACK_FLAGS: &[&str] = &[
     "help",
     "heuristic-mask",
     "keep-extension",
+    "libgdx-legacy-output",
     "multipack",
     "no-aliasing",
     "no-auto-animations",
@@ -119,12 +140,18 @@ const PACK_FLAGS: &[&str] = &[
     "no-rotation",
     "no-trim",
     "normalmap-detect",
+    "orx-includeComments",
+    "orx-keepInCache",
+    "orx-optimizeSectionNames",
+    "orx-pixelSnap",
     "pack-normalmaps",
     "polygon",
     "prepend-folder-name",
     "print-json",
     "quiet",
     "shape-debug",
+    "spine-legacy-output",
+    "spritestudio-writePivots",
     "trim-sprite-names",
     "verbose",
     "version",
@@ -180,9 +207,100 @@ fn check_unknown_options(
     ))
 }
 
+/// Opciones que en el original sólo escriben propiedades de un exportador
+/// concreto y que este clon todavía no plantea. Van registradas (para que no
+/// parezcan desconocidas) y se rechazan con su motivo: fingirlas sería peor
+/// que no leerlas.
+const EXPORTER_ONLY_OPTIONS: &[(&str, &str)] = &[
+    ("classfile-file", "monogame"),
+    ("easeljs-framerate", "easeljs"),
+    (
+        "gamemaker-texturegroup-frame-speed",
+        "gamemaker-texturegroup",
+    ),
+    ("libgdx-legacy-output", "libgdx"),
+    ("orx-includeComments", "orx"),
+    ("orx-keepInCache", "orx"),
+    ("orx-keyDuration", "orx"),
+    ("orx-optimizeSectionNames", "orx"),
+    ("orx-pixelSnap", "orx"),
+    ("spine-legacy-output", "spine"),
+    ("spritestudio-writePivots", "spritestudio"),
+    ("zim-framerate", "zim"),
+];
+
+/// Rechaza las opciones de [`EXPORTER_ONLY_OPTIONS`] con un mensaje que
+/// explica qué formatos existen y cómo conseguir una salida propia.
+fn check_exporter_only_options(
+    values: &[(String, String)],
+    flags: &[String],
+) -> Result<(), String> {
+    let used: Vec<&(&str, &str)> = EXPORTER_ONLY_OPTIONS
+        .iter()
+        .filter(|(name, _)| {
+            values.iter().any(|(k, _)| k == name) || flags.iter().any(|f| f == name)
+        })
+        .collect();
+    if used.is_empty() {
+        return Ok(());
+    }
+    let names: Vec<String> = used.iter().map(|(n, _)| format!("--{n}")).collect();
+    let mut formats: Vec<&str> = used.iter().map(|(_, f)| *f).collect();
+    formats.sort();
+    formats.dedup();
+    let formats = formats.join(", ");
+    let one = names.len() == 1;
+    Err(format!(
+        "{}: {} que este clon todavía no escribe; {} aquí para no presentar{} como {}. \
+         Usa --exporter-list para ver los formatos soportados o \
+         --template/--custom-exporters-directory para una salida propia.",
+        names.join(", "),
+        if one {
+            format!("es una propiedad del exportador {formats}")
+        } else {
+            format!("son propiedades de los exportadores {formats}")
+        },
+        if one { "se acepta" } else { "se aceptan" },
+        if one { "la" } else { "las" },
+        if one {
+            "opción desconocida"
+        } else {
+            "opciones desconocidas"
+        },
+    ))
+}
+
+/// `<bool>` del original: `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`.
+fn parse_bool(value: &str, flag: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" | "1" | "yes" | "on" => Ok(true),
+        "false" | "0" | "no" | "off" => Ok(false),
+        _ => Err(format!("{flag} inválido: {value} (true | false)")),
+    }
+}
+
 /// Línea de `--version`, con el mismo patrón del original.
 fn version_line() -> String {
     format!("TexturePacker-RS {}", env!("CARGO_PKG_VERSION"))
+}
+
+/// Ids de los `<id>.hbs` de un directorio de exportadores propios
+/// (`--custom-exporters-directory`), ordenados para una salida estable.
+fn custom_exporter_ids(dir: &Path) -> Vec<String> {
+    let mut ids = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(id) = name.strip_suffix(".hbs") {
+                if !id.is_empty() && !id.contains(['/', '\\']) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
 }
 
 /// Ids de data formats que aceptan `--format`/`--template-format`, uno por
@@ -243,6 +361,7 @@ fn help_text() -> String {
          \x20 --multipack           Permitir varias hojas (anula --no-multipack)\n\
          \x20 --no-multipack        No emitir varias hojas (falla si no caben en una)\n\
          \x20 --cache-busting       Añade ?v=<hash> a la textura citada en los metadatos\n\
+         \x20 --enable-cache-busting Alias del original de --cache-busting\n\
          \x20 --texture-path RUTA   Prefijo de la textura en los metadatos (alias: --texturepath)\n\
          \x20 --print-json          Imprimir los metadatos JSON en stdout\n\
          \x20 --force-publish       Reescribir la salida aunque los bytes no hayan cambiado\n\
@@ -279,6 +398,7 @@ fn help_text() -> String {
          \x20 --size-constraints T  any | pot | multiple-of-4 | word-aligned\n\
          \x20 --force-squared       Atlas cuadrado\n\
          \x20 --no-rotation         Desactivar rotación 90°\n\
+         \x20 --disable-rotation    Alias del original de --no-rotation\n\
          \x20 --enable-rotation     Activar la rotación 90° (defecto)\n\
          \x20 --polygon             Modo polígono (mallas + empaquetado por contorno)\n\
          \x20 --tolerance N         Tolerancia de la aproximación poligonal en px (defecto\n\
@@ -329,6 +449,20 @@ fn help_text() -> String {
          \x20 --key CLAVE           Cifrar texturas con AES-256-GCM\n\
          \x20 --key-name NOMBRE     Usar la clave global guardada con ese nombre\n\
          \x20 --save-key NOMBRE     Guardar --key en el almacén global y usarla\n\
+         \x20 --custom-exporters-directory DIR  Carga <id>.hbs propios como formatos de\n\
+         \x20                        datos, válidos en --format y --template-format\n\
+         \x20 --convert-texture FICHERO  Convierte una imagen a --texture-format y termina\n\
+         \x20                        (aplica también --pixel-format, --dpi y --scale)\n\
+         \x20 --css-sprite-prefix P  Prefijo de las clases CSS (p.ej. icon-)\n\
+         \x20 --css-media-query-2x Q  Envuelve en esta media query la CSS de variantes >1\n\
+         \x20 --plain-string-property TEXTO\n\
+         \x20                        exporterProperties.string_property de la plantilla\n\
+         \x20 --plain-bool-property BOOL  exporterProperties.bool_property (true|false)\n\
+         \x20 Del original, registradas pero rechazadas con su motivo porque no escribimos\n\
+         \x20 esa salida: easeljs-framerate, zim-framerate,\n\
+         \x20 gamemaker-texturegroup-frame-speed, classfile-file, spine-legacy-output,\n\
+         \x20 libgdx-legacy-output, spritestudio-writePivots, orx-includeComments,\n\
+         \x20 orx-keepInCache, orx-keyDuration, orx-optimizeSectionNames, orx-pixelSnap\n\
          \n\
          MAPAS DE NORMALES:\n\
          \x20 --pack-normalmaps     Empaquetar los mapas de normales (defecto)\n\
@@ -532,16 +666,40 @@ fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), Str
         "text" => cfg.template_format = TemplateFormat::PlainText,
         other => {
             let id = if other == "json-hash" { "json" } else { other };
-            if !cfg.apply_data_format(id) {
-                return Err(format!(
-                    "--template-format inválido: {value} (familias: json | xml | plist | cpp | \
-                     tsv | text; exportadores: json-hash, libgdx, cocos2d, sparrow, spine, \
-                     phaser, pixijs4, egret…)"
-                ));
+            if cfg.apply_data_format(id) {
+                return Ok(());
             }
+            if apply_custom_exporter(cfg, id) {
+                return Ok(());
+            }
+            return Err(format!(
+                "--template-format inválido: {value} (familias: json | xml | plist | cpp | \
+                 tsv | text; exportadores: json-hash, libgdx, cocos2d, sparrow, spine, \
+                 phaser, pixijs4, egret…; o un <id>.hbs de --custom-exporters-directory)"
+            ));
         }
     }
     Ok(())
+}
+
+/// `--custom-exporters-directory DIR` + `--format <id>`: si existe
+/// `DIR/<id>.hbs`, ese exportador es válido y su plantilla es la salida. La
+/// extensión la sigue decidiendo la familia (`--template-format`, json por
+/// defecto), igual que en el original, donde el exportador propio sólo
+/// aporta el texto.
+fn apply_custom_exporter(cfg: &mut ProjectConfig, id: &str) -> bool {
+    let Some(dir) = cfg.custom_exporters_directory.clone() else {
+        return false;
+    };
+    if id.is_empty() || id.contains(['/', '\\']) {
+        return false;
+    }
+    let path = dir.join(format!("{id}.hbs"));
+    if !path.is_file() {
+        return false;
+    }
+    cfg.export_template = Some(path);
+    true
 }
 
 /// Qué es un argumento posicional de la línea de comandos.
@@ -850,6 +1008,24 @@ fn apply_phase_c_options(
         let (pattern, text) = parse_replacement(v)?;
         cfg.name_replacements.push((pattern, text));
     }
+    // Propiedades de los exportadores que sí escribimos (css y plain) y
+    // carpeta de exportadores propios. Van antes de `--format`, que consulta
+    // el directorio para saber si el id existe.
+    if let Some(v) = val("css-media-query-2x") {
+        cfg.css_media_query_2x = Some(v);
+    }
+    if let Some(v) = val("css-sprite-prefix") {
+        cfg.css_sprite_prefix = Some(v);
+    }
+    if let Some(v) = val("plain-string-property") {
+        cfg.plain_string_property = Some(v);
+    }
+    if let Some(v) = val("plain-bool-property") {
+        cfg.plain_bool_property = Some(parse_bool(&v, "--plain-bool-property")?);
+    }
+    if let Some(v) = val("custom-exporters-directory") {
+        cfg.custom_exporters_directory = Some(PathBuf::from(v));
+    }
     Ok(())
 }
 
@@ -968,6 +1144,14 @@ fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
     if has("flip-y") || has("flip-vertical") || has("flip-pvr") {
         cfg.flip_vertical = true;
     }
+    if has("disable-rotation") {
+        // Alias del original de nuestro `--no-rotation`.
+        cfg.allow_rotation = false;
+    }
+    if has("enable-cache-busting") {
+        // Alias del original de nuestro `--cache-busting`.
+        cfg.cache_busting = true;
+    }
     if has("heuristic-mask") {
         cfg.heuristic_mask = true;
     }
@@ -992,9 +1176,60 @@ fn save_project(cfg: &ProjectConfig, path: &Path) -> Result<String, String> {
     Ok(msg)
 }
 
+/// `--convert-texture FICHERO`: convierte una sola imagen al formato
+/// pedido, sin empaquetar. Aplican el formato y sus calidades (`--format`,
+/// `--texture-format`, `--pixel-format`), el `--dpi` de los PNG y el `--scale`
+/// de la primera variante; el recorte no tiene sentido sin hoja, así que no
+/// se aplica. Escribe junto a la entrada, o en `--output` si se dio.
+fn convert_texture(cfg: &ProjectConfig, input: &Path) -> Result<String, String> {
+    if !input.is_file() {
+        return Err(format!("--convert-texture: no existe {}", input.display()));
+    }
+    let (w, h, rgba) =
+        tp_core::reader::load_image_rgba(input).map_err(|e| format!("--convert-texture: {e}"))?;
+    let factor = cfg.scale_variants.first().copied().unwrap_or(1.0);
+    let (pixels, width, height) = if (factor - 1.0).abs() < 1e-6 {
+        (rgba, w as usize, h as usize)
+    } else {
+        tp_core::export::scale_rgba(&rgba, w as usize, h as usize, factor, cfg.scale_mode)
+    };
+    let opts = tp_core::export::EncodeOptions::from_config(cfg);
+    let mut bytes = tp_core::export::encode_to_bytes(&pixels, width, height, &opts)
+        .map_err(|e| format!("--convert-texture: {e}"))?;
+    bytes = tp_core::export::apply_dpi(bytes, cfg.gpu_format, cfg.dpi);
+
+    let stem = input
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let file_name = format!("{stem}.{}", cfg.gpu_format.file_extension());
+    let dir = if cfg.output_directory.as_os_str().is_empty() {
+        input
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf()
+    } else {
+        cfg.output_directory.clone()
+    };
+    if !dir.as_os_str().is_empty() {
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("No se pudo crear {}: {e}", dir.display()))?;
+    }
+    let out = dir.join(file_name);
+    std::fs::write(&out, &bytes)
+        .map_err(|e| format!("No se pudo escribir {}: {e}", out.display()))?;
+    Ok(format!(
+        "✔ Convertido {} → {} ({width}×{height}, {})",
+        input.display(),
+        out.display(),
+        cfg.gpu_format.as_str()
+    ))
+}
+
 fn cmd_pack(args: &[String]) {
     let (positionals, values, flags) = parse_args(args);
     check_unknown_options(&values, &flags, PACK_VALUES, PACK_FLAGS).unwrap_or_else(|e| fail(e));
+    check_exporter_only_options(&values, &flags).unwrap_or_else(|e| fail(e));
     let has = |k: &str| flags.iter().any(|f| f == k);
     let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
     let quiet = has("quiet");
@@ -1008,6 +1243,18 @@ fn cmd_pack(args: &[String]) {
     }
     if has("exporter-list") {
         print!("{}", exporter_list_text());
+        // Los `<id>.hbs` de --custom-exporters-directory también son formatos.
+        if let Some(dir) = val("custom-exporters-directory") {
+            let ids = custom_exporter_ids(Path::new(&dir));
+            if ids.is_empty() {
+                eprintln!("⚠ --custom-exporters-directory: no hay <id>.hbs en {dir}");
+            } else {
+                println!("Exportadores propios de {dir}:");
+                for id in ids {
+                    println!("  {id}");
+                }
+            }
+        }
         return;
     }
 
@@ -1340,6 +1587,14 @@ fn cmd_pack(args: &[String]) {
         if !quiet {
             println!("⚠ {msg}");
         }
+    }
+    // `--convert-texture` convierte una imagen y termina, sin empaquetar.
+    if let Some(v) = val("convert-texture") {
+        let msg = convert_texture(&cfg, Path::new(&v)).unwrap_or_else(|e| fail(e));
+        if !quiet {
+            println!("{msg}");
+        }
+        return;
     }
     // `--save FICHERO`: vuelca la configuración ya montada a un .tpproj y
     // termina, para poder guardar una línea de comandos y reutilizarla.
@@ -2114,11 +2369,8 @@ mod tests {
             if bytes[i] == b'-' && bytes[i + 1] == b'-' {
                 let start = i + 2;
                 let mut j = start;
-                while j < bytes.len()
-                    && (bytes[j].is_ascii_lowercase()
-                        || bytes[j].is_ascii_digit()
-                        || bytes[j] == b'-')
-                {
+                // Mayúsculas también: `--orx-keyDuration` lleva las suyas.
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'-') {
                     j += 1;
                 }
                 if j > start {
@@ -2381,6 +2633,8 @@ mod tests {
         // La ayuda prometió cosas que el parser no leía (--no-auto-animations
         // era una de ellas): ya no puede volver a pasar.
         for opt in help_options(&help_text()) {
+            // Comparación exacta: la ayuda tiene que citar la grafía del
+            // registro, que es la que el parser distingue (`--orx-keyDuration`).
             let known = PACK_VALUES.contains(&opt.as_str()) || PACK_FLAGS.contains(&opt.as_str());
             assert!(known, "la ayuda documenta --{opt} y el parser no la conoce");
         }
@@ -2423,6 +2677,14 @@ mod tests {
             "save",
             "heuristic-mask",
             "force-publish",
+            "custom-exporters-directory",
+            "convert-texture",
+            "css-sprite-prefix",
+            "css-media-query-2x",
+            "plain-string-property",
+            "plain-bool-property",
+            "disable-rotation",
+            "enable-cache-busting",
         ] {
             assert!(
                 help.contains(&format!("--{opt}")),
@@ -2579,5 +2841,181 @@ mod tests {
         ]));
         assert!(odd.exists());
         let _ = std::fs::remove_file(&odd);
+    }
+
+    #[test]
+    fn exporter_only_options_are_registered_and_rejected() {
+        // Ninguna es «desconocida»: están registradas con la grafía del
+        // original, y se rechazan diciendo de qué exportador hablan.
+        for (name, format) in EXPORTER_ONLY_OPTIONS {
+            let flag = format!("--{name}");
+            let list = [flag.as_str(), "valor"];
+            let (_, values, flags) = parse_args(&args(&list));
+            assert!(
+                check_unknown_options(&values, &flags, PACK_VALUES, PACK_FLAGS).is_ok(),
+                "--{name} no está registrado"
+            );
+            let err = check_exporter_only_options(&values, &flags).unwrap_err();
+            assert!(err.contains(&flag), "{err}");
+            assert!(err.contains(*format), "{err}");
+            assert!(err.contains("--exporter-list"), "{err}");
+        }
+
+        // Con bools del original también se acepta la forma sin valor.
+        let (_, _, flags) = parse_args(&args(&["--spine-legacy-output"]));
+        assert!(check_unknown_options(&[], &flags, PACK_VALUES, PACK_FLAGS).is_ok());
+        assert!(check_exporter_only_options(&[], &flags).is_err());
+
+        // Sin esas opciones no molesta, y el resto sigue funcionando.
+        assert!(check_exporter_only_options(&[], &[]).is_ok());
+        assert!(check_unknown_options(
+            &[("css-sprite-prefix".into(), "icon-".into())],
+            &[],
+            PACK_VALUES,
+            PACK_FLAGS
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn css_and_plain_exporter_options_reach_the_config() {
+        let (_, values, flags) = parse_args(&args(&[
+            "--css-sprite-prefix",
+            "icon-",
+            "--css-media-query-2x",
+            "(-webkit-min-device-pixel-ratio: 2)",
+            "--plain-string-property",
+            "hola",
+            "--plain-bool-property",
+            "false",
+            "--disable-rotation",
+            "--enable-cache-busting",
+        ]));
+        let mut cfg = ProjectConfig {
+            allow_rotation: true,
+            cache_busting: false,
+            ..ProjectConfig::default()
+        };
+        apply_phase_c_options(&mut cfg, &values).unwrap();
+        apply_flag_options(&mut cfg, &flags);
+        assert_eq!(cfg.css_sprite_prefix.as_deref(), Some("icon-"));
+        assert_eq!(
+            cfg.css_media_query_2x.as_deref(),
+            Some("(-webkit-min-device-pixel-ratio: 2)")
+        );
+        assert_eq!(cfg.plain_string_property.as_deref(), Some("hola"));
+        assert_eq!(cfg.plain_bool_property, Some(false));
+        assert!(!cfg.allow_rotation);
+        assert!(cfg.cache_busting);
+        cfg.validate().unwrap();
+
+        let err = apply_phase_c_options(
+            &mut ProjectConfig::default(),
+            &[("plain-bool-property".into(), "quizas".into())],
+        )
+        .unwrap_err();
+        assert!(err.contains("--plain-bool-property"), "{err}");
+    }
+
+    #[test]
+    fn custom_exporters_directory_adds_an_id() {
+        let dir = std::env::temp_dir().join("tpcli_custom_exporters");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("miexportador.hbs"),
+            "{{#each frames}}{{this.filename}}\n{{/each}}",
+        )
+        .unwrap();
+        std::fs::write(dir.join("otro.json.hbs"), "{}").unwrap();
+
+        let mut cfg = ProjectConfig {
+            custom_exporters_directory: Some(dir.clone()),
+            ..ProjectConfig::default()
+        };
+        assert!(apply_custom_exporter(&mut cfg, "miexportador"));
+        assert_eq!(
+            cfg.export_template.as_deref(),
+            Some(dir.join("miexportador.hbs").as_path())
+        );
+
+        // Un id que no existe no vale, ni uno con ruta en la del directorio.
+        let mut cfg = ProjectConfig {
+            custom_exporters_directory: Some(dir.clone()),
+            ..ProjectConfig::default()
+        };
+        assert!(!apply_custom_exporter(&mut cfg, "no-existe"));
+        assert!(!apply_custom_exporter(&mut cfg, "../algo"));
+
+        // --format con ese id pasa por apply_template_format.
+        let mut cfg = ProjectConfig {
+            custom_exporters_directory: Some(dir.clone()),
+            ..ProjectConfig::default()
+        };
+        apply_template_format(&mut cfg, "miexportador").unwrap();
+        assert!(cfg.export_template.is_some());
+        assert!(apply_template_format(&mut cfg, "otro.json").is_ok());
+
+        // Sin directorio configurado sigue fallando como antes.
+        let mut cfg = ProjectConfig::default();
+        assert!(apply_template_format(&mut cfg, "miexportador").is_err());
+
+        // Lo que --exporter-list lista junto a los del original.
+        assert_eq!(
+            custom_exporter_ids(&dir),
+            vec!["miexportador".to_string(), "otro.json".to_string()]
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn convert_texture_writes_the_requested_format() {
+        use image::ImageEncoder;
+
+        let src = std::env::temp_dir().join("tpcli_convert_src.png");
+        let rgba = [255u8, 0, 0, 255, 0, 0, 255, 255];
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new_with_quality(
+            &mut png,
+            image::codecs::png::CompressionType::Default,
+            image::codecs::png::FilterType::Adaptive,
+        )
+        .write_image(&rgba, 2, 1, image::ExtendedColorType::Rgba8)
+        .unwrap();
+        std::fs::write(&src, &png).unwrap();
+
+        // Mismo directorio que la entrada y otro formato.
+        let cfg = ProjectConfig {
+            gpu_format: GpuFormat::Jpg,
+            ..ProjectConfig::default()
+        };
+        let msg = convert_texture(&cfg, &src).unwrap();
+        assert!(msg.contains("Convertido"), "{msg}");
+        let jpg = src.with_extension("jpg");
+        let bytes = std::fs::read(&jpg).unwrap();
+        assert_eq!(&bytes[..2], &[0xFF, 0xD8], "no es un JPEG");
+
+        // Con --scale se amplía antes de codificar, y --output dirige dónde.
+        let out_dir = std::env::temp_dir().join("tpcli_convert_out");
+        let _ = std::fs::remove_dir_all(&out_dir);
+        let cfg = ProjectConfig {
+            gpu_format: GpuFormat::Png,
+            scale_variants: vec![2.0],
+            output_directory: out_dir.clone(),
+            ..ProjectConfig::default()
+        };
+        convert_texture(&cfg, &src).unwrap();
+        let scaled = out_dir.join("tpcli_convert_src.png");
+        let img = image::load_from_memory(&std::fs::read(&scaled).unwrap()).unwrap();
+        assert_eq!((img.width(), img.height()), (4, 2));
+
+        // Un fichero que no existe se rechaza con el nombre de la opción.
+        let err = convert_texture(&cfg, &std::env::temp_dir().join("no_esta.png")).unwrap_err();
+        assert!(err.contains("--convert-texture"), "{err}");
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&jpg);
+        let _ = std::fs::remove_dir_all(&out_dir);
     }
 }

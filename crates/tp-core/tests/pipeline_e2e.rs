@@ -2935,3 +2935,85 @@ fn p15_ingests_pkm_pvr_ccz_and_svgz_inputs() {
     );
     assert!(output.join("atlas.png").exists(), "la hoja se publica");
 }
+
+#[test]
+fn fase_c_renderiza_prefijo_css_media_query_y_plantilla_propia() {
+    let fx = Fixture::new("fasec_render");
+    let input = make_input_dir(&fx.dir, "in");
+    write_png(&input.join("hero.png"), 8, 8, [200, 0, 0, 255]);
+    write_png(&input.join("icon.png"), 8, 8, [0, 200, 0, 255]);
+
+    // 1) CSS: el prefijo toca las clases y la media query sólo la variante >1.
+    let output = fx.dir.join("out_css");
+    let mut cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        ..ProjectConfig::default()
+    };
+    cfg.template_format = TemplateFormat::Css;
+    cfg.css_sprite_prefix = Some("icon-".into());
+    cfg.css_media_query_2x = Some("(-webkit-min-device-pixel-ratio: 2)".into());
+    cfg.scale_variants = vec![1.0, 2.0];
+    pipeline::run(&cfg).unwrap();
+
+    let base = std::fs::read_to_string(output.join("atlas.css")).unwrap();
+    assert!(base.contains(".icon-hero {"), "clase prefijada: {base}");
+    assert!(
+        !base.contains("@media"),
+        "la hoja base no se envuelve: {base}"
+    );
+
+    let hd = std::fs::read_to_string(output.join("atlas@2x.css")).unwrap();
+    assert!(
+        hd.contains("@media (-webkit-min-device-pixel-ratio: 2) {"),
+        "media query en la 2×: {hd}"
+    );
+    assert!(hd.contains(".icon-hero {"), "clase prefijada: {hd}");
+
+    // 2) PlainText: las propiedades del exportador llegan a la plantilla.
+    let output = fx.dir.join("out_plain");
+    let mut cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        ..ProjectConfig::default()
+    };
+    cfg.template_format = TemplateFormat::PlainText;
+    cfg.plain_string_property = Some("hola".into());
+    cfg.plain_bool_property = Some(false);
+    pipeline::run(&cfg).unwrap();
+    let text = std::fs::read_to_string(output.join("atlas.txt")).unwrap();
+    assert!(text.contains("string_property: hola"), "{text}");
+    assert!(text.contains("bool_property: false"), "{text}");
+    assert!(!text.contains("bool_property: true"), "{text}");
+
+    // Sin las opciones no aparece ninguna de las dos líneas.
+    let output = fx.dir.join("out_plain_limpio");
+    let mut cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        ..ProjectConfig::default()
+    };
+    cfg.template_format = TemplateFormat::PlainText;
+    pipeline::run(&cfg).unwrap();
+    let text = std::fs::read_to_string(output.join("atlas.txt")).unwrap();
+    assert!(!text.contains("string_property:"), "{text}");
+
+    // 3) Exportador propio: manda la plantilla aunque la familia sea json.
+    let output = fx.dir.join("out_custom");
+    let tpl = fx.dir.join("miexportador.hbs");
+    std::fs::write(&tpl, "{{#each frames}}{{this.filename}}|{{/each}}").unwrap();
+    let mut cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        ..ProjectConfig::default()
+    };
+    cfg.export_template = Some(tpl);
+    pipeline::run(&cfg).unwrap();
+    let data = std::fs::read_to_string(output.join("atlas.json")).unwrap();
+    assert!(!data.trim_start().starts_with('{'), "no es JSON: {data}");
+    assert!(data.contains("hero") && data.contains("icon"), "{data}");
+}
