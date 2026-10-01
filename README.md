@@ -214,12 +214,16 @@ Las opciones desconocidas se rechazan con `error: opción desconocida: … (usa
 `--version`/`-V` y `--exporter-list`.
 `--data` y `--sheet` deben compartir carpeta y nombre base (el modelo tiene un
 nombre base por ejecución) y la extensión de `--data` tiene que corresponder al
-formato de datos elegido. Siguen fuera de alcance `--scale` global,
-`--max-width`/`--max-height`, `--background-color`, `--ignore-files`,
+formato de datos elegido. Los huecos que quedaban ya están cerrados (Fase C):
+`--scale`, `--max-width`/`--max-height`, `--background-color`, `--ignore-files`,
 `--replace`, `--dpi`, `--heuristic-mask`, `--convert-texture`,
-`--force-publish`, `--save`, `--custom-exporters-directory` y los flags de
-exportadores concretos (Fase C); `--tracer-tolerance` y `--content-protection` no
-se aceptan por diferencia de unidades y de cifrado. Detalle en
+`--force-publish` y `--save`; además `--custom-exporters-directory`,
+`--css-sprite-prefix`, `--css-media-query-2x`,
+`--plain-string-property`/`--plain-bool-property` y los alias
+`--disable-rotation`/`--enable-cache-busting`. Las doce opciones de exportadores
+concretos que este clon no escribe sí se registran, pero se rechazan diciendo de
+qué exportador son; `--tracer-tolerance` y `--content-protection` siguen sin
+aceptarse por diferencia de unidades y de cifrado. Detalle en
 `docs/comparativa-texturepacker.md` §5.
 
 ## Cobertura de la especificación
@@ -456,7 +460,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 351 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 359 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
@@ -467,8 +471,10 @@ cuando faltan placeholders y error con `multipack = false`), round-trip de ETC2 
 + EAC) y PVRTC 4BPP (opaco, gradientes, transparencia y layout morton) contra un
 decodificador independiente (`texture2ddecoder`), cifrado/descifrado, plantillas,
 configuración (round-trip TOML de los ajustes nuevos), CLI (flags y parseo de
-argumentos, rechazo de opciones desconocidas, `--format` con doble acepción,
-`--data`/`--sheet` y que la ayuda no prometa nada que el parser no lea), y 44 pruebas end-to-end que generan sprites reales en disco y
+argumentos, rechazo de opciones desconocidas y de las de exportadores ajenas con
+su motivo, `--format` con doble acepción, `--data`/`--sheet`, las opciones de la
+Fase C —escala, fondo, `--save`, conversor y exportadores propios— y que la ayuda
+no prometa nada que el parser no lea), y 45 pruebas end-to-end que generan sprites reales en disco y
 verifican aliases, rotación, normal maps, variantes, multi-atlas, los tres
 formatos GPU (ETC2/PVRTC/ASTC), los ajustes de Lote 5 (padding de borde,
 divisor común, nombres con subcarpeta/extensión, `texture_path`, premultiply y

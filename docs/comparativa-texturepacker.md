@@ -264,7 +264,7 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
 
 Comparativa de `tp-cli` con el CLI oficial (su `--help` y la documentación de
 `commandline/parameters`). Todo lo que se puede escribir vive en dos registros de
-`crates/tp-cli/src/main.rs`: **66 claves con valor** (`PACK_VALUES`) y **30
+`crates/tp-cli/src/main.rs`: **92 claves con valor** (`PACK_VALUES`) y **41
 booleanas** (`PACK_FLAGS`), más 7 para `decrypt`. Cualquier token que no esté en
 el registro se rechaza con `error: opción desconocida: … (usa --help para ver
 las opciones)` y salida 1 (`unknown_options_are_rejected_with_a_hint`); el
@@ -283,13 +283,49 @@ lo que permitía escribir `--no-auto-animations` o `--height` sin que pasara nad
 | sólo existía `--common-divisor` | además `--common-divisor-x`/`-y` (por eje, n ≥ 1) y `--default-pivot-point X,Y` en [0,1], y booleanas explícitas `--force-identical-layout`, `--trim-sprite-names`, `--enable-rotation`, `--pack-normalmaps` |
 | `--version`/`-V`, `--exporter-list` y `--help` no existían en `pack` | los tres, más `--help` y `--quiet` en `decrypt` |
 
+### Fase C — empaquetado, conversión y exportadores (resuelta)
+
+Todas las opciones que quedaban marcadas como «van a la Fase C» ya están
+cableadas. Se toman en `apply_phase_c_options`, `apply_flag_options`,
+`apply_template_format`/`apply_custom_exporter` y `convert_texture`, y se
+validan en `ProjectConfig::validate()`:
+
+| Opción | Qué hace ahora |
+|---|---|
+| `--max-width` / `--max-height` | tope por página (`effective_max_width`/`height`): 1..16384 y potencia de 2 |
+| `--background-color` | color de fondo de la hoja, acepta `rrggbb`, `rrggbbaa` y `#abc` |
+| `--ignore-files` | patrones glob (`*`/`?`) sobre la ruta relativa, la absoluta y el nombre |
+| `--replace PATRÓN=TEXTO` | sustituciones por `regex` sobre el id, repetibles (`--replace '^a=hero'`) |
+| `--dpi N` | escribe el chunk `pHYs` en los PNG (1..1000000); `insert_phys`+`crc32` |
+| `--heuristic-mask` | al cargar, el color dominante del borde pasa a alpha 0 (sólo si todo estaba opaco) y se avisa |
+| `--force-publish` | escribe aunque los bytes sean idénticos a los ya publicados |
+| `--scale F` | multiplica las variantes existentes y sus nombres; con una sola variante fuerza el sufijo `""`, así que los nombres no cambian |
+| `--save F` | serializa el proyecto (`ProjectConfig::to_toml`) en `F` y termina **sin empaquetar**; avisa si la extensión no es `.tpproj` |
+| `--convert-texture FICHERO` | lee la imagen, aplica `--scale`, `--dpi` y `--texture-format`, escribe el fichero (en `--output` o junto a la entrada) y termina |
+| `--custom-exporters-directory DIR` | cada `DIR/<id>.hbs` es un formato de datos más: vale en `--format`, en `--template-format` y aparece en `--exporter-list` |
+| `--css-sprite-prefix P` | prefija `cssClass` en la raíz y en `sheets[].frames` (sólo la familia CSS) |
+| `--css-media-query-2x Q` | envuelve el render en `@media Q { … }` cuando la escala es >1×; la hoja base sale intacta |
+| `--plain-string-property` / `--plain-bool-property` | `exporterProperties.string_property`/`bool_property`, con los marcadores `has_string`/`has_bool` para que un `false` también se escriba |
+| `--disable-rotation`, `--enable-cache-busting` | alias del original de `--no-rotation` y `--cache-busting` |
+
+Además, `templates::render` sólo serializa el JSON «de contrato» cuando no hay
+plantilla propia: con `--template` o con un `--custom-exporters-directory` la
+plantilla manda aunque la familia siga siendo json.
+
+Tests: `phase_c_value_flags_reach_the_config`, `scale_flag_multiplies_every_variant`,
+`save_writes_a_project_and_skips_the_packing`, `css_and_plain_exporter_options_reach_the_config`,
+`custom_exporters_directory_adds_an_id`, `convert_texture_writes_the_requested_format`,
+`exporter_only_options_are_registered_and_rejected` y el e2e
+`fase_c_renderiza_prefijo_css_media_query_y_plantilla_propia`.
+
 ### Renombrados (aceptamos los dos nombres)
 
 `--texture-path`/`--texturepath`, `--dither`/`--dither-type`,
 `--pixel-format`/`--opt`, `--basis-quality`/`--basisu-quality`,
 `--shape-padding`/`--padding`, `--align-to-grid`/`--align`,
 `--no-aliasing`/`--disable-auto-alias`, `--flip-y`/`--flip-vertical`/`--flip-pvr`,
-`--help`/`-h`, `--version`/`-V`.
+`--help`/`-h`, `--version`/`-V`, `--disable-rotation`/`--no-rotation`,
+`--enable-cache-busting`/`--cache-busting`.
 
 ### Sin equivalencia (se rechazan, no se fingen)
 
@@ -299,11 +335,18 @@ lo que permitía escribir `--no-auto-animations` o `--height` sin que pasara nad
   el test de invariantes.
 - `--content-protection`: pvr.ccz con AES-128; nosotros ciframos con `--key`
   (AES-256-GCM). Tarea distinta, nombre distinto.
-- Los huecos que quedan — `--scale` global, `--max-width`/`--max-height`,
-  `--background-color`, `--ignore-files`, `--replace`, `--dpi`,
-  `--heuristic-mask`, `--convert-texture`, `--force-publish`, `--save`,
-  `--custom-exporters-directory` y los flags de exportadores concretos — van a la
-  **Fase C**; lo mismo los 3 parámetros de licencia, que no aplican.
+- **Doce opciones de exportadores concretos** que sólo acompañan a una salida que
+  este clon no escribe: `classfile-file` (monogame), `easeljs-framerate`,
+  `zim-framerate`, `gamemaker-texturegroup-frame-speed`, `libgdx-legacy-output`,
+  `spine-legacy-output`, `spritestudio-writePivots` y las cinco de `orx`
+  (`includeComments`, `keepInCache`, `keyDuration`, `optimizeSectionNames`,
+  `pixelSnap`). Están en `EXPORTER_ONLY_OPTIONS` para que **no** salgan como
+  desconocidas y se rechazan con su motivo —«es una propiedad del exportador orx
+  que este clon todavía no escribe… Usa `--exporter-list` … o
+  `--template/--custom-exporters-directory` para una salida propia»—
+  (`exporter_only_options_are_registered_and_rejected`). Con dos o más a la vez
+  el mensaje los enumera.
+- Los 3 parámetros de licencia, que no aplican.
 
 ### Límite de `--data` + `--sheet`
 
@@ -358,8 +401,9 @@ numeración se aplica igual y se avisa. Tests: `sheet_and_data_share_one_base_na
 
 Pendientes fuera del orden acordado: ninguno — la lista de §2/§3 está cerrada,
 salvo «Scale mode», que queda **[PARCIAL]** a propósito (el Hq2x se omitió por su
-licencia, decisión acordada). §5 (paridad del CLI) se cierra con el punto 16 de
-la lista, con sus huecos de alcance marcados como Fase C.
+licencia, decisión acordada). §5 (paridad del CLI) se cierra con los puntos 16 y
+17 de la lista: el 16 con las Fases A+B y el 17 con la Fase C, de modo que ya no
+queda ningún hueco de alcance marcado como pendiente.
 
 Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
@@ -367,7 +411,7 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all 
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
 305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, 327 tras el duodécimo,
 328 tras el decimotercero, 332 tras el decimocuarto, 340 tras el decimoquinto,
-**351 tras el decimosexto**).
+351 tras el decimosexto, **359 tras el decimoséptimo**).
 
 ---
 
@@ -545,3 +589,38 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all 
     `boolean_options_do_not_swallow_the_next_positional`, `parity_flags_reach_the_config`,
     `exporter_list_and_version_are_stable`, `every_option_in_the_help_is_known` y
     `help_documents_the_packing_options`. El total queda en **351**.
+
+17. **Paridad del CLI (Fase C)** — **hecho** (ver §5 «Fase C — empaquetado,
+    conversión y exportadores» y «Sin equivalencia»): los huecos que el punto 16
+    dejó marcados, en dos compromisos. **C1, empaquetado**:
+    `--max-width`/`--max-height` (`effective_max_width`/`height` por página,
+    1..16384 y potencia de 2), `--background-color` (relleno de la hoja tras el
+    blit, con `#abc` detectado a mano), `--ignore-files` (glob sobre ruta
+    relativa, absoluta y nombre), `--replace PATRÓN=TEXTO` repetible sobre el id
+    ya construido (crate `regex` del workspace), `--dpi` (chunk `pHYs` con
+    `apply_dpi`/`insert_phys`/`crc32`, sólo PNG), `--heuristic-mask` (el color
+    dominante del borde pasa a alpha 0 con recuento por `AtomicUsize` y aviso),
+    `--force-publish` (no salta la escritura por bytes idénticos), `--scale`
+    (multiplica las variantes y sus nombres, y con una sola variante fuerza el
+    sufijo `""`) y `--save` (escribe el `.tpproj` y termina sin empaquetar).
+    **C2, conversión y exportadores**: `--convert-texture` (carga, escala,
+    codifica al formato pedido y termina), `--custom-exporters-directory`
+    (`<id>.hbs` propios como formatos de datos, válidos en `--format`,
+    `--template-format` y listados por `--exporter-list`),
+    `--css-sprite-prefix`, `--css-media-query-2x` (sólo por encima de 1×),
+    `--plain-string-property`/`--plain-bool-property` (`exporterProperties` con
+    `has_*`, para que un `false` también se escriba), los alias
+    `--disable-rotation`/`--enable-cache-busting`, y las doce opciones de
+    exportador que este clon no escribe: registradas en
+    `EXPORTER_ONLY_OPTIONS` para no fingirlas desconocidas y rechazadas diciendo
+    de qué exportador son. En `templates::render`, el json «de contrato» sólo se
+    emite cuando no hay plantilla propia, así que un exportador propio manda.
+    Tests nuevos (8): `phase_c_value_flags_reach_the_config`,
+    `scale_flag_multiplies_every_variant`,
+    `save_writes_a_project_and_skips_the_packing`,
+    `exporter_only_options_are_registered_and_rejected`,
+    `css_and_plain_exporter_options_reach_the_config`,
+    `custom_exporters_directory_adds_an_id`,
+    `convert_texture_writes_the_requested_format` y el e2e
+    `fase_c_renderiza_prefijo_css_media_query_y_plantilla_propia`. El total
+    queda en **359**.
