@@ -2,10 +2,11 @@
 
 use super::App;
 use eframe::egui;
+use std::path::PathBuf;
 use tp_core::config::{
     AlphaHandling, BasicSortBy, ColorDepth, DitheringAlgorithm, DxtMode, GdxFilter, GpuFormat,
-    PackMode, PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ScaleMode, SizeConstraint,
-    SortOrder, TemplateFormat, TrimMode, VariantOptions,
+    PackMode, PackingAlgorithm, PackingStrategy, PixelFormat, PngDither, ProjectConfig, ScaleMode,
+    SizeConstraint, SortOrder, TemplateFormat, TrimMode, VariantOptions,
 };
 
 pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
@@ -247,6 +248,8 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     };
                 }
             });
+            custom_exporters_ui(app, ui);
+            template_properties_ui(app, ui);
             ui.label("Clave de cifrado AES-256-GCM (opcional)");
             let mut key = app.config.encryption_key.clone().unwrap_or_default();
             if ui
@@ -1049,9 +1052,28 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
             app.config.extrude, app.config.padding
         ));
     }
-    if app.config.export_template.is_some() && app.config.template_format == TemplateFormat::Json {
+    if let Some(path) = app.config.export_template.as_deref() {
+        if !path.is_file() {
+            warnings.push(format!(
+                "La plantilla {} no existe: el empaquetado fallará.",
+                path.display()
+            ));
+        }
+    }
+    if let Some(dir) = app.config.custom_exporters_directory.as_deref() {
+        if tp_core::dataformats::custom_exporter_ids(dir).is_empty() {
+            warnings.push(format!(
+                "No hay <id>.hbs en {}: no se podrá elegir un exportador propio.",
+                dir.display()
+            ));
+        }
+    }
+    if app.config.template_format != TemplateFormat::Css
+        && (app.config.css_sprite_prefix.is_some() || app.config.css_media_query_2x.is_some())
+    {
         warnings.push(
-            "La plantilla Mustache se ignora con el formato JSON (usa XML/Plist/TSV/...).".into(),
+            "El prefijo de clase y la media query 2× sólo aplican al formato CSS; se ignorarán."
+                .into(),
         );
     }
     if !app.config.gpu_format.is_supported() {
@@ -1456,6 +1478,225 @@ fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
+/// «Exportadores propios»: una carpeta de `<id>.hbs` elegible como plantilla
+/// de salida. La familia y la extensión las sigue mandando el combo
+/// «Formato de metadatos»: el exportador propio sólo aporta el texto, igual
+/// que en el original (y `validate()` sólo acepta ids de formatos oficiales).
+fn custom_exporters_ui(app: &mut App, ui: &mut egui::Ui) {
+    let mut changed = false;
+    egui::CollapsingHeader::new("Exportadores propios")
+        .default_open(false)
+        .show(ui, |ui| changed = custom_exporters_body(app, ui));
+    if changed {
+        app.on_config_changed();
+    }
+}
+
+/// Contenido de «Exportadores propios». Devuelve `true` si tocó la config;
+/// el wrapper decide si avisa. Se le puede llamar a mano desde un `Ui` de
+/// test, sin abrir la cabecera.
+fn custom_exporters_body(app: &mut App, ui: &mut egui::Ui) -> bool {
+    let mut changed = false;
+    ui.label(
+        egui::RichText::new(
+            "Carpeta con plantillas <id>.hbs propias; elegir una no cambia la familia \
+             ni la extensión del fichero de datos.",
+        )
+        .weak(),
+    );
+    ui.label("Directorio de exportadores");
+    ui.horizontal(|ui| {
+        let mut dir = app
+            .config
+            .custom_exporters_directory
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut dir)
+                    .desired_width(160.0)
+                    .hint_text("vacío = ninguno"),
+            )
+            .changed()
+        {
+            app.config.custom_exporters_directory = if dir.trim().is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(dir))
+            };
+            changed = true;
+        }
+        if ui.button("…").clicked() {
+            if let Some(d) = rfd::FileDialog::new().pick_folder() {
+                app.config.custom_exporters_directory = Some(d);
+                changed = true;
+            }
+        }
+    });
+
+    let ids = match app.config.custom_exporters_directory.as_deref() {
+        Some(dir) => tp_core::dataformats::custom_exporter_ids(dir),
+        None => Vec::new(),
+    };
+    let active = active_custom_exporter_id(&app.config).unwrap_or_default();
+    let mut selected = active.clone();
+    egui::ComboBox::from_id_salt("custom_exporter_id")
+        .selected_text(if active.is_empty() {
+            "— ninguno —".to_string()
+        } else {
+            active.clone()
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut selected, String::new(), "— ninguno —");
+            for id in &ids {
+                ui.selectable_value(&mut selected, id.clone(), id);
+            }
+        });
+    if selected != active {
+        let applied = if selected.is_empty() {
+            app.config.clear_custom_exporter()
+        } else {
+            app.config.select_custom_exporter(&selected)
+        };
+        changed |= applied;
+    }
+    if ids.is_empty() {
+        ui.label(
+            egui::RichText::new("Sin <id>.hbs seleccionables: revisa el directorio de arriba.")
+                .weak(),
+        );
+    }
+    changed
+}
+
+/// «Propiedades de la plantilla»: lo que sólo consume el texto escrito — el
+/// prefijo y la media query del exportador CSS, y las propiedades
+/// `exporterProperties.*` que citan la plantilla de texto plano y los `.hbs`
+/// propios.
+fn template_properties_ui(app: &mut App, ui: &mut egui::Ui) {
+    egui::CollapsingHeader::new("Propiedades de la plantilla")
+        .default_open(false)
+        .show(ui, |ui| template_properties_body(app, ui));
+}
+
+/// Contenido de «Propiedades de la plantilla» (ver
+/// [`custom_exporters_body`] para por qué está separado de la cabecera).
+fn template_properties_body(app: &mut App, ui: &mut egui::Ui) {
+    if app.config.template_format == TemplateFormat::Css {
+        ui.label("Prefijo de clase CSS (--css-sprite-prefix)");
+        let mut prefix = app.config.css_sprite_prefix.clone().unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut prefix)
+                    .desired_width(190.0)
+                    .hint_text("vacío = ninguno (p. ej. icon-)"),
+            )
+            .changed()
+        {
+            app.config.css_sprite_prefix = none_if_empty(prefix);
+            app.on_config_changed();
+        }
+        ui.label("Media query de la variante 2× (--css-media-query-2x)");
+        let mut query = app.config.css_media_query_2x.clone().unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut query)
+                    .desired_width(190.0)
+                    .hint_text("sólo envuelve la hoja de las variantes >1×"),
+            )
+            .changed()
+        {
+            app.config.css_media_query_2x = none_if_empty(query);
+            app.on_config_changed();
+        }
+    } else {
+        ui.label(
+            egui::RichText::new(
+                "El prefijo de clase y la media query 2× sólo aplican al formato CSS.",
+            )
+            .weak(),
+        );
+    }
+
+    ui.label("string_property de la plantilla (--plain-string-property)");
+    let mut text = app.config.plain_string_property.clone().unwrap_or_default();
+    if ui
+        .add(
+            egui::TextEdit::singleline(&mut text)
+                .desired_width(190.0)
+                .hint_text("vacío = no escribir"),
+        )
+        .changed()
+    {
+        app.config.plain_string_property = none_if_empty(text);
+        app.on_config_changed();
+    }
+
+    ui.label("bool_property de la plantilla (--plain-bool-property)");
+    let before = plain_bool_choice(app.config.plain_bool_property);
+    let mut choice = before;
+    egui::ComboBox::from_id_salt("plain_bool_property")
+        .selected_text(PLAIN_BOOL_LABELS[choice])
+        .show_ui(ui, |ui| {
+            for (i, label) in PLAIN_BOOL_LABELS.iter().enumerate() {
+                ui.selectable_value(&mut choice, i, *label);
+            }
+        });
+    if choice != before {
+        app.config.plain_bool_property = plain_bool_value(choice);
+        app.on_config_changed();
+    }
+}
+
+/// Etiquetas del tri-estado de `plain_bool_property` (índice =
+/// [`plain_bool_choice`]).
+const PLAIN_BOOL_LABELS: [&str; 3] = ["— no escribir", "true", "false"];
+
+/// `Some("")` no es un valor: vacío y en blanco vuelven a `None`, como en
+/// `texture_path`.
+fn none_if_empty(value: String) -> Option<String> {
+    if value.trim().is_empty() {
+        None
+    } else {
+        Some(value)
+    }
+}
+
+/// El tri-estado de `plain_bool_property` como índice de
+/// [`PLAIN_BOOL_LABELS`] (0 = `None`).
+fn plain_bool_choice(value: Option<bool>) -> usize {
+    match value {
+        None => 0,
+        Some(true) => 1,
+        Some(false) => 2,
+    }
+}
+
+fn plain_bool_value(choice: usize) -> Option<bool> {
+    match choice {
+        0 => None,
+        1 => Some(true),
+        _ => Some(false),
+    }
+}
+
+/// El id del exportador propio activo: el nombre de `export_template` sin
+/// `.hbs`, sólo cuando esa plantilla vive dentro del directorio de
+/// exportadores (una plantilla elegida aparte no es «propia» del combo).
+fn active_custom_exporter_id(config: &ProjectConfig) -> Option<String> {
+    let dir = config.custom_exporters_directory.as_deref()?;
+    let path = config.export_template.as_deref()?;
+    if path.parent() != Some(dir) {
+        return None;
+    }
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .and_then(|n| n.strip_suffix(".hbs"))
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
 /// Marca que la config cambió en este frame (el panel llama a
 /// `on_config_changed` al terminar de pintar).
 fn mark_settings_changed(ui: &egui::Ui) {
@@ -1526,3 +1767,95 @@ const GPU_PIXEL_FORMATS: &[(PixelFormat, &str)] = &[
     (PixelFormat::Astc12x10, "ASTC_12x10"),
     (PixelFormat::Astc12x12, "ASTC_12x12"),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn active_custom_exporter_id_only_reads_ids_inside_the_directory() {
+        let dir = PathBuf::from("mis-exportadores");
+        let mut cfg = ProjectConfig {
+            custom_exporters_directory: Some(dir.clone()),
+            ..ProjectConfig::default()
+        };
+        assert_eq!(active_custom_exporter_id(&cfg), None, "sin plantilla");
+
+        cfg.export_template = Some(dir.join("mi.hbs"));
+        assert_eq!(active_custom_exporter_id(&cfg).as_deref(), Some("mi"));
+
+        cfg.export_template = Some(dir.join("otro.json.hbs"));
+        assert_eq!(
+            active_custom_exporter_id(&cfg).as_deref(),
+            Some("otro.json"),
+            "el id conserva sus puntos"
+        );
+
+        cfg.export_template = Some(PathBuf::from("de-fuera/hbs"));
+        assert_eq!(
+            active_custom_exporter_id(&cfg),
+            None,
+            "una plantilla de fuera del directorio no es «propia»"
+        );
+
+        cfg.export_template = Some(dir.join("sin_extension"));
+        assert_eq!(active_custom_exporter_id(&cfg), None, "sin .hbs");
+
+        cfg.custom_exporters_directory = None;
+        cfg.export_template = Some(PathBuf::from("x.hbs"));
+        assert_eq!(active_custom_exporter_id(&cfg), None, "sin directorio");
+    }
+
+    #[test]
+    fn plain_bool_choice_is_a_faithful_tri_state() {
+        for (value, choice) in [(None, 0), (Some(true), 1), (Some(false), 2)] {
+            assert_eq!(plain_bool_choice(value), choice);
+            assert_eq!(plain_bool_value(choice), value);
+        }
+        assert_eq!(PLAIN_BOOL_LABELS.len(), 3);
+        assert_eq!(PLAIN_BOOL_LABELS[plain_bool_choice(Some(false))], "false");
+    }
+
+    #[test]
+    fn empty_strings_become_none_like_texture_path() {
+        assert_eq!(none_if_empty(String::new()), None);
+        assert_eq!(none_if_empty("   ".into()), None);
+        assert_eq!(none_if_empty(" icon- ".into()).as_deref(), Some(" icon- "));
+    }
+
+    #[test]
+    fn the_new_sections_render_in_every_state() {
+        let ctx = egui::Context::default();
+        let screen = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let cases = [
+            (TemplateFormat::Css, true, Some(false)),
+            (TemplateFormat::Json, false, None),
+            (TemplateFormat::PlainText, true, Some(true)),
+        ];
+        for (template, with_dir, flag) in cases {
+            let mut app = App::new_for_testing(ctx.clone(), None);
+            app.advanced_settings = true;
+            app.config.template_format = template;
+            app.config.custom_exporters_directory = with_dir.then(|| PathBuf::from("exportadores"));
+            app.config.css_sprite_prefix = Some("icon-".into());
+            app.config.plain_bool_property = flag;
+
+            // El panel entero con las avanzadas activadas y, aparte, el
+            // contenido de los dos colapsables nuevos (cerrados por
+            // defecto: aquí se les llama a mano).
+            let _ = ctx.run(screen.clone(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    settings_ui(&mut app, ui);
+                    custom_exporters_body(&mut app, ui);
+                    template_properties_body(&mut app, ui);
+                });
+            });
+        }
+    }
+}
