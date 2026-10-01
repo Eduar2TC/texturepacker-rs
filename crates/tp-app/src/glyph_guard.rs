@@ -22,7 +22,7 @@ struct Occurrence {
 /// Maneja cadenas multilínea y salta las de bytes (`b"…"`), que nunca se
 /// pintan. Un `"` suelto (p. ej. `'"'`) se ignora si está entre comillas
 /// simples.
-fn literals(src: &str) -> Vec<(usize, String)> {
+pub(crate) fn literals(src: &str) -> Vec<(usize, String)> {
     let chars: Vec<char> = src.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
@@ -89,7 +89,7 @@ fn literals(src: &str) -> Vec<(usize, String)> {
 }
 
 /// Descodifica los escapes que usamos en el código (`\u{2192}`, `\n`, `\"`…).
-fn unescape(s: &str) -> String {
+pub(crate) fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
     while let Some(c) = it.next() {
@@ -126,7 +126,7 @@ fn unescape(s: &str) -> String {
     out
 }
 
-fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(crate) fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -140,15 +140,19 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
+/// Raíces con los literales que la UI pinta.
+pub(crate) fn source_roots() -> Vec<PathBuf> {
+    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
+    vec![manifest.join("src"), manifest.join("../tp-core/src")]
+}
+
 /// Caracteres no ASCII de los literales que la UI pinta: `tp-app/src` (sin
 /// los binarios, que no pinta egui) y `tp-core/src`, cuyos mensajes acaban en
 /// el log de la app.
 fn ui_chars() -> Vec<Occurrence> {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let roots = [manifest.join("src"), manifest.join("../tp-core/src")];
     let mut files = Vec::new();
-    for root in &roots {
-        walk(root, &mut files);
+    for root in source_roots() {
+        walk(&root, &mut files);
     }
     let mut out = Vec::new();
     for file in files {

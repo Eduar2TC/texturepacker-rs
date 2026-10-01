@@ -10,7 +10,9 @@ description = "TexturePacker-RS desktop application (egui/eframe)"
 tp-core = { path = "../tp-core", features = ["gpu-formats"] }
 eframe.workspace = true
 rfd.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 notify = "8"
 # Decodificar el icono de ventana embebido (packaging/icon.png).
 image.workspace = true

@@ -27,6 +27,7 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("settings_scroll")
         .show(ui, |ui| {
+            interface_section(app, ui);
             data_section(app, ui);
             layout_section(app, ui);
             processing_section(app, ui);
@@ -37,6 +38,68 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
             .unwrap_or(false)
     }) {
         app.on_config_changed();
+    }
+}
+
+/// Preferencias del usuario: idioma y tema de la ventana. Se guardan en
+/// `ui.toml` (al lado de `keys.toml`), no en el proyecto, porque acompañan a
+/// la app en cualquier `.tpproj`.
+fn interface_section(app: &mut App, ui: &mut egui::Ui) {
+    use crate::i18n::{t, LangChoice};
+    use crate::ui_prefs::Theme;
+
+    egui::CollapsingHeader::new(t!("Interfaz"))
+        .default_open(true)
+        .show(ui, |ui| {
+            ui.label(t!("Idioma"));
+            let mut lang = app.prefs().lang_choice();
+            egui::ComboBox::from_id_salt("ui_lang")
+                .selected_text(lang_label(lang))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut lang,
+                        LangChoice::System,
+                        t!("Sistema (idioma del equipo)"),
+                    );
+                    ui.selectable_value(&mut lang, LangChoice::Es, "Español");
+                    ui.selectable_value(&mut lang, LangChoice::En, "English");
+                });
+            if lang != app.prefs().lang_choice() {
+                app.set_lang_choice(lang);
+            }
+
+            ui.label(t!("Tema"));
+            let mut theme = app.prefs().theme();
+            egui::ComboBox::from_id_salt("ui_theme")
+                .selected_text(theme_label(theme))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut theme, Theme::System, t!("Sistema"));
+                    ui.selectable_value(&mut theme, Theme::Light, t!("Claro"));
+                    ui.selectable_value(&mut theme, Theme::Dark, t!("Oscuro"));
+                });
+            if theme != app.prefs().theme() {
+                app.set_theme(theme);
+            }
+
+            ui.label(egui::RichText::new(t!("Se guarda en tu equipo, no en el proyecto.")).weak());
+        });
+}
+
+/// Nombre del idioma en el combo: el nombre propio nunca se traduce.
+fn lang_label(choice: crate::i18n::LangChoice) -> &'static str {
+    match choice {
+        crate::i18n::LangChoice::System => crate::i18n::t!("Sistema (idioma del equipo)"),
+        crate::i18n::LangChoice::Es => "Español",
+        crate::i18n::LangChoice::En => "English",
+    }
+}
+
+/// Nombre del tema en el combo (sí se traduce: es etiqueta, no nombre propio).
+fn theme_label(theme: crate::ui_prefs::Theme) -> &'static str {
+    match theme {
+        crate::ui_prefs::Theme::System => crate::i18n::t!("Sistema"),
+        crate::ui_prefs::Theme::Light => crate::i18n::t!("Claro"),
+        crate::ui_prefs::Theme::Dark => crate::i18n::t!("Oscuro"),
     }
 }
 

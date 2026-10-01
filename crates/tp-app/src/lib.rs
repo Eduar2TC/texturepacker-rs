@@ -5,6 +5,8 @@
 //! aplicación, sin duplicar código de UI.
 
 mod app;
+mod i18n;
+mod ui_prefs;
 
 /// Chequeo de que ningún literal de la UI use un carácter sin glifo (sólo en
 /// tests: no aporta código a la app).

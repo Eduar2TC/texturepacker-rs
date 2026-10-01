@@ -35,11 +35,11 @@ const BOTTOM_OPEN_HEIGHT: f32 = 180.0;
 /// Estilo visual global: tema oscuro con esquinas suaves, acento cian y
 /// sliders rellenos. Llamado una vez por frame; solo construye el estilo
 /// nuevo la primera vez.
-fn apply_theme(ctx: &egui::Context) {
+fn apply_theme(ctx: &egui::Context, theme: crate::ui_prefs::Theme) {
     if ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("tp_theme"))) == Some(true) {
         return;
     }
-    ctx.set_theme(egui::Theme::Dark);
+    theme.apply(ctx);
     ctx.style_mut(|style| {
         let v = &mut style.visuals;
         v.window_corner_radius = 8.into();
@@ -279,6 +279,11 @@ pub struct App {
     /// disco) o de la vista previa (solo nombres predichos): manda en cómo
     /// etiqueta la pestaña «Archivos».
     files_written: bool,
+    /// Preferencias de interfaz (idioma y tema), guardadas en `ui.toml`.
+    prefs: crate::ui_prefs::UiPrefs,
+    /// Dónde se guardan esas preferencias. Las pruebas usan una ruta
+    /// temporal para no tocar el fichero real del usuario.
+    prefs_path: PathBuf,
 }
 
 impl App {
@@ -304,6 +309,9 @@ impl App {
     /// incluido uno puro de pruebas (sin ventana ni GPU).
     fn build(egui_ctx: egui::Context, initial_project: Option<PathBuf>) -> Self {
         let cc = eframe::CreationContext::_new_kittest(egui_ctx.clone());
+        let prefs = crate::ui_prefs::UiPrefs::load();
+        crate::i18n::set_choice(prefs.lang_choice());
+        let prefs_path = crate::ui_prefs::UiPrefs::path();
         let mut app = Self {
             config: ProjectConfig::default(),
             input_dir_text: String::new(),
@@ -354,8 +362,10 @@ impl App {
             canvas_rect: None,
             preview_zoom: 1.0,
             sprite_rows: Vec::new(),
+            prefs,
+            prefs_path,
         };
-        apply_theme(&egui_ctx);
+        apply_theme(&egui_ctx, app.prefs.theme());
         app.log(
             LogKind::Info,
             "Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».".into(),
@@ -373,7 +383,45 @@ impl App {
     /// (típicamente uno headless de pruebas): mismo arranque que la ventana
     /// nativa —tema, log de bienvenida, watcher y proyecto inicial—.
     pub fn new_for_testing(egui_ctx: egui::Context, initial_project: Option<PathBuf>) -> Self {
-        Self::build(egui_ctx, initial_project)
+        let mut app = Self::build(egui_ctx, initial_project);
+        static TEST_FILE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = TEST_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        app.prefs_path =
+            std::env::temp_dir().join(format!("tp-app-ui-{}-{n}.toml", std::process::id()));
+        // Idioma fijo: los tests no deben cambiar según el locale de quien
+        // lance la suite ni según el ui.toml de su máquina.
+        crate::i18n::set_choice(crate::i18n::LangChoice::Es);
+        app
+    }
+
+    /// Preferencias de interfaz vigentes (para pintar los selectores).
+    pub fn prefs(&self) -> &crate::ui_prefs::UiPrefs {
+        &self.prefs
+    }
+
+    /// Cambia el idioma de la interfaz, lo aplica al vuelo y lo guarda.
+    pub fn set_lang_choice(&mut self, choice: crate::i18n::LangChoice) {
+        self.prefs.lang = choice.id().to_string();
+        crate::i18n::set_choice(choice);
+        self.persist_prefs();
+        self.egui_ctx.request_repaint();
+    }
+
+    /// Cambia el tema de la ventana, lo aplica al vuelo y lo guarda.
+    pub fn set_theme(&mut self, theme: crate::ui_prefs::Theme) {
+        self.prefs.theme = theme.id().to_string();
+        theme.apply(&self.egui_ctx);
+        self.persist_prefs();
+    }
+
+    /// Guarda `ui.toml`; si falla se avisa en el log en lugar de romper.
+    fn persist_prefs(&mut self) {
+        if let Err(err) = self.prefs.save_to(&self.prefs_path) {
+            self.log(
+                LogKind::Warning,
+                format!("No se pudieron guardar los ajustes de interfaz: {err}"),
+            );
+        }
     }
 
     /// Vista previa actual aplicada a la UI (`None` hasta el primer pack).
@@ -1732,7 +1780,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        apply_theme(ctx);
+        apply_theme(ctx, self.prefs.theme());
 
         if let Some(rx) = &self.running {
             match rx.try_recv() {
