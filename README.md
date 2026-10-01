@@ -150,7 +150,8 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
    **➕** / **Carpeta**, o rellena **Directorio de entrada**)
    (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM,
-   XBM, XPM, PSD, SVG, ASTC, KTX/KTX2 y `.basis` con `--features gpu-formats`).
+   XBM, XPM, PSD, SVG, ASTC, KTX/KTX2 y `.basis` con `--features gpu-formats`;
+   19 formatos en 24 extensiones).
    Cada cambio de ajustes reempaqueta la vista al instante (debounce de
    120 ms), como en la herramienta original.
 2. Ajusta tamaño de atlas, padding/extrude, rotación, recorte, polígonos, profundidad de color, formato y cifrado.

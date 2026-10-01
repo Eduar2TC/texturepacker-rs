@@ -154,8 +154,8 @@ pub fn is_image_file(path: &Path) -> bool {
 
 /// Load one image file into RGBA8 pixels. Returns `Err` with a message.
 ///
-/// Formats `image` cannot read (XBM, XPM and the GPU containers) are handled
-/// by [`crate::reader`].
+/// Formats `image` cannot read (XBM, XPM, the GPU containers and `.basis`) are
+/// handled by [`crate::reader`].
 pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
     crate::reader::load_image_rgba(path)
 }
