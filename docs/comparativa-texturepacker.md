@@ -260,6 +260,66 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
 
 ---
 
+## 5) Paridad del CLI
+
+Comparativa de `tp-cli` con el CLI oficial (su `--help` y la documentación de
+`commandline/parameters`). Todo lo que se puede escribir vive en dos registros de
+`crates/tp-cli/src/main.rs`: **66 claves con valor** (`PACK_VALUES`) y **30
+booleanas** (`PACK_FLAGS`), más 7 para `decrypt`. Cualquier token que no esté en
+el registro se rechaza con `error: opción desconocida: … (usa --help para ver
+las opciones)` y salida 1 (`unknown_options_are_rejected_with_a_hint`); el
+original se las tragaba en silencio y el clon también hasta este punto, que era
+lo que permitía escribir `--no-auto-animations` o `--height` sin que pasara nada.
+
+### Corregido en este punto
+
+| Antes | Ahora |
+|---|---|
+| `--format` sólo entendía formatos de textura | doble acepción como el original: textura (`png`, `ktx`…) **o** datos (`json`, `plist`, `phaser`…); el lado casado sale en `FormatTarget` y `--texture-format` sigue existiendo para forzar el de textura con prioridad sobre `--sheet` |
+| sin `--data` ni `--sheet` | `--sheet build/atlas.png` fija carpeta, nombre base y formato por extensión; `--data build/atlas.json` lo mismo con los metadatos |
+| los sprites sólo con `--input DIR` | posicionales como el original, mezclados con las opciones: `tp-cli pack sprites/ hero.png --format phaser` (un `.tps` se rechaza con un mensaje claro: no se puede leer el formato del original) |
+| `--no-auto-animations` en la ayuda pero no cableado | cableado a `enable_auto_detect_animations` |
+| la ayuda callaba `--width`, `--height`, `--trim-mode`, `--trim-threshold`, `--tolerance`, `--webp-quality`, `--template`, `--no-trim`, `--input`, `--output`, `--verbose`, `--quiet`, `--exporter-list`, `--version`… | `--help` completo y **comprobado por test**: cada `--opción` de la ayuda tiene que estar registrada (`every_option_in_the_help_is_known`) y las esenciales tienen que aparecer (`help_documents_the_packing_options`) |
+| sólo existía `--common-divisor` | además `--common-divisor-x`/`-y` (por eje, n ≥ 1) y `--default-pivot-point X,Y` en [0,1], y booleanas explícitas `--force-identical-layout`, `--trim-sprite-names`, `--enable-rotation`, `--pack-normalmaps` |
+| `--version`/`-V`, `--exporter-list` y `--help` no existían en `pack` | los tres, más `--help` y `--quiet` en `decrypt` |
+
+### Renombrados (aceptamos los dos nombres)
+
+`--texture-path`/`--texturepath`, `--dither`/`--dither-type`,
+`--pixel-format`/`--opt`, `--basis-quality`/`--basisu-quality`,
+`--shape-padding`/`--padding`, `--align-to-grid`/`--align`,
+`--no-aliasing`/`--disable-auto-alias`, `--flip-y`/`--flip-vertical`/`--flip-pvr`,
+`--help`/`-h`, `--version`/`-V`.
+
+### Sin equivalencia (se rechazan, no se fingen)
+
+- `--tracer-tolerance`: el original lo mide en una unidad distinta (por defecto
+  200) de la nuestra (`--tolerance`, 1,5 px); no se alias para no prometer una
+  conversión que no existe, y tampoco aparece con `--` en la ayuda para no romper
+  el test de invariantes.
+- `--content-protection`: pvr.ccz con AES-128; nosotros ciframos con `--key`
+  (AES-256-GCM). Tarea distinta, nombre distinto.
+- Los huecos que quedan — `--scale` global, `--max-width`/`--max-height`,
+  `--background-color`, `--ignore-files`, `--replace`, `--dpi`,
+  `--heuristic-mask`, `--convert-texture`, `--force-publish`, `--save`,
+  `--custom-exporters-directory` y los flags de exportadores concretos — van a la
+  **Fase C**; lo mismo los 3 parámetros de licencia, que no aplican.
+
+### Límite de `--data` + `--sheet`
+
+Nuestro modelo tiene **un** nombre base por ejecución: los dos deben ir en la
+misma carpeta y con el mismo nombre base (`atlas-{n}.png` con `atlas.json` sí,
+`sprites.png` con `atlas.json` no), y la extensión de `--data` tiene que ser la
+del formato de datos elegido (`--data atlas.plist` con el json por defecto falla
+y sugiere `--format cocos2d`). Si la hoja pide numeración y `--data` no, la
+numeración se aplica igual y se avisa. Tests: `sheet_and_data_share_one_base_name`,
+`data_extension_must_match_the_data_format`, `format_accepts_texture_and_data_tokens`,
+`texture_format_beats_the_sheet_extension`, `positionals_are_split_into_project_inputs_and_errors`,
+`boolean_options_do_not_swallow_the_next_positional`, `parity_flags_reach_the_config`,
+`exporter_list_and_version_are_stable` (+3 ya citados) → **11 tests nuevos**.
+
+---
+
 ## Orden de corrección (estado)
 
 1. **Hoja principal** (borra sprites del atlas) — **hecho**:
@@ -298,14 +358,16 @@ auto-detect animations, aliasing, png opt level, flip-y, dithering, color depth,
 
 Pendientes fuera del orden acordado: ninguno — la lista de §2/§3 está cerrada,
 salvo «Scale mode», que queda **[PARCIAL]** a propósito (el Hq2x se omitió por su
-licencia LGPL, decisión acordada).
+licencia, decisión acordada). §5 (paridad del CLI) se cierra con el punto 16 de
+la lista, con sus huecos de alcance marcados como Fase C.
 
-Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --check`,
+Puerta de calidad (se reejecuta en cada punto de §2/§3/§5): `cargo fmt --all --check`,
 `cargo clippy --workspace --all-targets -- -D warnings` y
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
 305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, 327 tras el duodécimo,
-328 tras el decimotercero, 332 tras el decimocuarto, **340 tras el decimoquinto**).
+328 tras el decimotercero, 332 tras el decimocuarto, 340 tras el decimoquinto,
+**351 tras el decimosexto**).
 
 ---
 
@@ -459,3 +521,27 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
     `svgz_reads_the_compressed_svg`, `gpu_containers_report_their_broken_files`, la lista
     de extensiones y el e2e `p15_ingests_pkm_pvr_ccz_and_svgz_inputs`. El total queda
     en **340**.
+
+16. **Paridad del CLI (Fases A+B)** — **hecho** (ver §5): registro explícito de
+    opciones (`PACK_VALUES` con 66 claves con valor y `PACK_FLAGS` con 30
+    booleanas, más 7 en `decrypt`) y **rechazo de lo desconocido** con el nombre
+    del token y la pista de `--help`; `--format` con la doble acepción del
+    original (`FormatTarget`, textura o datos) por encima de la extensión de
+    `--sheet` y por debajo de `--texture-format`; `--data`/`--sheet` con carpeta y
+    nombre base comunes y extensión validada contra el formato (con
+    `find_data_format_by_extension` para sugerir `--format`); sprites en
+    posiciónles mezclados con las opciones; `--help` completo y comprobado por
+    test, `--version`/`-V`, `--exporter-list` y `--quiet`/`--verbose`;
+    `--no-auto-animations` por fin cableado; `--common-divisor-x`/`-y`,
+    `--default-pivot-point`, `--force-identical-layout`, `--trim-sprite-names`,
+    `--enable-rotation` y `--pack-normalmaps`; alias renombrados
+    (`--texturepath`, `--opt`, `--dither-type`, `--basisu-quality`, `--padding`,
+    `--align`, `--disable-auto-alias`, `--flip-pvr`/`--flip-vertical`, `-h`).
+    Tests nuevos (11):
+    `unknown_options_are_rejected_with_a_hint`, `format_accepts_texture_and_data_tokens`,
+    `texture_format_beats_the_sheet_extension`, `sheet_and_data_share_one_base_name`,
+    `data_extension_must_match_the_data_format`,
+    `positionals_are_split_into_project_inputs_and_errors`,
+    `boolean_options_do_not_swallow_the_next_positional`, `parity_flags_reach_the_config`,
+    `exporter_list_and_version_are_stable`, `every_option_in_the_help_is_known` y
+    `help_documents_the_packing_options`. El total queda en **351**.

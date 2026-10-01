@@ -557,6 +557,15 @@ pub fn data_format_ids() -> impl Iterator<Item = &'static str> {
     DATA_FORMATS.iter().map(|p| p.id)
 }
 
+/// Busca un preset cuya extensión de fichero de datos coincida, para poder
+/// sugerir `--format <id>` cuando `--data` llega con una extensión que el
+/// formato elegido no escribe.
+pub fn find_data_format_by_extension(ext: &str) -> Option<&'static DataFormatPreset> {
+    DATA_FORMATS
+        .iter()
+        .find(|p| !p.extension.is_empty() && p.extension.eq_ignore_ascii_case(ext))
+}
+
 /// Presets de una categoría, en el orden de [`DATA_FORMATS`] (combo de la
 /// GUI agrupado por familia de motor).
 pub fn data_formats_in_category(

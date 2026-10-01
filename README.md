@@ -178,6 +178,11 @@ tp-cli pack --input sprites/ --output build/ \
     --max-size 4096 --padding 2 --extrude 1 --format etc2 \
     --strategy bssf --variants 1.0,0.5 --key secreto --template-format json
 
+# Estilo del original: sprites en posiciónles, --format con doble acepción
+# (textura o datos) y metadatos con --data/--sheet
+tp-cli pack sprites/ hero.png --format phaser \
+    --sheet build/atlas.png --data build/atlas.json --verbose
+
 # Ajustes de textura: borde, divisor, rejilla, transparencia y ruta
 tp-cli pack --input sprites/ --output build/ \
     --border-padding 8 --common-divisor 4 --align 4 \
@@ -203,6 +208,19 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png
 # p. ej. BGRA8888 vuelve a RGBA para ver los colores correctos)
 tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format bgra8888
 ```
+
+Las opciones desconocidas se rechazan con `error: opción desconocida: … (usa
+--help)`; la ayuda cubre todas las opciones que se pueden escribir y existen
+`--version`/`-V` y `--exporter-list`.
+`--data` y `--sheet` deben compartir carpeta y nombre base (el modelo tiene un
+nombre base por ejecución) y la extensión de `--data` tiene que corresponder al
+formato de datos elegido. Siguen fuera de alcance `--scale` global,
+`--max-width`/`--max-height`, `--background-color`, `--ignore-files`,
+`--replace`, `--dpi`, `--heuristic-mask`, `--convert-texture`,
+`--force-publish`, `--save`, `--custom-exporters-directory` y los flags de
+exportadores concretos (Fase C); `--tracer-tolerance` y `--content-protection` no
+se aceptan por diferencia de unidades y de cifrado. Detalle en
+`docs/comparativa-texturepacker.md` §5.
 
 ## Cobertura de la especificación
 
@@ -438,7 +456,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 340 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 351 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
@@ -449,7 +467,8 @@ cuando faltan placeholders y error con `multipack = false`), round-trip de ETC2 
 + EAC) y PVRTC 4BPP (opaco, gradientes, transparencia y layout morton) contra un
 decodificador independiente (`texture2ddecoder`), cifrado/descifrado, plantillas,
 configuración (round-trip TOML de los ajustes nuevos), CLI (flags y parseo de
-argumentos), y 44 pruebas end-to-end que generan sprites reales en disco y
+argumentos, rechazo de opciones desconocidas, `--format` con doble acepción,
+`--data`/`--sheet` y que la ayuda no prometa nada que el parser no lea), y 44 pruebas end-to-end que generan sprites reales en disco y
 verifican aliases, rotación, normal maps, variantes, multi-atlas, los tres
 formatos GPU (ETC2/PVRTC/ASTC), los ajustes de Lote 5 (padding de borde,
 divisor común, nombres con subcarpeta/extensión, `texture_path`, premultiply y
