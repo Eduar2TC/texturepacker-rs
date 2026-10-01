@@ -2829,3 +2829,109 @@ fn basis_input_is_ingested_and_packed() {
     assert_eq!(hero["sourceSize"]["w"], 16);
     assert_eq!(hero["sourceSize"]["h"], 8);
 }
+
+/// Los contenedores que el original lista como entrada pero que faltaban —
+/// `.pkm`, `.pvr`, `.pvr.ccz` y `.svgz` — entran por el mismo camino que un PNG.
+#[test]
+fn p15_ingests_pkm_pvr_ccz_and_svgz_inputs() {
+    use std::io::Write;
+
+    let fx = Fixture::new("p15_contenedores");
+    let input = make_input_dir(&fx.dir, "in");
+    write_png(&input.join("coin.png"), 8, 8, [200, 160, 0, 255]);
+
+    let encode = |rgba: &[u8], w: usize, h: usize, format: GpuFormat| {
+        tp_core::export::encode_to_bytes(
+            rgba,
+            w,
+            h,
+            &tp_core::export::EncodeOptions {
+                format,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+
+    // `.pkm`: ETC1 de un lienzo 6x4 (se rellena a 8x4 dentro del contenedor).
+    let flat: Vec<u8> = (0..6 * 4).flat_map(|_| [40u8, 180, 60, 255]).collect();
+    std::fs::write(input.join("hero.pkm"), encode(&flat, 6, 4, GpuFormat::Etc1)).unwrap();
+
+    // `.pvr` y `.pvr.ccz`: PVRTC1 4bpp, el mismo fichero en los dos contenedores.
+    let colors = [
+        [10u8, 20, 30, 255],
+        [200, 40, 50, 255],
+        [60, 210, 70, 255],
+        [8, 9, 220, 255],
+    ];
+    let mut sprite = Vec::with_capacity(8 * 8 * 4);
+    for y in 0..8 {
+        for x in 0..8 {
+            sprite.extend_from_slice(&colors[(y / 4) * 2 + x / 4]);
+        }
+    }
+    let pvr = encode(&sprite, 8, 8, GpuFormat::Pvrtc4Bpp);
+    std::fs::write(input.join("logo.pvr"), &pvr).unwrap();
+
+    let mut zl = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+    zl.write_all(&pvr).unwrap();
+    let payload = zl.finish().unwrap();
+    let mut ccz = b"CCZ!".to_vec();
+    ccz.extend_from_slice(&0u16.to_be_bytes());
+    ccz.extend_from_slice(&0u16.to_be_bytes());
+    ccz.extend_from_slice(&0u32.to_be_bytes());
+    ccz.extend_from_slice(&(pvr.len() as u32).to_be_bytes());
+    ccz.extend_from_slice(&payload);
+    std::fs::write(input.join("icon.ccz"), &ccz).unwrap();
+
+    // `.svgz`: SVG comprimido con gzip.
+    let svg = br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4">
+  <rect x="0" y="0" width="4" height="4" fill="#00ff00"/>
+</svg>"##;
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    gz.write_all(svg).unwrap();
+    std::fs::write(input.join("splash.svgz"), gz.finish().unwrap()).unwrap();
+
+    let output = fx.dir.join("out");
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        base_file_name: "atlas".into(),
+        ..ProjectConfig::default()
+    };
+    let out = pipeline::run(&cfg).unwrap();
+    assert_eq!(
+        out.result.sprites.len(),
+        5,
+        "falta alguno de los contenedores"
+    );
+
+    let meta: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(output.join("atlas.json")).unwrap()).unwrap();
+    let frames = meta["frames"].as_array().unwrap();
+    let mut seen: Vec<(&str, (u32, u32))> = frames
+        .iter()
+        .map(|f| {
+            (
+                f["filename"].as_str().unwrap(),
+                (
+                    f["sourceSize"]["w"].as_u64().unwrap() as u32,
+                    f["sourceSize"]["h"].as_u64().unwrap() as u32,
+                ),
+            )
+        })
+        .collect();
+    seen.sort();
+    assert_eq!(
+        seen,
+        vec![
+            ("coin", (8, 8)),
+            ("hero", (6, 4)),
+            ("icon", (8, 8)),
+            ("logo", (8, 8)),
+            ("splash", (4, 4)),
+        ],
+        "cada contenedor conserva su tamaño original"
+    );
+    assert!(output.join("atlas.png").exists(), "la hoja se publica");
+}

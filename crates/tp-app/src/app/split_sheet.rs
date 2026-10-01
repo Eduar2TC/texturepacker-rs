@@ -250,7 +250,7 @@ fn pick_sheet(app: &mut App, ctx: &egui::Context) {
             &[
                 "png", "webp", "jpg", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "tif", "dds",
                 "qoi", "pbm", "pgm", "ppm", "pnm", "xbm", "xpm", "astc", "ktx", "ktx2", "basis",
-                "psd", "svg",
+                "psd", "svg", "svgz", "pkm", "pvr", "pvrtc", "ccz", "gz",
             ],
         )
         .pick_file();

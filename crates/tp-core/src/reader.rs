@@ -1,5 +1,6 @@
 //! Lectura de formatos de entrada que `image` no cubre: XBM, XPM, PSD y SVG,
-//! más los contenedores GPU (`.astc`, `.ktx`, `.ktx2`) y `.basis`.
+//! más los contenedores GPU (`.astc`, `.ktx`, `.ktx2`, `.pkm`, `.pvr`,
+//! `.pvr.gz`, `.pvr.ccz`, `.pvrtc`, `.svgz`) y `.basis`.
 //!
 //! El resto de formatos (PNG/JPG/WebP/… y ahora también PBM/PGM/PPM) sigue
 //! resolviéndose con la biblioteca `image`. Aquí solo viven los decodificadores
@@ -18,9 +19,17 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
         .extension()
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
+    // `.pvr.gz` se reconoce por el nombre base, porque la extensión es `gz`.
+    if ext.as_deref() == Some("gz") && is_pvr_gz(path) {
+        let bytes =
+            std::fs::read(path).map_err(|e| TpError::Other(format!("{}: {e}", path.display())))?;
+        return decode_pvr_gz(&bytes)
+            .map_err(|e| TpError::Other(format!("{}: {e}", path.display())));
+    }
     match ext.as_deref() {
         Some("xbm") | Some("xpm") | Some("astc") | Some("ktx") | Some("ktx2") | Some("psd")
-        | Some("svg") | Some("basis") => {
+        | Some("svg") | Some("svgz") | Some("basis") | Some("pkm") | Some("pvr")
+        | Some("pvrtc") | Some("ccz") => {
             let bytes = std::fs::read(path)
                 .map_err(|e| TpError::Other(format!("{}: {e}", path.display())))?;
             let decoded = match ext.as_deref() {
@@ -29,7 +38,11 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
                 Some("astc") => decode_astc(&bytes),
                 Some("psd") => decode_psd(&bytes),
                 Some("svg") => decode_svg(&bytes),
+                Some("svgz") => decode_svgz(&bytes),
                 Some("basis") => decode_basis(&bytes),
+                Some("pkm") => decode_pkm(&bytes),
+                Some("pvr") | Some("pvrtc") => decode_pvr(&bytes),
+                Some("ccz") => decode_pvr_ccz(&bytes),
                 // KTX v1 y v2 comparten identificador: el byte 12 es la
                 // endianness (`01 02 03 04`) en v1 y el vkFormat en v2.
                 _ if bytes.get(12..16) == Some(&[1, 2, 3, 4]) => decode_ktx(&bytes),
@@ -45,6 +58,13 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
             Ok((w as i32, h as i32, rgba.into_raw()))
         }
     }
+}
+
+/// `true` for `something.pvr.gz`: the only `.gz` the original lists as input.
+fn is_pvr_gz(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.to_ascii_lowercase().ends_with(".pvr"))
 }
 
 /// `texture2ddecoder` packs pixels as `0xAARRGGBB`; the rest of the pipeline
@@ -767,6 +787,280 @@ fn decode_basis(_bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
     Err("Basis requiere la feature \"gpu-formats\"".to_string())
 }
 
+// ---------------------------------------------------------------------------
+// PKM, PVR y SVGZ (los contenedores que faltaban en la lista del original)
+// ---------------------------------------------------------------------------
+
+fn be16(bytes: &[u8], off: usize) -> DecodeResult<u16> {
+    let b = bytes.get(off..off + 2).ok_or("cabecera truncada")?;
+    Ok(u16::from_be_bytes([b[0], b[1]]))
+}
+
+fn be32(bytes: &[u8], off: usize) -> DecodeResult<u32> {
+    let b = bytes.get(off..off + 4).ok_or("cabecera truncada")?;
+    Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+fn le32(bytes: &[u8], off: usize) -> DecodeResult<u32> {
+    let b = bytes.get(off..off + 4).ok_or("cabecera truncada")?;
+    Ok(u32::from_le_bytes([b[0], b[1], b[2], b[3]]))
+}
+
+fn le64(bytes: &[u8], off: usize) -> DecodeResult<u64> {
+    let b = bytes.get(off..off + 8).ok_or("cabecera truncada")?;
+    let mut v = [0u8; 8];
+    v.copy_from_slice(b);
+    Ok(u64::from_le_bytes(v))
+}
+
+/// Reads a gzip stream into memory (`.pvr.gz`, `.svgz`).
+fn gunzip(payload: &[u8], what: &str) -> DecodeResult<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::GzDecoder::new(payload)
+        .read_to_end(&mut out)
+        .map_err(|e| format!("{what}: gzip: {e}"))?;
+    Ok(out)
+}
+
+/// Crops an RGBA buffer from `src_w` down to `w`×`h` (the padded part of a
+/// GPU block layout never belongs to the sprite).
+fn crop_rgba(data: Vec<u8>, src_w: usize, w: usize, h: usize) -> Vec<u8> {
+    if src_w == w && data.len() == w * h * 4 {
+        return data;
+    }
+    let mut out = Vec::with_capacity(w * h * 4);
+    for row in data.chunks_exact(src_w * 4).take(h) {
+        out.extend_from_slice(&row[..w * 4]);
+    }
+    out
+}
+
+/// ETC1 in a PKM container (`.pkm`): 16-byte header + ETC1 blocks.
+///
+/// Header layout, big-endian: `PKM ` (4) + version `10`/`20` (2) +
+/// `dataFormat` (2, 0 = ETC1 RGB) + extended width/height (2+2) + original
+/// width/height (2+2). The blocks cover the *extended* (padded to 4) size;
+/// the sprite is the original rectangle inside it.
+fn decode_pkm(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    if bytes.len() < 16 || &bytes[..4] != b"PKM " {
+        return Err("PKM: cabecera inválida".to_string());
+    }
+    let version = [bytes[4], bytes[5]];
+    if version != *b"10" && version != *b"20" {
+        return Err(format!(
+            "PKM: versión desconocida {:?}",
+            String::from_utf8_lossy(&version)
+        ));
+    }
+    let format = be16(bytes, 6)?;
+    if format != 0 {
+        return Err(format!(
+            "PKM: dataFormat {format} no soportado (sólo ETC1 RGB, 0)"
+        ));
+    }
+    let (ext_w, ext_h) = (be16(bytes, 8)? as usize, be16(bytes, 10)? as usize);
+    let (w, h) = (be16(bytes, 12)? as usize, be16(bytes, 14)? as usize);
+    if w == 0
+        || h == 0
+        || w > ext_w
+        || h > ext_h
+        || !ext_w.is_multiple_of(4)
+        || !ext_h.is_multiple_of(4)
+    {
+        return Err(format!(
+            "PKM: dimensiones incoherentes {w}x{h} dentro de {ext_w}x{ext_h}"
+        ));
+    }
+    let blocks = (ext_w / 4) * (ext_h / 4);
+    expect_len(&bytes[16..], blocks * 8, "PKM")?;
+    let mut pixels = vec![0u32; ext_w * ext_h];
+    texture2ddecoder::decode_etc1(&bytes[16..], ext_w, ext_h, &mut pixels)
+        .map_err(|e| format!("PKM: ETC1: {e}"))?;
+    let (_, _, rgba) = from_u32_pixels(&pixels, ext_w as i32, ext_h as i32);
+    Ok((w as i32, h as i32, crop_rgba(rgba, ext_w, w, h)))
+}
+
+/// Dispatches a PowerVR container: v3 has the `PVR\x03` magic, v2 the `PVR!`
+/// tag. `.pvr`, `.pvrtc`, `.pvr.gz` and `.pvr.ccz` all end up here.
+fn decode_pvr(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    if bytes.len() >= 52 && bytes[..4] == *b"PVR\x03" {
+        decode_pvr_v3(bytes)
+    } else if bytes.len() >= 44 && matches!(le32(bytes, 0)?, 44 | 52) {
+        decode_pvr_v2(bytes)
+    } else {
+        Err("PVR: cabecera desconocida (ni «PVR\\x03» v3 ni «PVR!» v2)".to_string())
+    }
+}
+
+/// PVR v3: 52-byte header, little-endian, `pixelFormat` at 8 as u64.
+/// Only the PVRTC1 encodings (0-3) are decoded; anything else gets a message
+/// that says which number was seen.
+fn decode_pvr_v3(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let height = le32(bytes, 24)? as usize;
+    let width = le32(bytes, 28)? as usize;
+    let meta = le32(bytes, 48)? as usize;
+    let pixel_format = le64(bytes, 8)?;
+    let payload = bytes.get(52 + meta..).ok_or("PVR v3: cabecera truncada")?;
+    let (w, h) = checked_size(width, height, "PVR v3")?;
+    let (is_2bpp, label) = match pixel_format {
+        0 | 1 => (true, "PVRTC1 2bpp"),
+        2 | 3 => (false, "PVRTC1 4bpp"),
+        other => {
+            return Err(format!(
+                "PVR v3: pixelFormat {other} no soportado (sólo PVRTC1 0-3)"
+            ))
+        }
+    };
+    decode_pvrtc_payload(payload, w, h, is_2bpp).map_err(|e| format!("PVR v3: {label}: {e}"))
+}
+
+/// PVR v2: `headerSize` (44 o 52) + `height`/`width` + `bpp` + máscaras de
+/// canales, con el tag `PVR!` al final de la versión de 52 bytes.
+///
+/// `bpp` decides the payload: 2/4 are PVRTC1, 16/32 are raw pixels laid out
+/// according to the channel masks.
+fn decode_pvr_v2(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let header_size = le32(bytes, 0)? as usize;
+    if !matches!(header_size, 44 | 52) || bytes.len() < header_size {
+        return Err(format!(
+            "PVR v2: headerSize {header_size} no soportado (44 o 52)"
+        ));
+    }
+    if header_size == 52 && bytes[44..48] != *b"PVR!" {
+        return Err("PVR v2: falta el tag «PVR!»".to_string());
+    }
+    let height = le32(bytes, 4)? as usize;
+    let width = le32(bytes, 8)? as usize;
+    let bpp = le32(bytes, 24)?;
+    let payload = &bytes[header_size..];
+    let (w, h) = checked_size(width, height, "PVR v2")?;
+    match bpp {
+        2 => decode_pvrtc_payload(payload, w, h, true),
+        4 => decode_pvrtc_payload(payload, w, h, false),
+        16 | 32 => {
+            let masks = [
+                le32(bytes, 28)?,
+                le32(bytes, 32)?,
+                le32(bytes, 36)?,
+                le32(bytes, 40)?,
+            ];
+            decode_raw_payload(payload, w, h, bpp as usize, &masks)
+        }
+        other => Err(format!(
+            "PVR v2: bpp {other} no soportado (2/4 = PVRTC1, 16/32 = píxeles crudos)"
+        )),
+    }
+    .map_err(|e| format!("PVR v2: {e}"))
+}
+
+/// Sanity check shared by the PVR readers: non-empty and PVRTC-compatible
+/// (4bpp needs width and height multiples of 4, 2bpp also width of 8).
+fn checked_size(width: usize, height: usize, what: &str) -> DecodeResult<(usize, usize)> {
+    if width == 0 || height == 0 {
+        return Err(format!("{what}: lienzo de tamaño nulo"));
+    }
+    Ok((width, height))
+}
+
+fn checked_pvrtc_size(w: usize, h: usize, is_2bpp: bool) -> DecodeResult<()> {
+    let block_ok = if is_2bpp {
+        w.is_multiple_of(8)
+    } else {
+        w.is_multiple_of(4)
+    };
+    if !block_ok || !h.is_multiple_of(4) {
+        return Err(format!("{w}x{h} no es múltiplo del bloque PVRTC"));
+    }
+    Ok(())
+}
+
+/// PVRTC1 blocks → RGBA8 (4 bytes per 4x4 block at 4bpp, per 8x4 at 2bpp).
+fn decode_pvrtc_payload(
+    payload: &[u8],
+    w: usize,
+    h: usize,
+    is_2bpp: bool,
+) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    checked_pvrtc_size(w, h, is_2bpp)?;
+    let block_w = if is_2bpp { 8 } else { 4 };
+    expect_len(payload, w.div_ceil(block_w) * h.div_ceil(4) * 8, "PVRTC")?;
+    let mut pixels = vec![0u32; w * h];
+    let result = if is_2bpp {
+        texture2ddecoder::decode_pvrtc_2bpp(payload, w, h, &mut pixels)
+    } else {
+        texture2ddecoder::decode_pvrtc_4bpp(payload, w, h, &mut pixels)
+    };
+    result.map_err(|e| e.to_string())?;
+    let (_, _, rgba) = from_u32_pixels(&pixels, w as i32, h as i32);
+    Ok((w as i32, h as i32, rgba))
+}
+
+/// Raw 16/32-bit pixels unpacked through the four channel masks.
+fn decode_raw_payload(
+    payload: &[u8],
+    w: usize,
+    h: usize,
+    bpp: usize,
+    masks: &[u32; 4],
+) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let stride = bpp / 8;
+    expect_len(payload, w * h * stride, "PVR v2")?;
+    let mut out = Vec::with_capacity(w * h * 4);
+    for px in payload.chunks_exact(stride) {
+        let mut value = 0u32;
+        for (i, b) in px.iter().enumerate() {
+            value |= (*b as u32) << (8 * i);
+        }
+        for mask in masks {
+            let shift = mask.trailing_zeros();
+            let bits = (*mask >> shift).count_ones();
+            let raw = (value & mask) >> shift;
+            // Escalado a 8 bits conservando el extremo: 31 -> 255 con 5 bits,
+            // igual que la extensión `(v << 3) | (v >> 2)`.
+            let scaled = if bits == 0 || bits >= 32 {
+                0
+            } else {
+                raw * 255 / ((1u32 << bits) - 1)
+            };
+            out.push(scaled as u8);
+        }
+    }
+    Ok((w as i32, h as i32, out))
+}
+
+/// `.pvr.gz`: the same container behind a gzip stream.
+fn decode_pvr_gz(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let inner = gunzip(bytes, "pvr.gz")?;
+    decode_pvr(&inner)
+}
+
+/// `.pvr.ccz`: Cocos2D container, `CCZ!` (4) + compression type (2 BE, 0 =
+/// zlib) + version (2) + reserved (4) + uncompressed length (4 BE) + payload.
+fn decode_pvr_ccz(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    if bytes.len() < 16 || &bytes[..4] != b"CCZ!" {
+        return Err("pvr.ccz: cabecera inválida (falta «CCZ!»)".to_string());
+    }
+    if be16(bytes, 4)? != 0 {
+        return Err("pvr.ccz: sólo se lee compression_type = zlib (0)".to_string());
+    }
+    let expected = be32(bytes, 12)? as usize;
+    let inner = inflate(&bytes[16..], expected)?;
+    if inner.len() != expected {
+        return Err(format!(
+            "pvr.ccz: la cabecera declara {expected} bytes y salieron {}",
+            inner.len()
+        ));
+    }
+    decode_pvr(&inner)
+}
+
+/// `.svgz`: an SVG document inside a gzip stream.
+fn decode_svgz(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    let inner = gunzip(bytes, "svgz")?;
+    decode_svg(&inner)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -780,7 +1074,6 @@ mod tests {
     }
 
     /// Four-quadrant 8x8 image (same shape the export round-trip uses).
-    #[cfg(feature = "gpu-formats")]
     fn quadrants() -> Vec<u8> {
         let colors = [
             [10u8, 20, 30, 255],
@@ -847,6 +1140,231 @@ mod tests {
         let err = load_image_rgba(&path).unwrap_err().to_string();
         assert!(err.contains("gpu-formats"), "{err}");
         let _ = std::fs::remove_file(path);
+    }
+
+    // -- PKM / PVR / CCZ / SVGZ ------------------------------------------------
+
+    /// Mean absolute error per byte between two RGBA buffers.
+    fn mean_err(a: &[u8], b: &[u8]) -> f64 {
+        assert_eq!(a.len(), b.len());
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (i16::from(*x) - i16::from(*y)).abs() as f64)
+            .sum::<f64>()
+            / a.len() as f64
+    }
+
+    /// The same bytes the reader must produce, decoded straight from the
+    /// payload with `texture2ddecoder`: the tests check the container plumbing
+    /// (header, payload slice, ARGB -> RGBA), not the encoder's quality.
+    fn pvrtc_reference(payload: &[u8], w: usize, h: usize, is_2bpp: bool) -> Vec<u8> {
+        let mut buf = vec![0u32; w * h];
+        let r = if is_2bpp {
+            texture2ddecoder::decode_pvrtc_2bpp(payload, w, h, &mut buf)
+        } else {
+            texture2ddecoder::decode_pvrtc_4bpp(payload, w, h, &mut buf)
+        };
+        r.unwrap();
+        from_u32_pixels(&buf, w as i32, h as i32).2
+    }
+
+    fn pvr_bytes(rgba: &[u8], w: usize, h: usize) -> Vec<u8> {
+        crate::export::encode_to_bytes(
+            rgba,
+            w,
+            h,
+            &crate::export::EncodeOptions {
+                format: crate::GpuFormat::Pvrtc4Bpp,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn pkm_reads_etc1_and_crops_to_the_original_size() {
+        // 5x3 se rellena a 8x4 dentro del contenedor; el sprite mide 5x3.
+        let color = [40u8, 180, 60, 255];
+        let rgba: Vec<u8> = (0..5 * 3).flat_map(|_| color).collect();
+        let file = crate::export::encode_to_bytes(
+            &rgba,
+            5,
+            3,
+            &crate::export::EncodeOptions {
+                format: crate::GpuFormat::Etc1,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(&file[..4], b"PKM ");
+        assert_eq!(&file[4..6], b"10");
+        assert_eq!(
+            be16(&file, 8).unwrap(),
+            8,
+            "ancho extendido a múltiplo de 4"
+        );
+        assert_eq!(be16(&file, 12).unwrap(), 5, "ancho original");
+
+        let path = temp("sprite.pkm", &file);
+        let (w, h, out) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (5, 3), "recorte al tamaño original");
+        assert_eq!(out.len(), rgba.len());
+        let err = mean_err(&rgba, &out);
+        assert!(err < 4.0, "error medio PKM: {err:.2}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pvr_and_pvrtc_read_the_container_we_write() {
+        let rgba = quadrants();
+        let file = pvr_bytes(&rgba, 8, 8);
+        assert_eq!(&file[..4], b"PVR\x03");
+
+        let expected = pvrtc_reference(&file[52..], 8, 8, false);
+        for name in ["sprite.pvr", "sprite.pvrtc"] {
+            let path = temp(name, &file);
+            let (w, h, out) = load_image_rgba(&path).unwrap();
+            assert_eq!((w, h), (8, 8), "{name}");
+            assert_eq!(
+                out, expected,
+                "{name}: el lienzo no es el del decodificador"
+            );
+            let _ = std::fs::remove_file(path);
+        }
+        // Y además se parece al original: PVRTC es con pérdida.
+        let err = mean_err(&rgba, &expected);
+        assert!(err < 35.0, "error medio PVRTC contra el original: {err:.2}");
+    }
+
+    #[test]
+    fn pvr_v2_reads_raw_pixels_with_their_channel_masks() {
+        // 2x2 crudos en 32 bits: bytes RGBA, máscaras little-endian.
+        let rgba = [
+            10u8, 20, 30, 255, 200, 40, 50, 255, 60, 210, 70, 255, 8, 9, 220, 255,
+        ];
+        let mut file = Vec::new();
+        file.extend_from_slice(&52u32.to_le_bytes()); // headerSize
+        file.extend_from_slice(&2u32.to_le_bytes()); // height
+        file.extend_from_slice(&2u32.to_le_bytes()); // width
+        file.extend_from_slice(&1u32.to_le_bytes()); // mipmaps
+        file.extend_from_slice(&0u32.to_le_bytes()); // flags
+        file.extend_from_slice(&(rgba.len() as u32).to_le_bytes()); // dataSize
+        file.extend_from_slice(&32u32.to_le_bytes()); // bpp
+        file.extend_from_slice(&0x0000_00FFu32.to_le_bytes()); // red
+        file.extend_from_slice(&0x0000_FF00u32.to_le_bytes()); // green
+        file.extend_from_slice(&0x00FF_0000u32.to_le_bytes()); // blue
+        file.extend_from_slice(&0xFF00_0000u32.to_le_bytes()); // alpha
+        file.extend_from_slice(b"PVR!"); // tag
+        file.extend_from_slice(&1u32.to_le_bytes()); // numSurfs
+        file.extend_from_slice(&rgba);
+
+        let path = temp("sprite.pvr", &file);
+        let (w, h, out) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (2, 2));
+        assert_eq!(out, rgba, "máscaras de canal en orden RGBA");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pvr_v2_reads_pvrtc_blocks() {
+        let rgba = quadrants();
+        let payload = &pvr_bytes(&rgba, 8, 8)[52..]; // sólo los bloques
+        let mut file = Vec::new();
+        file.extend_from_slice(&52u32.to_le_bytes());
+        file.extend_from_slice(&8u32.to_le_bytes()); // height
+        file.extend_from_slice(&8u32.to_le_bytes()); // width
+        file.extend_from_slice(&1u32.to_le_bytes());
+        file.extend_from_slice(&0u32.to_le_bytes());
+        file.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        file.extend_from_slice(&4u32.to_le_bytes()); // bpp: PVRTC1 4bpp
+        file.extend_from_slice(&[0u8; 16]); // máscaras sin uso
+        file.extend_from_slice(b"PVR!");
+        file.extend_from_slice(&1u32.to_le_bytes());
+        file.extend_from_slice(payload);
+
+        let path = temp("sprite.pvrtc", &file);
+        let (w, h, out) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (8, 8));
+        assert_eq!(
+            out,
+            pvrtc_reference(payload, 8, 8, false),
+            "v2 con los mismos bloques"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn pvr_gz_and_ccz_unwrap_the_same_file() {
+        use std::io::Write;
+        let rgba = quadrants();
+        let plain = pvr_bytes(&rgba, 8, 8);
+
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(&plain).unwrap();
+        let gz = gz.finish().unwrap();
+        let path = temp("sprite.pvr.gz", &gz);
+        let (_, _, from_gz) = load_image_rgba(&path).unwrap();
+        assert_eq!(
+            from_gz,
+            pvrtc_reference(&plain[52..], 8, 8, false),
+            ".pvr.gz"
+        );
+        let _ = std::fs::remove_file(path);
+
+        let mut zl = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        zl.write_all(&plain).unwrap();
+        let payload = zl.finish().unwrap();
+        let mut ccz = Vec::with_capacity(16 + payload.len());
+        ccz.extend_from_slice(b"CCZ!");
+        ccz.extend_from_slice(&0u16.to_be_bytes()); // compression_type: zlib
+        ccz.extend_from_slice(&0u16.to_be_bytes()); // version
+        ccz.extend_from_slice(&0u32.to_be_bytes()); // reserved
+        ccz.extend_from_slice(&(plain.len() as u32).to_be_bytes());
+        ccz.extend_from_slice(&payload);
+        let path = temp("sprite.ccz", &ccz);
+        let (w, h, from_ccz) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (8, 8), ".pvr.ccz se descomprime y se lee");
+        let err = mean_err(&from_gz, &from_ccz);
+        assert!(err < 0.5, "gz y ccz deben dar el mismo lienzo: {err:.3}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn svgz_reads_the_compressed_svg() {
+        use std::io::Write;
+        let svg =
+            br##"<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4" viewBox="0 0 4 4">
+  <rect x="0" y="0" width="4" height="4" fill="#00ff00"/>
+</svg>"##;
+        let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        gz.write_all(svg).unwrap();
+        let file = gz.finish().unwrap();
+
+        let path = temp("logo.svgz", &file);
+        let (w, h, rgba) = load_image_rgba(&path).unwrap();
+        assert_eq!((w, h), (4, 4));
+        assert_eq!(&rgba[..4], &[0, 255, 0, 255], "rect verde opaco");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn gpu_containers_report_their_broken_files() {
+        let cases: [(&str, &[u8], &str); 4] = [
+            (
+                "bad.pkm",
+                b"NOPE10\x00\x00\x00\x04\x00\x04\x00\x04\x00\x04",
+                "PKM",
+            ),
+            ("bad.pvr", b"UNKN", "PVR"),
+            ("bad.ccz", b"NOPE", "CCZ"),
+            ("bad.pvr.gz", b"not a gzip stream at all", "gzip"),
+        ];
+        for (name, bytes, needle) in cases {
+            let path = temp(name, bytes);
+            let err = load_image_rgba(&path).unwrap_err().to_string();
+            assert!(err.contains(needle), "{name}: esperaba «{needle}» en {err}");
+            let _ = std::fs::remove_file(path);
+        }
     }
 
     #[test]

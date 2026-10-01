@@ -215,14 +215,21 @@ corrección» al final.
   crate que lo escribe (`tp_basis::transcode_rgba`: firma `sB`, primer nivel de la
   primera imagen, tamaño validado contra el buffer) tras la feature `gpu-formats`;
   sin ella el error lo dice en lugar de ignorar el fichero, igual que en la salida.
-  En total la entrada cubre **19 formatos** (24 extensiones) de los ~29 que enumera la
-  documentación del original: esa es la única diferencia que queda abierta aquí.
-  Tests: 19 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
+  `pkm` (ETC1 con cabecera de 16 bytes «PKM 10/20», dimensiones extendidas a múltiplo
+  de 4 recortadas al tamaño original), `pvr`/`pvrtc` (v3 con la magia `PVR\x03` y v2 con
+  `headerSize` 44/52 y tag `PVR!`: PVRTC1 de 2/4 bpp y crudos 16/32 bits desempaquetados
+  por máscara de canal), sus envoltorios `.pvr.gz` (gzip, reconocido por el nombre base)
+  y `.pvr.ccz` (cabecera `CCZ!` + zlib) comparten `decode_pvr`, y `svgz` es un SVG dentro
+  de gzip. Con eso la entrada cubre los **28 formatos** que enumera la documentación del
+  original en 30 extensiones, más `qoi` y `pnm` que el original no lista: ya no queda
+  ningún formato de entrada pendiente.
+  Tests: 26 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
   codificador, embebido en hexadecimal, un PSD RGB mínimo construido a mano, la
-  comprobación alfa/recta del SVG y el round-trip `.basis` → RGBA con error medio
-  < 5) y los e2e
+  comprobación alfa/recta del SVG, el round-trip `.basis` → RGBA con error medio < 5,
+  el recorte del `.pkm`, los contenedores PVR v2/v3 y sus envoltorios) y los e2e
   `lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs`,
-  `lote12_ingests_psd_and_svg_inputs` y `basis_input_is_ingested_and_packed`.
+  `lote12_ingests_psd_and_svg_inputs`, `basis_input_is_ingested_and_packed` y
+  `p15_ingests_pkm_pvr_ccz_and_svgz_inputs`.
 - **Extras de data format — hecho**: `cache_busting` añade `?v=<hash>` a la textura citada
   en los metadatos (hash de 8 hex del fichero publicado, `hash::hash_bytes_short`), igual
   que los data formats de Pixi/Phaser; `gdx_filter` declara `filter: Linear, Linear` /
@@ -298,7 +305,7 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
 305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, 327 tras el duodécimo,
-328 tras el decimotercero, **332 tras el decimocuarto**).
+328 tras el decimotercero, 332 tras el decimocuarto, **340 tras el decimoquinto**).
 
 ---
 
@@ -433,5 +440,22 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
     (ETC1S a calidad 80 y error medio < 5 contra el original), `basis_files_report_a_broken_file`,
     el caso sin la feature, `is_image_file_accepts_every_documented_input_extension` y el
     e2e `basis_input_is_ingested_and_packed` (un `.basis` 16×8 y un PNG en el mismo atlas,
-    con el id sin extensión y el tamaño original en `sourceSize`). Deja la entrada sin
-    carencias documentadas; el total queda en **332**.
+    con el id sin extensión y el tamaño original en `sourceSize`). Cierra el `.basis`;
+    lo que todavía faltaba de la lista oficial de entrada se cierra en el punto 15.
+    El total queda en **332**.
+
+15. **Los seis formatos de entrada que faltaban** — **hecho** (ver §3 «Entrada de
+    imágenes»): `pkm`, `pvr`, `pvr.gz`, `pvr.ccz`, `pvrtc` y `svgz`, los únicos de la
+    lista oficial del original que no entraban (ahora **28 de 28**, en 30 extensiones,
+    más `qoi` y `pnm`). `decode_pkm` lee el ETC1 con el recorte a las dimensiones
+    originales; `decode_pvr` distingue v3 (magia `PVR\x03`, `pixelFormat` 0-3 = PVRTC1
+    2/4 bpp) de v2 (`headerSize` 44/52 + tag `PVR!`, `bpp` 2/4 = PVRTC y 16/32 = crudos
+    con máscaras de canal), y `decode_pvr_gz`/`decode_pvr_ccz`/`decode_svgz` sólo
+    descomprimen antes de llamar a esos. `is_image_file` acepta las nuevas extensiones y
+    reconoce `.pvr.gz` por el nombre base (otro `.gz` no es imagen); los dos diálogos de
+    la GUI amplían su filtro. Tests: `pkm_reads_etc1_and_crops_to_the_original_size`,
+    `pvr_and_pvrtc_read_the_container_we_write`, `pvr_v2_reads_raw_pixels_with_their_channel_masks`,
+    `pvr_v2_reads_pvrtc_blocks`, `pvr_gz_and_ccz_unwrap_the_same_file`,
+    `svgz_reads_the_compressed_svg`, `gpu_containers_report_their_broken_files`, la lista
+    de extensiones y el e2e `p15_ingests_pkm_pvr_ccz_and_svgz_inputs`. El total queda
+    en **340**.

@@ -147,7 +147,7 @@ pub(super) fn add_sprites_dialog(app: &mut App) {
             &[
                 "png", "webp", "jpg", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "tif", "dds",
                 "qoi", "pbm", "pgm", "ppm", "pnm", "xbm", "xpm", "astc", "ktx", "ktx2", "basis",
-                "psd", "svg",
+                "psd", "svg", "svgz", "pkm", "pvr", "pvrtc", "ccz", "gz",
             ],
         )
         .pick_files()

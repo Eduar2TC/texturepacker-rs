@@ -141,15 +141,50 @@ fn discover_images(options: &IngestOptions) -> Vec<PathBuf> {
 }
 
 pub fn is_image_file(path: &Path) -> bool {
-    matches!(
-        path.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase()),
-        Some(e) if matches!(
-            e.as_str(),
-            "png" | "webp" | "jpg" | "jpeg" | "tga" | "bmp" | "gif" | "ico" | "tiff"
-                | "tif" | "dds" | "qoi" | "pbm" | "pgm" | "ppm" | "pnm" | "xbm" | "xpm"
-                | "astc" | "ktx" | "ktx2" | "basis" | "psd" | "svg"
-        )
-    )
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.to_ascii_lowercase());
+    match ext.as_deref() {
+        // `.pvr.gz`: la extensión es `gz`, así que manda el nombre base.
+        Some("gz") => path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .is_some_and(|s| s.to_ascii_lowercase().ends_with(".pvr")),
+        Some(e) => matches!(
+            e,
+            "png"
+                | "webp"
+                | "jpg"
+                | "jpeg"
+                | "tga"
+                | "bmp"
+                | "gif"
+                | "ico"
+                | "tiff"
+                | "tif"
+                | "dds"
+                | "qoi"
+                | "pbm"
+                | "pgm"
+                | "ppm"
+                | "pnm"
+                | "xbm"
+                | "xpm"
+                | "astc"
+                | "ktx"
+                | "ktx2"
+                | "basis"
+                | "psd"
+                | "svg"
+                | "svgz"
+                | "pkm"
+                | "pvr"
+                | "pvrtc"
+                | "ccz"
+        ),
+        None => false,
+    }
 }
 
 /// Load one image file into RGBA8 pixels. Returns `Err` with a message.
@@ -766,13 +801,27 @@ mod tests {
             "a.ktx2",
             "a.psd",
             "a.svg",
+            "a.svgz",
             "a.basis",
+            "a.pkm",
+            "a.pvr",
+            "a.pvrtc",
+            "a.ccz",
+            "a.pvr.gz",
             "A.PNG",
             "carpeta/héroe.basis",
         ] {
             assert!(is_image_file(Path::new(name)), "{name} debería ser imagen");
         }
-        for name in ["a.txt", "a.json", "a.tpproj", "basis", "carpeta/"] {
+        for name in [
+            "a.txt",
+            "a.json",
+            "a.tpproj",
+            "basis",
+            "carpeta/",
+            "backup.gz",
+            "a.png.gz",
+        ] {
             assert!(!is_image_file(Path::new(name)), "{name} no es imagen");
         }
     }
