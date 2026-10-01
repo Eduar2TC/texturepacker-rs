@@ -15,6 +15,7 @@
 //! esa desviación está anotada en el informe comparativo.
 
 use crate::config::{PackingAlgorithm, TemplateFormat};
+use std::path::Path;
 
 /// Agrupaciones usadas por el combo de la GUI (y por los mensajes de error),
 /// en el orden en que se muestran.
@@ -574,6 +575,33 @@ pub fn data_formats_in_category(
     DATA_FORMATS.iter().filter(move |p| p.category == category)
 }
 
+/// Ids de los exportadores propios de `dir` (`<id>.hbs`), ordenados para una
+/// salida estable. Los ficheros sin `.hbs` y los ids vacíos o con separadores
+/// de ruta se descartan: no son formatos seleccionables. Un directorio
+/// inexistente o ilegible devuelve la lista vacía.
+///
+/// Los llaman el CLI (`--custom-exporters-directory` + `--format`/`--exporter-list`)
+/// y el combo de la GUI.
+pub fn custom_exporter_ids(dir: &Path) -> Vec<String> {
+    let mut ids = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            if !entry.path().is_file() {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if let Some(id) = name.strip_suffix(".hbs") {
+                if !id.is_empty() && !id.contains(['/', '\\']) {
+                    ids.push(id.to_string());
+                }
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -689,5 +717,26 @@ mod tests {
             find_data_format("unity-texture2d").and_then(|p| p.algorithm),
             Some(PackingAlgorithm::Polygon)
         );
+    }
+
+    #[test]
+    fn custom_exporter_ids_lists_only_selectable_hbs_files() {
+        let dir = std::env::temp_dir().join(format!("tp_custom_exporters_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("b.hbs"), "{{this.filename}}").unwrap();
+        std::fs::write(dir.join("a.hbs"), "{{this.filename}}").unwrap();
+        std::fs::write(dir.join("notas.txt"), "no soy plantilla").unwrap();
+        std::fs::write(dir.join(".hbs"), "id vacío").unwrap();
+        std::fs::create_dir_all(dir.join("carpeta.hbs")).unwrap();
+
+        assert_eq!(
+            custom_exporter_ids(&dir),
+            vec!["a".to_string(), "b".to_string()],
+            "sólo ficheros .hbs, ordenados y sin ids raros"
+        );
+        assert!(custom_exporter_ids(&dir.join("no_existe")).is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

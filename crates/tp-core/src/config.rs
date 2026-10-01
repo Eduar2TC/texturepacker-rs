@@ -1891,6 +1891,46 @@ impl ProjectConfig {
         self.apply_data_format_defaults()
     }
 
+    /// `--custom-exporters-directory` + un id propio: si existe
+    /// `dir/{id}.hbs`, ese exportador pasa a ser la plantilla de salida y
+    /// devuelve `true`. La familia y la extensión las sigue decidiendo
+    /// `data_format`, igual que en el original, donde el exportador propio
+    /// sólo aporta el texto.
+    ///
+    /// **No escribe `data_format`**: `validate()` sólo acepta ids de la lista
+    /// oficial, y el id propio no es un formato de datos, es una plantilla.
+    pub fn select_custom_exporter(&mut self, id: &str) -> bool {
+        let Some(dir) = self.custom_exporters_directory.clone() else {
+            return false;
+        };
+        if id.is_empty() || id.contains(['/', '\\']) {
+            return false;
+        }
+        let path = dir.join(format!("{id}.hbs"));
+        if !path.is_file() {
+            return false;
+        }
+        self.export_template = Some(path);
+        true
+    }
+
+    /// Quita la plantilla propia, pero sólo si la que hay apunta al
+    /// directorio de exportadores: una plantilla elegida aparte (`--template`
+    /// o el botón «…» de la GUI) no se toca. Devuelve `true` si borró algo.
+    pub fn clear_custom_exporter(&mut self) -> bool {
+        let inside = match (
+            self.custom_exporters_directory.as_deref(),
+            self.export_template.as_deref(),
+        ) {
+            (Some(dir), Some(path)) => path.parent() == Some(dir),
+            _ => false,
+        };
+        if inside {
+            self.export_template = None;
+        }
+        inside
+    }
+
     /// Aplica solo los valores recomendados del preset actual (la opción
     /// «Update to recommended values» del diálogo de conversión): rotación,
     /// algoritmo y auto-detección de animaciones.
@@ -2444,6 +2484,86 @@ mod tests {
             .unwrap()
             .pivot_overrides
             .is_empty());
+    }
+
+    #[test]
+    fn fase_c_exporter_fields_survive_toml_roundtrip() {
+        let cfg = ProjectConfig {
+            css_sprite_prefix: Some("icon-".into()),
+            css_media_query_2x: Some("(-webkit-min-device-pixel-ratio: 2)".into()),
+            plain_string_property: Some("hola".into()),
+            plain_bool_property: Some(false),
+            custom_exporters_directory: Some(PathBuf::from("mis-exportadores")),
+            ..ProjectConfig::default()
+        };
+
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert_eq!(back.css_sprite_prefix.as_deref(), Some("icon-"));
+        assert_eq!(
+            back.css_media_query_2x.as_deref(),
+            Some("(-webkit-min-device-pixel-ratio: 2)")
+        );
+        assert_eq!(back.plain_string_property.as_deref(), Some("hola"));
+        assert_eq!(back.plain_bool_property, Some(false));
+        assert_eq!(
+            back.custom_exporters_directory,
+            Some(PathBuf::from("mis-exportadores"))
+        );
+        back.validate().unwrap();
+
+        // Sin ellas el TOML no ensucia y los proyectos antiguos siguen
+        // cargando (todas llevan #[serde(default)]).
+        let clean = ProjectConfig::default().to_toml().unwrap();
+        assert!(!clean.contains("css_sprite_prefix"));
+        assert!(!clean.contains("plain_string_property"));
+        assert!(!clean.contains("custom_exporters_directory"));
+        let plain = ProjectConfig::from_toml(&clean).unwrap();
+        assert!(plain.css_media_query_2x.is_none());
+        assert!(plain.plain_bool_property.is_none());
+        assert!(plain.custom_exporters_directory.is_none());
+    }
+
+    #[test]
+    fn custom_exporter_is_selected_from_the_directory_and_cleared_only_there() {
+        let dir = std::env::temp_dir().join(format!("tp_config_exporters_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("mi.hbs"), "{{this.filename}}").unwrap();
+
+        let mut cfg = ProjectConfig::default();
+        // Sin directorio no hay exportador propio que seleccionar.
+        assert!(!cfg.select_custom_exporter("mi"));
+        assert!(cfg.export_template.is_none());
+
+        cfg.custom_exporters_directory = Some(dir.clone());
+        assert!(cfg.select_custom_exporter("mi"));
+        assert_eq!(
+            cfg.export_template.as_deref(),
+            Some(dir.join("mi.hbs").as_path())
+        );
+        // data_format no se toca: el id propio es una plantilla, no un
+        // formato de datos, y validate() sólo admite los oficiales.
+        assert_eq!(cfg.data_format, ProjectConfig::default().data_format);
+        cfg.validate().unwrap();
+
+        assert!(!cfg.select_custom_exporter("no-existe"));
+        assert!(!cfg.select_custom_exporter(""));
+        assert!(!cfg.select_custom_exporter("../fuera"));
+        assert_eq!(
+            cfg.export_template.as_deref(),
+            Some(dir.join("mi.hbs").as_path()),
+            "los ids inválidos no cambian la plantilla activa"
+        );
+
+        assert!(cfg.clear_custom_exporter());
+        assert!(cfg.export_template.is_none());
+        assert!(!cfg.clear_custom_exporter(), "ya no hay nada que quitar");
+
+        cfg.export_template = Some(PathBuf::from("plantilla-ajena.hbs"));
+        assert!(!cfg.clear_custom_exporter(), "la de fuera no se borra");
+        assert!(cfg.export_template.is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

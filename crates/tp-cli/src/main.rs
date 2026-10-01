@@ -284,25 +284,6 @@ fn version_line() -> String {
     format!("TexturePacker-RS {}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Ids de los `<id>.hbs` de un directorio de exportadores propios
-/// (`--custom-exporters-directory`), ordenados para una salida estable.
-fn custom_exporter_ids(dir: &Path) -> Vec<String> {
-    let mut ids = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if let Some(id) = name.strip_suffix(".hbs") {
-                if !id.is_empty() && !id.contains(['/', '\\']) {
-                    ids.push(id.to_string());
-                }
-            }
-        }
-    }
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
 /// Ids de data formats que aceptan `--format`/`--template-format`, uno por
 /// línea, como el `--exporter-list` del original.
 fn exporter_list_text() -> String {
@@ -669,7 +650,7 @@ fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), Str
             if cfg.apply_data_format(id) {
                 return Ok(());
             }
-            if apply_custom_exporter(cfg, id) {
+            if cfg.select_custom_exporter(id) {
                 return Ok(());
             }
             return Err(format!(
@@ -680,26 +661,6 @@ fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), Str
         }
     }
     Ok(())
-}
-
-/// `--custom-exporters-directory DIR` + `--format <id>`: si existe
-/// `DIR/<id>.hbs`, ese exportador es válido y su plantilla es la salida. La
-/// extensión la sigue decidiendo la familia (`--template-format`, json por
-/// defecto), igual que en el original, donde el exportador propio sólo
-/// aporta el texto.
-fn apply_custom_exporter(cfg: &mut ProjectConfig, id: &str) -> bool {
-    let Some(dir) = cfg.custom_exporters_directory.clone() else {
-        return false;
-    };
-    if id.is_empty() || id.contains(['/', '\\']) {
-        return false;
-    }
-    let path = dir.join(format!("{id}.hbs"));
-    if !path.is_file() {
-        return false;
-    }
-    cfg.export_template = Some(path);
-    true
 }
 
 /// Qué es un argumento posicional de la línea de comandos.
@@ -1245,7 +1206,7 @@ fn cmd_pack(args: &[String]) {
         print!("{}", exporter_list_text());
         // Los `<id>.hbs` de --custom-exporters-directory también son formatos.
         if let Some(dir) = val("custom-exporters-directory") {
-            let ids = custom_exporter_ids(Path::new(&dir));
+            let ids = tp_core::dataformats::custom_exporter_ids(Path::new(&dir));
             if ids.is_empty() {
                 eprintln!("⚠ --custom-exporters-directory: no hay <id>.hbs en {dir}");
             } else {
@@ -2933,7 +2894,7 @@ mod tests {
             custom_exporters_directory: Some(dir.clone()),
             ..ProjectConfig::default()
         };
-        assert!(apply_custom_exporter(&mut cfg, "miexportador"));
+        assert!(cfg.select_custom_exporter("miexportador"));
         assert_eq!(
             cfg.export_template.as_deref(),
             Some(dir.join("miexportador.hbs").as_path())
@@ -2944,8 +2905,8 @@ mod tests {
             custom_exporters_directory: Some(dir.clone()),
             ..ProjectConfig::default()
         };
-        assert!(!apply_custom_exporter(&mut cfg, "no-existe"));
-        assert!(!apply_custom_exporter(&mut cfg, "../algo"));
+        assert!(!cfg.select_custom_exporter("no-existe"));
+        assert!(!cfg.select_custom_exporter("../algo"));
 
         // --format con ese id pasa por apply_template_format.
         let mut cfg = ProjectConfig {
@@ -2962,7 +2923,7 @@ mod tests {
 
         // Lo que --exporter-list lista junto a los del original.
         assert_eq!(
-            custom_exporter_ids(&dir),
+            tp_core::dataformats::custom_exporter_ids(&dir),
             vec!["miexportador".to_string(), "otro.json".to_string()]
         );
 
