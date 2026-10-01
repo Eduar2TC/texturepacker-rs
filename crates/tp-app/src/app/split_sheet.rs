@@ -249,8 +249,8 @@ fn pick_sheet(app: &mut App, ctx: &egui::Context) {
             "Imágenes",
             &[
                 "png", "webp", "jpg", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "tif", "dds",
-                "qoi", "pbm", "pgm", "ppm", "pnm", "xbm", "xpm", "astc", "ktx", "ktx2", "psd",
-                "svg",
+                "qoi", "pbm", "pgm", "ppm", "pnm", "xbm", "xpm", "astc", "ktx", "ktx2", "basis",
+                "psd", "svg",
             ],
         )
         .pick_file();

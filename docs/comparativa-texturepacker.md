@@ -178,8 +178,8 @@ corrección» al final.
   calidades del original: `--pvr-quality 0-7` (3), `--etc1-quality 0-100` (70),
   `--etc2-quality 0-100` (70), `--astc-quality 0-4` (2) y `--dxt-mode
   DXT_LINEAR|DXT_PERCEPTUAL`. Compresores propios: BC1/BC3 (`dxt.rs`), PVRTC1 2/4bpp
-  (`pvrtc.rs`), ETC1/ETC2 con esfuerzo escalonado (`etc2.rs`) y ASTC con `astcenc-rs`.
-  Solo queda BASIS/BasisU (§3).
+  (`pvrtc.rs`), ETC1/ETC2 con esfuerzo escalonado (`etc2.rs`) y ASTC con `astcenc-rs`;
+  BASIS/BasisU también está (ETC1S por `tp-basis`, puntos 11 y 14).
 - **Content protection — hecho**: AES-GCM propio (más general que el original, que es
   solo Cocos2D + `pvr.ccz`) más el gestor de clave global que faltaba: `tp_core::keys`
   guarda `nombre -> clave` en `keys.toml` dentro del directorio de configuración del
@@ -211,12 +211,16 @@ corrección» al final.
   defecto), con las fuentes del sistema cargadas una sola vez (`OnceLock`) y la salida
   des-premultiplicada: tiny-skia compone en alfa premultiplicado y el pipeline trabaja con
   alfa recta, comprobado con un `fill-opacity="0.5"`. `is_image_file` y los filtros del
-  diálogo de la GUI/hoja están ampliados. Faltan `basis`; el original lista ~29 formatos.
-  Tests: 17 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
-  codificador, embebido en hexadecimal, un PSD RGB mínimo construido a mano y la
-  comprobación alfa/recta del SVG) y los e2e
-  `lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs` y
-  `lote12_ingests_psd_and_svg_inputs`.
+  diálogo de la GUI/hoja están ampliados. `basis` se lee con el transcoder de la misma
+  crate que lo escribe (`tp_basis::transcode_rgba`: firma `sB`, primer nivel de la
+  primera imagen, tamaño validado contra el buffer) tras la feature `gpu-formats`;
+  sin ella el error lo dice en lugar de ignorar el fichero, igual que en la salida.
+  Tests: 19 unitarios en `reader.rs` (incluido un `.astc` real exportado por nuestro
+  codificador, embebido en hexadecimal, un PSD RGB mínimo construido a mano, la
+  comprobación alfa/recta del SVG y el round-trip `.basis` → RGBA con error medio
+  < 5) y los e2e
+  `lote11_ingests_xbm_xpm_ppm_astc_and_ktx_inputs`,
+  `lote12_ingests_psd_and_svg_inputs` y `basis_input_is_ingested_and_packed`.
 - **Extras de data format — hecho**: `cache_busting` añade `?v=<hash>` a la textura citada
   en los metadatos (hash de 8 hex del fichero publicado, `hash::hash_bytes_short`), igual
   que los data formats de Pixi/Phaser; `gdx_filter` declara `filter: Linear, Linear` /
@@ -292,7 +296,7 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 `cargo test --workspace` en verde (246 tests tras el tercer punto, 250 tras el cuarto,
 272 tras el quinto, 279 tras el sexto, 285 tras el séptimo, 291 tras el octavo,
 305 tras el noveno, 310 tras el décimo, 318 tras el undécimo, 327 tras el duodécimo,
-**328 tras el decimotercero**).
+328 tras el decimotercero, **332 tras el decimocuarto**).
 
 ---
 
@@ -333,7 +337,8 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
    RGB/RGBA, cabecera PVR con el `pixelFormat` correcto), flags
    `--pvr-quality --etc1-quality --etc2-quality --astc-quality --dxt-mode` con rangos y
    compatibilidad validados, y GUI con combo filtrado, calidades por formato y modo DXT.
-   Queda BASIS/BasisU (§3).
+   BASIS/BasisU queda cerrado por completo (salida en el punto 11, entrada en el
+   punto 14).
 6. **Extras de data format** — **hecho** (ver §3): `cache_busting`/`gdx_filter`/`shape_debug`
    en `ProjectConfig` (con `serde(default)`, así un `.tpproj` anterior sigue cargando),
    `PageInfo::cache_version` para que los metadatos citen el hash del fichero recién
@@ -363,8 +368,8 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
 9. **Entrada de imágenes** — **hecho** (ver §3 «Entrada de imágenes»): `pnm` en las
    features de `image` y el módulo `reader` con los decoders escritos a mano (XBM, XPM,
    ASTC, KTX1, KTX2, PSD, SVG) más el despacho por extensión en `ingest::is_image_file`/
-   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. Queda
-   **leer** `.basis` como entrada (la *salida* Basis es el punto 11).
+   `ingest::load_image_rgba`, los filtros de la GUI y el e2e de ingestión. La lectura
+   de `.basis` como entrada se cierra en el punto 14.
 10. **PSD y SVG** — **hecho** (ver §3 «Entrada de imágenes»): `psd` (crate del mismo
     nombre, `Psd::from_bytes` → `rgba()`, el compuesto aplanado) y `svg` (`resvg` 0.48 +
     `usvg` + `tiny-skia`, fuentes del sistema en un `OnceLock` compartido, pixmap
@@ -415,3 +420,16 @@ Puerta de calidad (se reejecuta en cada punto de §2/§3): `cargo fmt --all --ch
     egui-winit la resuelve con la crate `webbrowser`, ya activa vía la feature `links` —,
     y aviso en el Log. Sólo toca la GUI: el test de contrato del enlace deja el total en
     328.
+
+14. **Lectura de `.basis` como entrada** — **hecho** (ver §3 «Entrada de imágenes»):
+    `decode_basis` en `crates/tp-core/src/reader.rs`, llamado por el despacho por
+    extensión en las dos ramas: con `gpu-formats` usa `tp_basis::transcode_rgba`
+    (firma `sB` comprobada, tamaño del buffer validado) y sin ella devuelve
+    `«Basis requiere la feature "gpu-formats"»`, en línea con lo que hace la
+    exportación. `ingest::is_image_file` y los filtros de los diálogos de la
+    toolbar y de «Dividir hoja» aceptan `basis`. Tests: `basis_files_are_read_back_as_rgba`
+    (ETC1S a calidad 80 y error medio < 5 contra el original), `basis_files_report_a_broken_file`,
+    el caso sin la feature, `is_image_file_accepts_every_documented_input_extension` y el
+    e2e `basis_input_is_ingested_and_packed` (un `.basis` 16×8 y un PNG en el mismo atlas,
+    con el id sin extensión y el tamaño original en `sourceSize`). Deja la entrada sin
+    carencias documentadas; el total queda en **332**.

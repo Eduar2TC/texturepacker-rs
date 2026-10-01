@@ -147,7 +147,7 @@ pub fn is_image_file(path: &Path) -> bool {
             e.as_str(),
             "png" | "webp" | "jpg" | "jpeg" | "tga" | "bmp" | "gif" | "ico" | "tiff"
                 | "tif" | "dds" | "qoi" | "pbm" | "pgm" | "ppm" | "pnm" | "xbm" | "xpm"
-                | "astc" | "ktx" | "ktx2" | "psd" | "svg"
+                | "astc" | "ktx" | "ktx2" | "basis" | "psd" | "svg"
         )
     )
 }
@@ -747,6 +747,35 @@ pub fn detect_borders_auto(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn is_image_file_accepts_every_documented_input_extension() {
+        for name in [
+            "a.png",
+            "a.webp",
+            "a.jpg",
+            "a.tga",
+            "a.bmp",
+            "a.dds",
+            "a.qoi",
+            "a.ppm",
+            "a.xbm",
+            "a.xpm",
+            "a.astc",
+            "a.ktx",
+            "a.ktx2",
+            "a.psd",
+            "a.svg",
+            "a.basis",
+            "A.PNG",
+            "carpeta/héroe.basis",
+        ] {
+            assert!(is_image_file(Path::new(name)), "{name} debería ser imagen");
+        }
+        for name in ["a.txt", "a.json", "a.tpproj", "basis", "carpeta/"] {
+            assert!(!is_image_file(Path::new(name)), "{name} no es imagen");
+        }
+    }
 
     #[test]
     fn detect_borders_finds_solid_frame() {

@@ -150,7 +150,7 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
    **➕** / **Carpeta**, o rellena **Directorio de entrada**)
    (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM,
-   XBM, XPM, PSD, SVG, ASTC y KTX/KTX2).
+   XBM, XPM, PSD, SVG, ASTC, KTX/KTX2 y `.basis` con `--features gpu-formats`).
    Cada cambio de ajustes reempaqueta la vista al instante (debounce de
    120 ms), como en la herramienta original.
 2. Ajusta tamaño de atlas, padding/extrude, rotación, recorte, polígonos, profundidad de color, formato y cifrado.
@@ -206,7 +206,7 @@ tp-cli decrypt build/atlas_0.png.tpenc --key secreto -o atlas.png --pixel-format
 
 | Módulo de la especificación                    | Estado | Detalles |
 |------------------------------------------------|--------|----------|
-| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG, ASTC y KTX/KTX2 |
+| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG, ASTC, KTX/KTX2 y `.basis`* (*con `--features gpu-formats`) |
 | Alpha trimming + bounding box                  | ✅     | Umbral configurable (0-255) |
 | Deduplicación por hashing (aliases)            | ✅     | xxh3 + comparación byte-exacta; los aliases no ocupan espacio |
 | Auto-downscaling (@2x/@1x)                     | ✅     | `scale_variants` (p. ej. `1.0, 0.5`) con metadatos escalados |
@@ -402,9 +402,11 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
   atlas, por lo que no produce artefactos visibles).
 - Los formatos de entrada BMP/GIF/ICO/TIFF/DDS heredan las limitaciones de los
   decodificadores de la crate `image`; los GIF animados se leen como su primer
-  fotograma. XBM/XPM se leen como máscara (bit encendido = negro opaco) y los
+  fotograma. XBM/XPM se leen como máscara (bit encendido = negro opaco). Los
   `.ktx2` con payload Basis Universal no se pueden decodificar sin un transcoder
-  (se rechaza con un mensaje claro); se lee el primer nivel de mipmap. El PSD
+  (se rechaza con un mensaje claro), pero un `.basis` suelto sí se lee con la
+  misma crate que lo escribe, tras `--features gpu-formats` (sin ella el error
+  lo dice); de los contenedores se lee el primer nivel de mipmap. El PSD
   se abre como el compuesto aplanado (capas fundidas) y el SVG se rasteriza a
   su tamaño intrínseco (o 100×100 si no lo trae) con las fuentes del sistema.
 - **Formatos de salida**: escribe los 17 de la documentación vigente del
@@ -431,7 +433,7 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 327 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta 332 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
@@ -442,7 +444,7 @@ cuando faltan placeholders y error con `multipack = false`), round-trip de ETC2 
 + EAC) y PVRTC 4BPP (opaco, gradientes, transparencia y layout morton) contra un
 decodificador independiente (`texture2ddecoder`), cifrado/descifrado, plantillas,
 configuración (round-trip TOML de los ajustes nuevos), CLI (flags y parseo de
-argumentos), y 42 pruebas end-to-end que generan sprites reales en disco y
+argumentos), y 43 pruebas end-to-end que generan sprites reales en disco y
 verifican aliases, rotación, normal maps, variantes, multi-atlas, los tres
 formatos GPU (ETC2/PVRTC/ASTC), los ajustes de Lote 5 (padding de borde,
 divisor común, nombres con subcarpeta/extensión, `texture_path`, premultiply y
@@ -454,7 +456,8 @@ flip vertical solo en formatos GPU e ingesta de TGA/BMP/QOI con deduplicación
 por hash) y del **Lote 9** (bordes 9-patch desde `borders.json` hasta los
 metadatos `border` del JSON), además de los del **Lote 13** (la hoja publicada
 en KTX2 se vuelve a leer byte a byte y el `.basis` sale con su firma y con la
-calidad moviendo el tamaño) y los de los **formatos de datos** (cada familia
+calidad moviendo el tamaño; el `.basis` de entrada se transcodifica y entra en
+el atlas) y los de los **formatos de datos** (cada familia
 publica su propio fichero — atlas de texto, Plist, XML, CSS — o ninguno en
 «solo la hoja», y renderiza su forma: `offset` centrado, `frameX` negativo,
 `textures` por hoja y clases CSS saneadas).

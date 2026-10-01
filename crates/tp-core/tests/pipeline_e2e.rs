@@ -2774,3 +2774,58 @@ fn data_format_families_render_their_own_shape() {
     assert!(css.contains("background-image: url(atlas.png);"), "{css}");
     assert!(css.contains("background-position: -"), "{css}");
 }
+
+/// Un sprite `.basis` de entrada se transcodifica y entra en el atlas junto a
+/// los PNG (la *salida* Basis ya la cubre `lote13_ktx2_container_and_basis_export`).
+#[cfg(feature = "gpu-formats")]
+#[test]
+fn basis_input_is_ingested_and_packed() {
+    let fx = Fixture::new("basis_input");
+    let input = make_input_dir(&fx.dir, "in");
+    write_png(&input.join("coin.png"), 8, 8, [200, 160, 0, 255]);
+
+    // Un sprite 16x8 con las cuatro esquinas de colores, codificado con el
+    // mismo ETC1S que usa la exportación.
+    let colors = [
+        [10u8, 20, 30, 255],
+        [200, 40, 50, 255],
+        [60, 210, 70, 255],
+        [8, 9, 220, 255],
+    ];
+    let mut rgba = Vec::with_capacity(16 * 8 * 4);
+    for y in 0..8 {
+        for x in 0..16 {
+            rgba.extend_from_slice(&colors[(y / 4) * 2 + x / 8]);
+        }
+    }
+    let file = tp_basis::encode_etc1s(&rgba, 16, 8, 80).unwrap();
+    std::fs::write(input.join("hero.basis"), &file).unwrap();
+
+    let output = fx.dir.join("out");
+    let cfg = ProjectConfig {
+        input_directory: input,
+        output_directory: output.clone(),
+        base_file_name: "atlas".into(),
+        ..ProjectConfig::default()
+    };
+    let out = pipeline::run(&cfg).unwrap();
+    assert_eq!(out.result.sprites.len(), 2, "falta el .basis o el PNG");
+
+    let json = std::fs::read_to_string(output.join("atlas.json")).unwrap();
+    let meta: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let frames = meta["frames"].as_array().unwrap();
+    let names: Vec<&str> = frames
+        .iter()
+        .map(|f| f["filename"].as_str().unwrap())
+        .collect();
+    assert!(names.contains(&"hero"), "{names:?}");
+    assert!(names.contains(&"coin"), "{names:?}");
+
+    // El id pierde la extensión y conserva el tamaño del fichero decodificado.
+    let hero = frames
+        .iter()
+        .find(|f| f["filename"] == "hero")
+        .expect("hero en los metadatos");
+    assert_eq!(hero["sourceSize"]["w"], 16);
+    assert_eq!(hero["sourceSize"]["h"], 8);
+}

@@ -1,5 +1,5 @@
 //! Lectura de formatos de entrada que `image` no cubre: XBM, XPM, PSD y SVG,
-//! más los contenedores GPU (`.astc`, `.ktx`, `.ktx2`).
+//! más los contenedores GPU (`.astc`, `.ktx`, `.ktx2`) y `.basis`.
 //!
 //! El resto de formatos (PNG/JPG/WebP/… y ahora también PBM/PGM/PPM) sigue
 //! resolviéndose con la biblioteca `image`. Aquí solo viven los decodificadores
@@ -20,7 +20,7 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
         .map(|e| e.to_ascii_lowercase());
     match ext.as_deref() {
         Some("xbm") | Some("xpm") | Some("astc") | Some("ktx") | Some("ktx2") | Some("psd")
-        | Some("svg") => {
+        | Some("svg") | Some("basis") => {
             let bytes = std::fs::read(path)
                 .map_err(|e| TpError::Other(format!("{}: {e}", path.display())))?;
             let decoded = match ext.as_deref() {
@@ -29,6 +29,7 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
                 Some("astc") => decode_astc(&bytes),
                 Some("psd") => decode_psd(&bytes),
                 Some("svg") => decode_svg(&bytes),
+                Some("basis") => decode_basis(&bytes),
                 // KTX v1 y v2 comparten identificador: el byte 12 es la
                 // endianness (`01 02 03 04`) en v1 y el vkFormat en v2.
                 _ if bytes.get(12..16) == Some(&[1, 2, 3, 4]) => decode_ktx(&bytes),
@@ -737,6 +738,35 @@ fn inflate(payload: &[u8], expected: usize) -> DecodeResult<Vec<u8>> {
     Ok(out)
 }
 
+// ---------------------------------------------------------------------------
+// Basis Universal (`.basis`)
+// ---------------------------------------------------------------------------
+
+/// Reads a `.basis` file back to RGBA8 with the transcoder of
+/// `basis-universal` (the same crate that encodes them on export).
+///
+/// Only the first image of the first mip level is read, as with the rest of
+/// the container formats: input here is a sprite, not a texture chain.
+#[cfg(feature = "gpu-formats")]
+fn decode_basis(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    if bytes.len() < 4 || &bytes[..2] != b"sB" {
+        return Err("Basis: firma inválida (no es un .basis)".to_string());
+    }
+    let (width, height, rgba) =
+        tp_basis::transcode_rgba(bytes).map_err(|e| format!("Basis: {e}"))?;
+    if width == 0 || height == 0 || rgba.len() != (width * height * 4) as usize {
+        return Err("Basis: transcodificación con tamaño incoherente".to_string());
+    }
+    Ok((width as i32, height as i32, rgba))
+}
+
+/// Without the `gpu-formats` feature the transcoder is not linked: report it
+/// instead of silently ignoring the file, like the GPU formats do on export.
+#[cfg(not(feature = "gpu-formats"))]
+fn decode_basis(_bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
+    Err("Basis requiere la feature \"gpu-formats\"".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -747,6 +777,76 @@ mod tests {
         let path = std::env::temp_dir().join(format!("tp_reader_{}_{}", std::process::id(), file));
         std::fs::write(&path, bytes).unwrap();
         path
+    }
+
+    /// Four-quadrant 8x8 image (same shape the export round-trip uses).
+    #[cfg(feature = "gpu-formats")]
+    fn quadrants() -> Vec<u8> {
+        let colors = [
+            [10u8, 20, 30, 255],
+            [200, 40, 50, 255],
+            [60, 210, 70, 255],
+            [8, 9, 220, 255],
+        ];
+        let mut out = Vec::with_capacity(8 * 8 * 4);
+        for y in 0..8 {
+            for x in 0..8 {
+                out.extend_from_slice(&colors[(y / 4) * 2 + x / 4]);
+            }
+        }
+        out
+    }
+
+    #[cfg(feature = "gpu-formats")]
+    #[test]
+    fn basis_files_are_read_back_as_rgba() {
+        let rgba = quadrants();
+        let file = tp_basis::encode_etc1s(&rgba, 8, 8, 80).unwrap();
+        assert_eq!(&file[..2], b"sB", "firma de un .basis");
+
+        let path = temp("basis.basis", &file);
+        let (w, h, out) = load_image_rgba(&path).unwrap();
+        assert_eq!(
+            (w, h),
+            (8, 8),
+            "el primer nivel se lee con su tamaño original"
+        );
+        assert_eq!(out.len(), rgba.len());
+
+        // ETC1S es con pérdida: se comprueba que no se desvía demasiado.
+        let err: f64 = rgba
+            .iter()
+            .zip(&out)
+            .map(|(a, b)| (i16::from(*a) - i16::from(*b)).abs() as f64)
+            .sum::<f64>()
+            / rgba.len() as f64;
+        assert!(err < 5.0, "error medio Basis al leer: {err:.2}");
+
+        // La extensión entra en la lista de formatos de entrada.
+        assert!(
+            crate::ingest::is_image_file(Path::new("sprite.basis")),
+            "basis dejó de ser imagen"
+        );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(feature = "gpu-formats")]
+    #[test]
+    fn basis_files_report_a_broken_file() {
+        let path = temp("broken.basis", b"sB\x00\x01basiseeeeeee");
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("Basis"), "{err}");
+        assert!(err.contains("broken.basis"), "{err}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[cfg(not(feature = "gpu-formats"))]
+    #[test]
+    fn basis_input_requires_the_gpu_formats_feature() {
+        let path = temp("basis.basis", b"sB\x00\x01basiseeeeeee");
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("gpu-formats"), "{err}");
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
