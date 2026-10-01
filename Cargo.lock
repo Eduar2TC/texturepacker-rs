@@ -4123,6 +4123,7 @@ name = "tp-cli"
 version = "0.4.0"
 dependencies = [
  "image",
+ "regex",
  "serde_json",
  "tp-core",
 ]
@@ -4140,6 +4141,7 @@ dependencies = [
  "psd",
  "rand",
  "rayon",
+ "regex",
  "resvg",
  "serde",
  "serde_json",

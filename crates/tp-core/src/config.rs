@@ -1205,7 +1205,9 @@ impl VariantOptions {
 }
 
 /// Glob match with `*` (any run, including `/`) and `?` (one character).
-fn glob_match(pattern: &str, text: &str) -> bool {
+///
+/// Shared with [`crate::ingest`] for the `--ignore-files` patterns.
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     fn go(p: &[u8], t: &[u8]) -> bool {
         match p.first() {
             None => t.is_empty(),
@@ -1550,6 +1552,38 @@ pub struct ProjectConfig {
     /// `walk_001.png`, `walk_002.png`, `walk_003.png` define `walk`.
     #[serde(default = "default_true")]
     pub enable_auto_detect_animations: bool,
+    /// Maximum sheet width in pixels (`--max-width`). `0` falls back to
+    /// [`Self::max_texture_size`], which caps both axes.
+    #[serde(default)]
+    pub max_width: i32,
+    /// Maximum sheet height in pixels (`--max-height`). `0` falls back to
+    /// [`Self::max_texture_size`].
+    #[serde(default)]
+    pub max_height: i32,
+    /// Opaque colour filling the whole sheet under the sprites
+    /// (`--background-color`). `None` keeps the sheet transparent.
+    #[serde(default)]
+    pub background_color: Option<[u8; 4]>,
+    /// Wildcard patterns (`*`/`?`) of paths left out of the atlas
+    /// (`--ignore-files`, repeatable).
+    #[serde(default)]
+    pub ignore_patterns: Vec<String>,
+    /// Name substitutions applied to every sprite id after ingest
+    /// (`--replace "<regexp>=<text>"`, repeatable).
+    #[serde(default)]
+    pub name_replacements: Vec<(String, String)>,
+    /// Resolution written to the PNG sheet (`--dpi`). `None` writes no
+    /// `pHYs` chunk, keeping the encoder's default.
+    #[serde(default)]
+    pub dpi: Option<u32>,
+    /// Turn the flat colour of opaque sprites into transparency
+    /// (`--heuristic-mask`).
+    #[serde(default)]
+    pub heuristic_mask: bool,
+    /// Write output files even when their bytes are unchanged
+    /// (`--force-publish`); by default identical files are left untouched.
+    #[serde(default)]
+    pub force_publish: bool,
 }
 
 fn default_detect_border_max_search() -> i32 {
@@ -1687,6 +1721,14 @@ impl Default for ProjectConfig {
             trim_sprite_names: true,
             prepend_folder_name: false,
             enable_auto_detect_animations: true,
+            max_width: 0,
+            max_height: 0,
+            background_color: None,
+            ignore_patterns: Vec::new(),
+            name_replacements: Vec::new(),
+            dpi: None,
+            heuristic_mask: false,
+            force_publish: false,
             manual_grid: None,
             auto_folder_groups: false,
         }
@@ -1701,6 +1743,26 @@ impl ProjectConfig {
             self.trim_mode
         } else {
             TrimMode::None
+        }
+    }
+
+    /// Width cap handed to the packer: `--max-width` when set, otherwise the
+    /// square cap of [`Self::max_texture_size`].
+    pub fn effective_max_width(&self) -> i32 {
+        if self.max_width > 0 {
+            self.max_width
+        } else {
+            self.max_texture_size
+        }
+    }
+
+    /// Height cap handed to the packer: `--max-height` when set, otherwise
+    /// the square cap of [`Self::max_texture_size`].
+    pub fn effective_max_height(&self) -> i32 {
+        if self.max_height > 0 {
+            self.max_height
+        } else {
+            self.max_texture_size
         }
     }
 
@@ -1920,6 +1982,45 @@ impl ProjectConfig {
                 "border_padding ({}) deja el atlas interior vacío en un atlas de {}",
                 self.border_padding, self.max_texture_size
             )));
+        }
+        for (name, value) in [
+            ("max_width", self.max_width),
+            ("max_height", self.max_height),
+        ] {
+            if !(0..=16384).contains(&value) {
+                return Err(TpError::Config(format!(
+                    "{name} debe estar entre 0 (sin tope propio) y 16384 (se obtuvo {value})"
+                )));
+            }
+            if value > 0
+                && self.size_constraints == SizeConstraint::Pot
+                && (value & (value - 1)) != 0
+            {
+                return Err(TpError::Config(format!(
+                    "{name} debe ser una potencia de dos con size_constraints = POT \
+                     (se obtuvo {value})"
+                )));
+            }
+            if value > 0 && self.border_padding * 2 >= value {
+                return Err(TpError::Config(format!(
+                    "border_padding ({}) deja el atlas interior vacío con {name} = {}",
+                    self.border_padding, value
+                )));
+            }
+        }
+        if let Some(dpi) = self.dpi {
+            if !(1..=1_000_000).contains(&dpi) {
+                return Err(TpError::Config(format!(
+                    "dpi debe estar entre 1 y 1000000 (se obtuvo {dpi})"
+                )));
+            }
+        }
+        for (pattern, _) in &self.name_replacements {
+            if let Err(e) = regex::Regex::new(pattern) {
+                return Err(TpError::Config(format!(
+                    "name_replacements: la expresión regular «{pattern}» no es válida: {e}"
+                )));
+            }
         }
         for (name, value) in [
             ("common_divisor_x", self.common_divisor_x),

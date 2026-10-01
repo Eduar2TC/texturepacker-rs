@@ -6,7 +6,7 @@
 //! - Normal-map (`*_normal.*`) pairing
 //! - Per-sprite pivot overrides (`pivots.json` in the input directory)
 
-use crate::config::TrimMode;
+use crate::config::{glob_match, TrimMode};
 use crate::error::{Result, TpError};
 use crate::hash::{hash_pixels_rgba, AliasTable};
 use crate::types::Rect;
@@ -75,6 +75,16 @@ pub struct IngestOptions<'a> {
     pub common_divisor_x: i32,
     /// Same as [`Self::common_divisor_x`] for the vertical axis.
     pub common_divisor_y: i32,
+    /// Wildcard patterns (`*` and `?`, `/` included) of paths left out of the
+    /// atlas (`--ignore-files`). Matched against the path relative to its
+    /// root, the absolute path and the bare file name.
+    pub ignore_patterns: &'a [String],
+    /// Name substitutions (`--replace`) applied to every sprite id, in order,
+    /// after it is computed. Invalid patterns are skipped.
+    pub name_replacements: &'a [(String, String)],
+    /// Turn the flat colour of a fully opaque sprite into transparency
+    /// (`--heuristic-mask`), before trimming.
+    pub heuristic_mask: bool,
 }
 
 /// Normalized pivot overrides: sprite id -> (x, y) in 0..=1.
@@ -134,10 +144,41 @@ fn discover_images(options: &IngestOptions) -> Vec<PathBuf> {
         if excluded.contains(&norm) || !seen.insert(norm) {
             continue;
         }
+        if matches_ignore_patterns(&path, options) {
+            continue;
+        }
         out.push(path);
     }
     out.sort();
     out
+}
+
+/// True when any `--ignore-files` wildcard matches the path, tried against
+/// the path relative to each root, the path as discovered and the bare file
+/// name (so `*.tmp` and `*/drafts/*` both work).
+fn matches_ignore_patterns(path: &Path, options: &IngestOptions) -> bool {
+    if options.ignore_patterns.is_empty() {
+        return false;
+    }
+    let posix = |p: &Path| p.to_string_lossy().replace('\\', "/");
+    let mut candidates = vec![posix(path)];
+    if let Some(name) = path.file_name() {
+        candidates.push(name.to_string_lossy().into_owned());
+    }
+    for root in std::iter::once(options.input_directory)
+        .chain(options.extra_inputs.iter().map(PathBuf::as_path))
+    {
+        if let Ok(rel) = path.strip_prefix(root) {
+            if !rel.as_os_str().is_empty() {
+                candidates.push(posix(rel));
+            }
+        }
+    }
+    options.ignore_patterns.iter().any(|pattern| {
+        candidates
+            .iter()
+            .any(|c| glob_match(&posix(Path::new(pattern)), c))
+    })
 }
 
 pub fn is_image_file(path: &Path) -> bool {
@@ -193,6 +234,48 @@ pub fn is_image_file(path: &Path) -> bool {
 /// handled by [`crate::reader`].
 pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
     crate::reader::load_image_rgba(path)
+}
+
+/// Compute the bounding box of pixels with alpha > `threshold` and return the
+/// trimmed buffer. `(0,0,0,0)` bounds mean the sprite is fully transparent.
+/// `--heuristic-mask`: for a sprite without transparency, drop the flat
+/// colour of its border (the background it was drawn on) by turning every
+/// pixel of that colour transparent. Returns `true` when anything changed.
+///
+/// The most frequent colour on the border ring wins, so a frame with a few
+/// antialiased edge pixels still masks cleanly. Runs before trimming, which
+/// then crops the newly transparent border away.
+pub fn heuristic_mask_rgba(pixels: &mut [u8], width: i32, height: i32) -> bool {
+    if width <= 0 || height <= 0 {
+        return false;
+    }
+    // A sprite that already has transparency has nothing to guess.
+    if pixels.chunks_exact(4).any(|px| px[3] != 255) {
+        return false;
+    }
+    let mut counts: HashMap<[u8; 3], u32> = HashMap::new();
+    for y in 0..height {
+        for x in 0..width {
+            if x != 0 && y != 0 && x != width - 1 && y != height - 1 {
+                continue;
+            }
+            let i = ((y * width + x) * 4) as usize;
+            *counts
+                .entry([pixels[i], pixels[i + 1], pixels[i + 2]])
+                .or_default() += 1;
+        }
+    }
+    let Some((color, _)) = counts.into_iter().max_by_key(|(_, n)| *n) else {
+        return false;
+    };
+    let mut changed = false;
+    for px in pixels.chunks_exact_mut(4) {
+        if [px[0], px[1], px[2]] == color {
+            px[3] = 0;
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// Compute the bounding box of pixels with alpha > `threshold` and return the
@@ -379,13 +462,25 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
 
     let trim_mode = options.trim_mode;
     let margin = options.trim_margin.max(0);
+    // `--replace`: compiladas una sola vez para todas las imágenes.
+    let replacements: Vec<(regex::Regex, String)> = options
+        .name_replacements
+        .iter()
+        .filter_map(|(pattern, text)| regex::Regex::new(pattern).ok().map(|r| (r, text.clone())))
+        .collect();
+    let masked = std::sync::atomic::AtomicUsize::new(0);
 
     // Parallel load + trim + hash.
     let loaded: Vec<Result<Option<IngestedSprite>>> = files
         .par_iter()
         .filter(|p| !normal_set.contains(*p))
         .map(|path| {
-            let (w, h, rgba) = load_image_rgba(path)?;
+            let (w, h, mut rgba) = load_image_rgba(path)?;
+            // `--heuristic-mask` va antes del trim: el borde que deja
+            // transparente es el que el recorte se lleva por delante.
+            if options.heuristic_mask && heuristic_mask_rgba(&mut rgba, w, h) {
+                masked.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             let (mut bounds, mut pixels) = if trim_mode.trims() {
                 let (bounds, trimmed) = trim_rgba(&rgba, w, h, threshold);
                 if trimmed.is_empty() {
@@ -415,7 +510,7 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
                     .then(|| normal_by_name.get(name).cloned())
                     .flatten()
             });
-            let id = if options.trim_sprite_names {
+            let mut id = if options.trim_sprite_names {
                 rel
             } else {
                 match path.extension().and_then(|e| e.to_str()) {
@@ -423,6 +518,10 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
                     None => rel,
                 }
             };
+            // `--replace`: sustituciones en el nombre del sprite, en orden.
+            for (re, text) in &replacements {
+                id = re.replace_all(&id, text.as_str()).into_owned();
+            }
             let hash = hash_pixels_rgba(&pixels);
             Ok(Some(IngestedSprite {
                 id,
@@ -456,6 +555,12 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
         result.warnings.push(format!(
             "{skipped_transparent} sprite(s) totalmente transparentes omitidos (trim mode {})",
             trim_mode.as_str()
+        ));
+    }
+    let masked = masked.load(std::sync::atomic::Ordering::Relaxed);
+    if masked > 0 {
+        result.warnings.push(format!(
+            "{masked} sprite(s) opacos pasaron por la máscara heurística (--heuristic-mask)"
         ));
     }
 
@@ -1008,6 +1113,9 @@ mod tests {
             prepend_folder_name: false,
             common_divisor_x: 1,
             common_divisor_y: 1,
+            ignore_patterns: &[],
+            name_replacements: &[],
+            heuristic_mask: false,
         };
 
         let all = ingest(&options);
@@ -1096,6 +1204,9 @@ mod tests {
             prepend_folder_name: false,
             common_divisor_x: 1,
             common_divisor_y: 1,
+            ignore_patterns: &[],
+            name_replacements: &[],
+            heuristic_mask: false,
         };
         let out = ingest(&options);
         assert_eq!(
@@ -1161,6 +1272,9 @@ mod tests {
             prepend_folder_name: false,
             common_divisor_x: 1,
             common_divisor_y: 1,
+            ignore_patterns: &[],
+            name_replacements: &[],
+            heuristic_mask: false,
         };
         let ids: Vec<String> = ingest(&options).sprites.into_iter().map(|s| s.id).collect();
         assert_eq!(ids, vec!["hero/idle_00", "idle_01"]);
@@ -1236,6 +1350,9 @@ mod tests {
             prepend_folder_name: false,
             common_divisor_x: 4,
             common_divisor_y: 8,
+            ignore_patterns: &[],
+            name_replacements: &[],
+            heuristic_mask: false,
         };
         let out = ingest(&options);
         assert_eq!(out.sprites.len(), 1);
@@ -1283,6 +1400,9 @@ mod tests {
             prepend_folder_name: false,
             common_divisor_x: 1,
             common_divisor_y: 1,
+            ignore_patterns: &[],
+            name_replacements: &[],
+            heuristic_mask: false,
         };
         let out = ingest(&options);
         assert_eq!(out.sprites.len(), 1);
@@ -1333,6 +1453,9 @@ mod tests {
             prepend_folder_name: false,
             common_divisor_x: 1,
             common_divisor_y: 1,
+            ignore_patterns: &[],
+            name_replacements: &[],
+            heuristic_mask: false,
         };
         let out = ingest(&options);
 

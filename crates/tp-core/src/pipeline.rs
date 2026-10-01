@@ -157,6 +157,9 @@ fn execute(
         prepend_folder_name: config.prepend_folder_name,
         common_divisor_x: div_x,
         common_divisor_y: div_y,
+        ignore_patterns: &config.ignore_patterns,
+        name_replacements: &config.name_replacements,
+        heuristic_mask: config.heuristic_mask,
     });
     warnings.extend(ingested.warnings);
     if ingested.sprites.is_empty() {
@@ -353,6 +356,8 @@ fn execute(
         manual_grid: config.manual_grid,
         word_align_mod: config.word_align_mod(),
         align_grid: align,
+        max_width: config.effective_max_width(),
+        max_height: config.effective_max_height(),
         ..PackerOptions::new(
             config.packing_strategy,
             config.allow_rotation,
@@ -554,6 +559,23 @@ fn execute(
     }
     stage_times.push(("blit".into(), t.elapsed().as_millis() as u64));
 
+    // Ocupación del atlas: se mide aquí, antes de rellenar el fondo, para
+    // que siga contando píxeles de sprites y no el color de fondo.
+    for page in &mut pages {
+        page.fill_ratio = fill_ratio(&page.pixels, page.width, page.height);
+    }
+
+    // ------------------------------------------------------------------
+    // PASO 8a: background colour (`--background-color`)
+    // ------------------------------------------------------------------
+    if let Some(bg) = config.background_color {
+        let t = Instant::now();
+        pages
+            .par_iter_mut()
+            .for_each(|p| pixels::fill_background(&mut p.pixels, bg));
+        stage_times.push(("background".into(), t.elapsed().as_millis() as u64));
+    }
+
     // ------------------------------------------------------------------
     // PASO 8b: transparency handling (alpha handling)
     // ------------------------------------------------------------------
@@ -745,7 +767,11 @@ fn execute(
                     if flip_active {
                         export::flip_vertical_rgba(&mut scaled, _w, _h);
                     }
-                    export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?
+                    export::apply_dpi(
+                        export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?,
+                        config.gpu_format,
+                        config.dpi,
+                    )
                 };
 
                 // Cache busting: el data format lleva `?v=<hash>` de este
@@ -763,7 +789,11 @@ fn execute(
                     None => (file_name, bytes),
                 };
 
-                write_file(&output_dir.join(&final_name), &final_bytes)?;
+                write_file(
+                    &output_dir.join(&final_name),
+                    &final_bytes,
+                    config.force_publish,
+                )?;
                 output_files.push(final_name.clone());
 
                 // Normal-map page.
@@ -783,7 +813,11 @@ fn execute(
                     if flip_active {
                         export::flip_vertical_rgba(&mut nscaled, nw2, nh2);
                     }
-                    let nbytes = export::encode_to_bytes(&nscaled, nw2, nh2, &enc_opts)?;
+                    let nbytes = export::apply_dpi(
+                        export::encode_to_bytes(&nscaled, nw2, nh2, &enc_opts)?,
+                        config.gpu_format,
+                        config.dpi,
+                    );
                     let (nfinal_name, nfinal_bytes) = match &config.encryption_key {
                         Some(key) => (
                             format!("{nfile}.tpenc"),
@@ -791,7 +825,11 @@ fn execute(
                         ),
                         None => (nfile, nbytes),
                     };
-                    write_file(&output_dir.join(&nfinal_name), &nfinal_bytes)?;
+                    write_file(
+                        &output_dir.join(&nfinal_name),
+                        &nfinal_bytes,
+                        config.force_publish,
+                    )?;
                     output_files.push(nfinal_name.clone());
                     normal_name = Some(nfinal_name);
                 }
@@ -806,7 +844,7 @@ fn execute(
                     has_normals: page.has_normals,
                     normal_file_name: normal_name,
                     encrypted: config.encryption_key.is_some(),
-                    fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                    fill_ratio: page.fill_ratio,
                     cache_version,
                 });
             } else {
@@ -838,7 +876,7 @@ fn execute(
                     has_normals: page.has_normals,
                     normal_file_name: normal_file,
                     encrypted: config.encryption_key.is_some(),
-                    fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                    fill_ratio: page.fill_ratio,
                     // Sin codificar no hay hash posible; la vista previa
                     // solo lista nombres, que no cambian con el hash.
                     cache_version: String::new(),
@@ -878,7 +916,11 @@ fn execute(
                         es,
                         config,
                     )?;
-                    write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+                    write_file(
+                        &output_dir.join(&meta_name),
+                        content.as_bytes(),
+                        config.force_publish,
+                    )?;
                 }
                 output_files.push(meta_name);
             }
@@ -900,7 +942,11 @@ fn execute(
                     es,
                     config,
                 )?;
-                write_file(&output_dir.join(&meta_name), content.as_bytes())?;
+                write_file(
+                    &output_dir.join(&meta_name),
+                    content.as_bytes(),
+                    config.force_publish,
+                )?;
             }
             output_files.push(meta_name);
         }
@@ -911,7 +957,11 @@ fn execute(
     if variant.is_none() {
         for (name, content) in templates::extra_files(config, &sprite_assets) {
             if write_to_disk {
-                write_file(&output_dir.join(&name), content.as_bytes())?;
+                write_file(
+                    &output_dir.join(&name),
+                    content.as_bytes(),
+                    config.force_publish,
+                )?;
             }
             output_files.push(name);
         }
@@ -1175,7 +1225,7 @@ fn page_infos_at(config: &ProjectConfig, pages: &[AtlasPage], scale: f32) -> Vec
                 has_normals: page.has_normals,
                 normal_file_name,
                 encrypted: config.encryption_key.is_some(),
-                fill_ratio: fill_ratio(&page.pixels, page.width, page.height),
+                fill_ratio: page.fill_ratio,
                 cache_version: String::new(),
             }
         })
@@ -1472,13 +1522,21 @@ fn metadata_file_name(
     with_ext(&stem, templates::data_file_extension(config))
 }
 
-fn write_file(path: &Path, bytes: &[u8]) -> Result<()> {
+/// Write one output file, creating its folder first.
+///
+/// Publishing is incremental by default: a file whose bytes are already on
+/// disk is left untouched (its mtime stays put, which incremental game builds
+/// notice). `force` (`--force-publish`) rewrites it anyway.
+fn write_file(path: &Path, bytes: &[u8], force: bool) -> Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 TpError::Other(format!("No se pudo crear {}: {e}", parent.display()))
             })?;
         }
+    }
+    if !force && std::fs::read(path).is_ok_and(|existing| existing == bytes) {
+        return Ok(());
     }
     std::fs::write(path, bytes).map_err(|e| {
         crate::error::TpError::Other(format!("No se pudo escribir {}: {e}", path.display()))

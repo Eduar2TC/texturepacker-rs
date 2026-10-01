@@ -65,6 +65,10 @@ pub struct PackerOptions {
     pub strategy: PackingStrategy,
     pub allow_rotation: bool,
     pub max_size: i32,
+    /// Width cap for the sheet (`--max-width`); initialised to `max_size`.
+    pub max_width: i32,
+    /// Height cap for the sheet (`--max-height`); initialised to `max_size`.
+    pub max_height: i32,
     /// Gap between neighbouring sprites (shape padding).
     pub padding: i32,
     /// Reserved margin between the sprites and the sheet border
@@ -111,6 +115,8 @@ impl PackerOptions {
             strategy,
             allow_rotation,
             max_size,
+            max_width: max_size,
+            max_height: max_size,
             padding,
             border_padding,
             polygon_mode,
@@ -180,17 +186,18 @@ fn resolve(opts: &PackerOptions) -> PackerOptions {
     o
 }
 
-/// Canvas used for the first packing pass (fixed size wins over `max_size`).
+/// Canvas used for the first packing pass (fixed size wins over the
+/// per-axis caps).
 fn canvas(opts: &PackerOptions) -> (i32, i32) {
     let w = if opts.fixed_width > 0 {
         opts.fixed_width
     } else {
-        opts.max_size
+        opts.max_width
     };
     let h = if opts.fixed_height > 0 {
         opts.fixed_height
     } else {
-        opts.max_size
+        opts.max_height
     };
     (w, h)
 }
@@ -341,12 +348,13 @@ fn finalize(pages: Vec<PageState>, opts: &PackerOptions, cw: i32, ch: i32) -> Pa
                 h = align_dimension(h, opts, false);
             }
             // Never exceed the configured maximum (constraints round up).
-            let max = opts.max_size.max(cw).max(ch);
-            if w > max && opts.fixed_width <= 0 {
-                w = down_align(max, opts, true);
+            let max_w = opts.max_width.max(cw);
+            let max_h = opts.max_height.max(ch);
+            if w > max_w && opts.fixed_width <= 0 {
+                w = down_align(max_w, opts, true);
             }
-            if h > max && opts.fixed_height <= 0 {
-                h = down_align(max, opts, false);
+            if h > max_h && opts.fixed_height <= 0 {
+                h = down_align(max_h, opts, false);
             }
             PackPage {
                 index: p.index,

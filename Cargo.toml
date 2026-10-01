@@ -31,6 +31,10 @@ rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 astcenc-rs = { version = "0.2" }
 # Compresión de contenedores (zktx, pvr3gz, pvr3ccz); backend puro en Rust.
 flate2 = "1"
+# Expresiones regulares para `--replace` (sustituciones en los nombres de
+# sprite). Ya entraba vía bindgen (build), así que no es una dependencia nueva
+# del árbol.
+regex = "1"
 
 [profile.release]
 lto = "thin"

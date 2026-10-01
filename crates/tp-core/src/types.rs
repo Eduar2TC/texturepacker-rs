@@ -144,6 +144,10 @@ pub struct AtlasPage {
     pub normal_pixels: Option<Vec<u8>>,
     /// True if any sprite on this page has a normal-map companion.
     pub has_normals: bool,
+    /// Fraction of the page covered by sprites, measured right after the
+    /// blit and *before* an optional background fill, so the metric keeps
+    /// reporting sprite coverage.
+    pub fill_ratio: f32,
 }
 
 impl AtlasPage {
@@ -156,6 +160,7 @@ impl AtlasPage {
             pixels: vec![0u8; len],
             normal_pixels: None,
             has_normals: false,
+            fill_ratio: 0.0,
         }
     }
 }

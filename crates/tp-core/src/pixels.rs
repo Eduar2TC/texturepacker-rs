@@ -138,6 +138,23 @@ pub fn apply_alpha_handling(page: &mut [u8], width: usize, height: usize, mode: 
     }
 }
 
+/// Composite the whole page over an opaque colour (`--background-color`):
+/// `out = src * a + bg * (1 - a)` and alpha becomes 255. Runs after the blit
+/// and before *Transparency Handling*, which therefore always sees an opaque
+/// page when a background is set.
+pub fn fill_background(page: &mut [u8], bg: [u8; 4]) {
+    let (br, bgc, bb) = (u32::from(bg[0]), u32::from(bg[1]), u32::from(bg[2]));
+    for px in page.chunks_exact_mut(4) {
+        let a = u32::from(px[3]);
+        if a != 255 {
+            for (channel, base) in px.iter_mut().zip([br, bgc, bb]) {
+                *channel = ((u32::from(*channel) * a + base * (255 - a) + 127) / 255) as u8;
+            }
+            px[3] = 255;
+        }
+    }
+}
+
 /// Alpha bleeding: transparent pixels receive the color of the nearest solid
 /// pixel. A few 4-neighbour passes spread the color outwards; alpha stays 0.
 fn bleed_alpha(page: &mut [u8], width: usize, height: usize) {

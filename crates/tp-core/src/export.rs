@@ -144,6 +144,55 @@ pub fn encode_to_bytes(
     }
 }
 
+/// Escribe la resolución pedida (`--dpi`) en un PNG ya codificado, dejando
+/// intacto el resto de formatos (no tienen un campo de resolución común).
+pub fn apply_dpi(bytes: Vec<u8>, format: GpuFormat, dpi: Option<u32>) -> Vec<u8> {
+    match (dpi, format) {
+        (Some(dpi), GpuFormat::Png | GpuFormat::Png8) => insert_phys(bytes, dpi),
+        _ => bytes,
+    }
+}
+
+/// Inserta el chunk `pHYs` tras la cabecera `IHDR` de un PNG.
+///
+/// Los codificadores que usamos no escriben esa resolución, así que basta con
+/// añadirla; `dpi` pulgadas se convierten a metros (1 in = 0,0254 m), que es
+/// la unidad del chunk.
+fn insert_phys(mut png: Vec<u8>, dpi: u32) -> Vec<u8> {
+    const SIGNATURE: [u8; 8] = [137, 80, 78, 71, 13, 10, 26, 10];
+    const IHDR_LEN: usize = 8 + 4 + 4 + 13 + 4;
+    if png.len() < IHDR_LEN || png[..8] != SIGNATURE {
+        return png;
+    }
+    let per_meter = ((f64::from(dpi) / 0.0254).round() as u32).max(1);
+    let mut chunk = Vec::with_capacity(21);
+    chunk.extend_from_slice(&9u32.to_be_bytes());
+    chunk.extend_from_slice(b"pHYs");
+    chunk.extend_from_slice(&per_meter.to_be_bytes());
+    chunk.extend_from_slice(&per_meter.to_be_bytes());
+    chunk.push(1); // unidad: metro
+    let crc = crc32(&chunk[4..]);
+    chunk.extend_from_slice(&crc.to_be_bytes());
+    png.splice(IHDR_LEN..IHDR_LEN, chunk);
+    png
+}
+
+/// CRC-32 (polinomio 0xEDB88320) del cuerpo de un chunk PNG.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = 0xFFFF_FFFFu32;
+    for &b in bytes {
+        crc ^= u32::from(b);
+        for _ in 0..8 {
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
 /// Convierte RGBA8 al formato de píxel de salida (pixel format).
 /// `Rgb888` compone la transparencia sobre negro; los formatos de hardware
 /// no pasan por aquí.

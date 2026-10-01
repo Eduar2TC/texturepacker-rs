@@ -25,6 +25,8 @@ astcenc-rs = { workspace = true, optional = true }
 # (el único `unsafe` del workspace, aislado en su propio crate).
 tp-basis = { path = "../tp-basis", optional = true }
 flate2.workspace = true
+# `--replace`: sustituciones por expresión regular en los ids de sprite.
+regex.workspace = true
 # Decodificación de bloques GPU al leer .ktx / .astc de entrada (MIT/Apache).
 texture2ddecoder = "0.1.2"
 # Entrada .psd (Adobe Photoshop, Apache-2.0) y .svg (render con resvg, que

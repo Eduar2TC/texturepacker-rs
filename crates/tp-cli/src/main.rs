@@ -22,6 +22,7 @@ const PACK_VALUES: &[&str] = &[
     "algorithm",
     "alpha-handling",
     "astc-quality",
+    "background-color",
     "base-name",
     "basic-order",
     "basic-sort-by",
@@ -37,6 +38,7 @@ const PACK_VALUES: &[&str] = &[
     "default-pivot-point",
     "dither",
     "dither-type",
+    "dpi",
     "dxt-mode",
     "etc1-quality",
     "etc2-quality",
@@ -45,12 +47,15 @@ const PACK_VALUES: &[&str] = &[
     "gdx-filter",
     "header-file",
     "height",
+    "ignore-files",
     "input",
     "jpg-quality",
     "key",
     "key-name",
     "maxrects-heuristics",
     "max-size",
+    "max-height",
+    "max-width",
     "normalmap-filter",
     "normalmap-sheet",
     "normalmap-suffix",
@@ -62,7 +67,10 @@ const PACK_VALUES: &[&str] = &[
     "png8-dither",
     "png-opt-level",
     "pvr-quality",
+    "replace",
+    "save",
     "save-key",
+    "scale",
     "scale-mode",
     "sheet",
     "shape-padding",
@@ -97,8 +105,10 @@ const PACK_FLAGS: &[&str] = &[
     "flip-vertical",
     "flip-y",
     "force-identical-layout",
+    "force-publish",
     "force-squared",
     "help",
+    "heuristic-mask",
     "keep-extension",
     "multipack",
     "no-aliasing",
@@ -222,6 +232,12 @@ fn help_text() -> String {
          \x20 --trim-sprite-names   Nombres de sprite sin extensión (defecto)\n\
          \x20 --keep-extension      Los nombres de sprite conservan la extensión\n\
          \x20 --no-recursive        No buscar en subdirectorios\n\
+         \x20 --ignore-files PATRÓN Excluye los ficheros que coincidan (repetible; el *\n\
+         \x20                        de glob_match también incluye /)\n\
+         \x20 --replace PATRÓN=TEXTO Renombra sprites con una expresión regular (repetible,\n\
+         \x20                        en orden; p.ej. ^old=new)\n\
+         \x20 --heuristic-mask      Borra el color de fondo de un sprite totalmente opaco\n\
+         \x20                        (color más frecuente del borde; antes de recortar)\n\
          \x20 --auto-folders        pack por carpetas automático: cada subcarpeta de entrada\n\
          \x20                        produce su hoja en la subcarpeta de salida\n\
          \x20 --multipack           Permitir varias hojas (anula --no-multipack)\n\
@@ -229,9 +245,15 @@ fn help_text() -> String {
          \x20 --cache-busting       Añade ?v=<hash> a la textura citada en los metadatos\n\
          \x20 --texture-path RUTA   Prefijo de la textura en los metadatos (alias: --texturepath)\n\
          \x20 --print-json          Imprimir los metadatos JSON en stdout\n\
+         \x20 --force-publish       Reescribir la salida aunque los bytes no hayan cambiado\n\
+         \x20 --save FICHERO        Guardar la configuración como .tpproj y terminar sin\n\
+         \x20                        empaquetar (avisa si la extensión no es .tpproj)\n\
          \n\
          ATLAS:\n\
          \x20 --max-size N          Tamaño máximo del atlas (512..8192, potencia de 2)\n\
+         \x20 --max-width N         Tope propio del ancho del atlas (0 = sin tope, 1..16384)\n\
+         \x20 --max-height N        Tope propio del alto del atlas (0 = sin tope, 1..16384)\n\
+         \x20 --background-color HEX  Color con el que se rellena la hoja (RGB/RRGGBB/RRGGBBAA)\n\
          \x20 --width N             Ancho fijo del atlas (0 = automático)\n\
          \x20 --height N            Alto fijo del atlas (0 = automático)\n\
          \x20 --shape-padding N     Espacio entre sprites (px)\n\
@@ -272,6 +294,8 @@ fn help_text() -> String {
          \x20 --variant E[:N[:F[:allowfraction[:W:H]]]]  Variante (repetible o por comas),\n\
          \x20                        p.ej. 0.5:-hd, 1.0:-ipadhd::*, 0.25:::allowfraction:1024:1024\n\
          \x20 --variants LIST       Escalas, p.ej. 2,0.5 (sufijos @2x, -hd)\n\
+         \x20 --scale F             Escala todas las variantes por F (0 < F <= 8); con una\n\
+         \x20                        única variante el sufijo de fichero queda vacío\n\
          \n\
          CALIDAD:\n\
          \x20 --color-depth T       RGBA8888 | RGBA4444 | RGB565\n\
@@ -293,6 +317,7 @@ fn help_text() -> String {
          \x20 --basis-quality N     Calidad Basis ETC1S 0-100 (defecto 50; alias: --basisu-quality)\n\
          \x20 --dxt-mode T          DXT_LINEAR (error uniforme) | DXT_PERCEPTUAL (ponderado)\n\
          \x20 --flip-y              Voltea la textura (alias: --flip-pvr)\n\
+         \x20 --dpi N               Resolución de la hoja en ppp (1..1000000); sólo PNG\n\
          \n\
          METADATOS Y EXPORTADORES:\n\
          \x20 --class-file F        Fichero de clase Swift extra (spritekit-swift)\n\
@@ -741,6 +766,114 @@ fn parse_pivot_point(value: &str) -> Result<(f32, f32), String> {
     Ok((x, y))
 }
 
+/// `--max-width` / `--max-height`: tope propio de un eje del atlas
+/// (0 = sin tope; el rango y la potencia de dos los valida el proyecto).
+fn parse_atlas_limit(value: &str, flag: &str) -> Result<i32, String> {
+    let n: i32 = value
+        .parse()
+        .map_err(|_| format!("{flag} inválido: {value} (entero en 0..16384)"))?;
+    if !(0..=16384).contains(&n) {
+        return Err(format!("{flag} debe estar entre 0 y 16384: {value}"));
+    }
+    Ok(n)
+}
+
+/// `--background-color`: color con el que se rellena la hoja, en hexadecimal
+/// (`RGB`, `RRGGBB` o `RRGGBBAA`, con o sin `#`; sin alfa = opaco).
+fn parse_background_color(value: &str) -> Result<[u8; 4], String> {
+    let bad =
+        || format!("--background-color inválido: {value} (usa RRGGBB o RRGGBBAA en hexadecimal)");
+    let hex = value.trim().trim_start_matches('#');
+    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(bad());
+    }
+    let wide: String = match hex.len() {
+        3 => format!("{}ff", hex.chars().flat_map(|c| [c, c]).collect::<String>()),
+        6 => format!("{hex}ff"),
+        8 => hex.to_string(),
+        _ => return Err(bad()),
+    };
+    if wide.len() != 8 {
+        return Err(bad());
+    }
+    let mut out = [0u8; 4];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&wide[i * 2..i * 2 + 2], 16).map_err(|_| bad())?;
+    }
+    Ok(out)
+}
+
+/// `--replace PATRÓN=TEXTO` (repetible): sustituciones regex sobre los ids
+/// de sprite; la expresión se comprueba aquí, no al empaquetar.
+fn parse_replacement(value: &str) -> Result<(String, String), String> {
+    let Some((pattern, text)) = value.split_once('=') else {
+        return Err(format!("--replace inválido: {value} (usa PATRÓN=TEXTO)"));
+    };
+    if pattern.is_empty() {
+        return Err(format!("--replace inválido: {value} (falta el patrón)"));
+    }
+    regex::Regex::new(pattern)
+        .map_err(|e| format!("--replace: la expresión regular «{pattern}» no es válida: {e}"))?;
+    Ok((pattern.to_string(), text.to_string()))
+}
+
+/// Opciones de la Fase C del CLI: topes de atlas por eje, color de la hoja,
+/// resolución de salida, filtros de entrada y renombrado de sprites.
+fn apply_phase_c_options(
+    cfg: &mut ProjectConfig,
+    values: &[(String, String)],
+) -> Result<(), String> {
+    let val = |k: &str| values.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+    if let Some(v) = val("max-width") {
+        cfg.max_width = parse_atlas_limit(&v, "--max-width")?;
+    }
+    if let Some(v) = val("max-height") {
+        cfg.max_height = parse_atlas_limit(&v, "--max-height")?;
+    }
+    if let Some(v) = val("background-color") {
+        cfg.background_color = Some(parse_background_color(&v)?);
+    }
+    if let Some(v) = val("dpi") {
+        let dpi: u32 = v
+            .parse()
+            .map_err(|_| format!("--dpi inválido: {v} (entero en 1..1000000)"))?;
+        if !(1..=1_000_000).contains(&dpi) {
+            return Err(format!("--dpi debe estar entre 1 y 1000000: {v}"));
+        }
+        cfg.dpi = Some(dpi);
+    }
+    // Repetibles: cada aparición añade un patrón / una sustitución.
+    for (_, v) in values.iter().filter(|(k, _)| k == "ignore-files") {
+        cfg.ignore_patterns.push(v.clone());
+    }
+    for (_, v) in values.iter().filter(|(k, _)| k == "replace") {
+        let (pattern, text) = parse_replacement(v)?;
+        cfg.name_replacements.push((pattern, text));
+    }
+    Ok(())
+}
+
+/// `--scale F`: multiplica todas las variantes de escala declaradas
+/// (`--variants`, `--variant`) y sus nombres. Con una única variante el
+/// sufijo de fichero queda vacío, así que la salida conserva su nombre.
+fn apply_scale_factor(cfg: &mut ProjectConfig, factor: f32) {
+    cfg.scale_variants = cfg
+        .scale_variants
+        .iter()
+        .map(|s| s * factor)
+        .collect::<Vec<_>>();
+    for (scale, _) in cfg.variant_names.iter_mut() {
+        *scale *= factor;
+    }
+    for opts in cfg.variant_options.iter_mut() {
+        opts.scale *= factor;
+    }
+    if cfg.scale_variants.len() == 1 && cfg.variant_names.is_empty() {
+        cfg.variant_names
+            .push((cfg.scale_variants[0], String::new()));
+    }
+}
+
 /// Opciones de layout que el original expone y la GUI ya sabe aplicar: ejes
 /// sueltos del common divisor y pivot por defecto. Va después de
 /// `--common-divisor` para que el eje gane sobre el valor conjunto.
@@ -835,6 +968,28 @@ fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
     if has("flip-y") || has("flip-vertical") || has("flip-pvr") {
         cfg.flip_vertical = true;
     }
+    if has("heuristic-mask") {
+        cfg.heuristic_mask = true;
+    }
+    if has("force-publish") {
+        cfg.force_publish = true;
+    }
+}
+
+/// Escribe el proyecto como TOML y devuelve el mensaje de resumen. La
+/// extensión distinta de `.tpproj` se avisa pero no se rechaza, como en el
+/// original, que guarda el archivo que se le pida.
+fn save_project(cfg: &ProjectConfig, path: &Path) -> Result<String, String> {
+    let text = cfg
+        .to_toml()
+        .map_err(|e| format!("No se pudo serializar el proyecto: {e}"))?;
+    std::fs::write(path, text)
+        .map_err(|e| format!("No se pudo escribir {}: {e}", path.display()))?;
+    let mut msg = format!("✔ Proyecto guardado en {}", path.display());
+    if path.extension().and_then(|e| e.to_str()) != Some("tpproj") {
+        msg.push_str(" (aviso: la extensión no es .tpproj)");
+    }
+    Ok(msg)
 }
 
 fn cmd_pack(args: &[String]) {
@@ -942,6 +1097,8 @@ fn cmd_pack(args: &[String]) {
     // Ejes sueltos y pivot por defecto: van después de `--common-divisor` para
     // que el eje gane sobre el valor conjunto.
     apply_parity_layout_options(&mut cfg, &values).unwrap_or_else(|e| fail(e));
+    // Fase C: topes por eje, fondo, dpi, filtros de entrada y renombrado.
+    apply_phase_c_options(&mut cfg, &values).unwrap_or_else(|e| fail(e));
     if let Some(v) = val("align-to-grid").or_else(|| val("align")) {
         cfg.align_to_grid = v
             .parse()
@@ -1117,6 +1274,16 @@ fn cmd_pack(args: &[String]) {
             cfg.scale_variants = parsed;
         }
     }
+    // `--scale` va después de --variants/--variant: multiplica lo que haya.
+    if let Some(v) = val("scale") {
+        let factor: f32 = v
+            .parse()
+            .unwrap_or_else(|_| fail(format!("--scale inválido: {v} (número en (0, 8])")));
+        if !(factor > 0.0 && factor <= 8.0) {
+            fail(format!("--scale inválido: {v} (número en (0, 8])"));
+        }
+        apply_scale_factor(&mut cfg, factor);
+    }
     if let Some(v) = val("template-format") {
         if let Err(e) = apply_template_format(&mut cfg, &v) {
             fail(e);
@@ -1173,6 +1340,15 @@ fn cmd_pack(args: &[String]) {
         if !quiet {
             println!("⚠ {msg}");
         }
+    }
+    // `--save FICHERO`: vuelca la configuración ya montada a un .tpproj y
+    // termina, para poder guardar una línea de comandos y reutilizarla.
+    if let Some(v) = val("save") {
+        let msg = save_project(&cfg, Path::new(&v)).unwrap_or_else(|e| fail(e));
+        if !quiet {
+            println!("{msg}");
+        }
+        return;
     }
     if let Some(dp) = &data_path {
         check_data_extension(&cfg, dp).unwrap_or_else(|e| fail(e));
@@ -1959,13 +2135,13 @@ mod tests {
     #[test]
     fn unknown_options_are_rejected_with_a_hint() {
         let err = check_unknown_options(
-            &[("scale".to_string(), "0.5".to_string())],
+            &[("multiplier".to_string(), "0.5".to_string())],
             &[],
             PACK_VALUES,
             PACK_FLAGS,
         )
         .unwrap_err();
-        assert!(err.contains("--scale"), "{err}");
+        assert!(err.contains("--multiplier"), "{err}");
         assert!(err.contains("--help"), "{err}");
 
         let err = check_unknown_options(&[], &["bogus".to_string()], PACK_VALUES, PACK_FLAGS)
@@ -2237,11 +2413,171 @@ mod tests {
             "trim-sprite-names",
             "enable-rotation",
             "pack-normalmaps",
+            "max-width",
+            "max-height",
+            "background-color",
+            "dpi",
+            "ignore-files",
+            "replace",
+            "scale",
+            "save",
+            "heuristic-mask",
+            "force-publish",
         ] {
             assert!(
                 help.contains(&format!("--{opt}")),
                 "falta --{opt} en la ayuda"
             );
         }
+    }
+
+    #[test]
+    fn phase_c_value_flags_reach_the_config() {
+        let (_, values, flags) = parse_args(&args(&[
+            "--max-width",
+            "2048",
+            "--max-height",
+            "1024",
+            "--background-color",
+            "#11223380",
+            "--dpi",
+            "300",
+            "--ignore-files",
+            "*.psd",
+            "--ignore-files",
+            "build/*",
+            "--replace",
+            "^old=new",
+            "--heuristic-mask",
+            "--force-publish",
+        ]));
+        let mut cfg = ProjectConfig::default();
+        apply_phase_c_options(&mut cfg, &values).unwrap();
+        apply_flag_options(&mut cfg, &flags);
+
+        assert_eq!(cfg.max_width, 2048);
+        assert_eq!(cfg.max_height, 1024);
+        assert_eq!(cfg.background_color, Some([0x11, 0x22, 0x33, 0x80]));
+        assert_eq!(cfg.dpi, Some(300));
+        assert_eq!(cfg.ignore_patterns, vec!["*.psd", "build/*"]);
+        assert_eq!(
+            cfg.name_replacements,
+            vec![("^old".to_string(), "new".to_string())]
+        );
+        assert!(cfg.heuristic_mask);
+        assert!(cfg.force_publish);
+        cfg.validate().unwrap();
+
+        // El color sin alfa queda opaco y también se admite sin #.
+        assert_eq!(
+            parse_background_color("112233").unwrap(),
+            [0x11, 0x22, 0x33, 0xff]
+        );
+        assert_eq!(
+            parse_background_color("#abc").unwrap(),
+            [0xaa, 0xbb, 0xcc, 0xff]
+        );
+
+        // Valores inválidos se rechazan con el nombre de su opción.
+        for bad in [
+            vec![("background-color".into(), "nope".into())],
+            vec![("dpi".into(), "0".into())],
+            vec![("dpi".into(), "2000000".into())],
+            vec![("max-width".into(), "20000".into())],
+            vec![("replace".into(), "sin-igual".into())],
+            vec![("replace".into(), "(=x".into())],
+        ] {
+            let err = apply_phase_c_options(&mut ProjectConfig::default(), &bad).unwrap_err();
+            assert!(err.starts_with("--"), "sin nombre de opción: {err}");
+        }
+    }
+
+    #[test]
+    fn scale_flag_multiplies_every_variant() {
+        // Sin variantes declaradas: una única escala y sufijo vacío, así
+        // que los nombres de los ficheros no cambian.
+        let mut cfg = ProjectConfig::default();
+        apply_scale_factor(&mut cfg, 0.5);
+        assert_eq!(cfg.scale_variants, vec![0.5]);
+        assert_eq!(cfg.variant_names, vec![(0.5, String::new())]);
+        cfg.validate().unwrap();
+
+        // Con variantes y nombres: las escalas se multiplican y los
+        // nombres siguen pegados a su variante.
+        let mut cfg = ProjectConfig {
+            scale_variants: vec![1.0, 0.5],
+            variant_names: vec![(1.0, "-ipadhd".to_string()), (0.5, "-hd".to_string())],
+            ..ProjectConfig::default()
+        };
+        apply_scale_factor(&mut cfg, 2.0);
+        assert_eq!(cfg.scale_variants, vec![2.0, 1.0]);
+        assert_eq!(
+            cfg.variant_names,
+            vec![(2.0, "-ipadhd".to_string()), (1.0, "-hd".to_string())]
+        );
+        cfg.validate().unwrap();
+
+        // El factor llega desde la línea de comandos: --scale sólo
+        // multiplica, y la escala resultante sigue siendo válida.
+        let out = std::env::temp_dir().join("tpcli_save_scale.tpproj");
+        let _ = std::fs::remove_file(&out);
+        cmd_pack(&args(&[
+            "--input",
+            "sprites",
+            "--output",
+            "build",
+            "--variants",
+            "1,0.5",
+            "--scale",
+            "0.5",
+            "--save",
+            out.to_str().unwrap(),
+        ]));
+        let cfg = ProjectConfig::from_toml(&std::fs::read_to_string(&out).unwrap()).unwrap();
+        assert_eq!(cfg.scale_variants, vec![0.5, 0.25]);
+        cfg.validate().unwrap();
+        let _ = std::fs::remove_file(&out);
+    }
+
+    #[test]
+    fn save_writes_a_project_and_skips_the_packing() {
+        let out = std::env::temp_dir().join("tpcli_save_phase_c.tpproj");
+        let _ = std::fs::remove_file(&out);
+        cmd_pack(&args(&[
+            "--input",
+            "sprites",
+            "--output",
+            "build",
+            "--max-width",
+            "2048",
+            "--background-color",
+            "112233",
+            "--ignore-files",
+            "*.psd",
+            "--save",
+            out.to_str().unwrap(),
+        ]));
+        let text = std::fs::read_to_string(&out).unwrap();
+        let cfg = ProjectConfig::from_toml(&text).unwrap();
+        assert_eq!(cfg.max_width, 2048);
+        assert_eq!(cfg.background_color, Some([0x11, 0x22, 0x33, 0xff]));
+        assert_eq!(cfg.input_directory, PathBuf::from("sprites"));
+        assert_eq!(cfg.output_directory, PathBuf::from("build"));
+        assert_eq!(cfg.ignore_patterns, vec!["*.psd"]);
+        let _ = std::fs::remove_file(&out);
+
+        // La extensión distinta de .tpproj se guarda igual, con aviso.
+        let odd = std::env::temp_dir().join("tpcli_save_phase_c.toml");
+        let _ = std::fs::remove_file(&odd);
+        cmd_pack(&args(&[
+            "--input",
+            "sprites",
+            "--output",
+            "build",
+            "--save",
+            odd.to_str().unwrap(),
+        ]));
+        assert!(odd.exists());
+        let _ = std::fs::remove_file(&odd);
     }
 }
