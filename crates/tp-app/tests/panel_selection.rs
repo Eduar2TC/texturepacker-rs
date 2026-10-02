@@ -2,7 +2,7 @@
 //! contra la app real headless (`App::new_for_testing` + `run_frame` con
 //! eventos de puntero y de teclado de verdad).
 //!
-//! Contrato (igual que los gestores de archivos y TexturePacker):
+//! Contrato (igual que en los gestores de archivos):
 //!
 //! 1. Clic simple = una fila; `Ctrl` = acumula; `Shift` = rango visual
 //!    entre el ancla y la fila pulsada.

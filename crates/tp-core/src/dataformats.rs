@@ -1,18 +1,17 @@
-//! Presets de formato de datos («data formats») del original.
+//! Presets de formato de datos («data formats»).
 //!
-//! TexturePacker llama *data format* al exportador que decide el layout del
-//! fichero de metadatos y una parte de los ajustes por defecto (`--format
-//! <name>`; `TexturePacker --exporter-list` los imprime uno por línea). Este
-//! módulo replica esa lista completa: cada entrada fija la **familia** de
+//! Un *data format* es el exportador que decide el layout del fichero de
+//! metadatos y una parte de los ajustes por defecto (`--format <name>`,
+//! listado por `--exporter-list`). Este módulo reúne la lista completa:
+//! cada entrada fija la **familia** de
 //! plantilla que lo dibuja ([`TemplateFormat`]), la extensión del fichero de
 //! datos y los *valores recomendados* que la conversión de proyecto aplica
 //! (rotación, algoritmo y auto-detección de animaciones).
 //!
 //! Las dieciséis familias tienen plantilla propia en
 //! [`crate::templates::builtin_template`]. Los exportadores de motores
-//! minoritarios —muchos ya retirados del original— se emiten con la
-//! estructura de la familia genérica `JsonHash` y la extensión por defecto;
-//! esa desviación está anotada en el informe comparativo.
+//! minoritarios —muchos ya retirados— se emiten con la estructura de la
+//! familia genérica `JsonHash` y la extensión por defecto.
 
 use crate::config::{PackingAlgorithm, TemplateFormat};
 use std::path::Path;
@@ -28,11 +27,11 @@ pub const CATEGORIES: &[&str] = &[
     "Extras del propio clon",
 ];
 
-/// Un exportador de datos: id original, etiqueta, familia de plantilla,
+/// Un exportador de datos: id, etiqueta, familia de plantilla,
 /// extensión del fichero de datos y ajustes recomendados.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DataFormatPreset {
-    /// Id tal y como lo acepta `--format`/`--template-format` del original.
+    /// Id tal y como lo acepta `--format`/`--template-format`.
     pub id: &'static str,
     /// Nombre mostrado en la GUI (español).
     pub label: &'static str,
@@ -87,7 +86,7 @@ impl DataFormatPreset {
     }
 }
 
-/// Los exportadores que el `--help`/`--exporter-list` del original enumera,
+/// Los exportadores que listan `--help`/`--exporter-list`,
 /// agrupados por familia de salida.
 pub const DATA_FORMATS: &[DataFormatPreset] = &[
     // --- Genéricos ---------------------------------------------------------
@@ -408,7 +407,7 @@ pub const DATA_FORMATS: &[DataFormatPreset] = &[
         "plist y XML",
     ),
     // --- Motores minoritarios ---------------------------------------------
-    // Muchos ya no existen en el original: se aceptan con la estructura
+    // Muchos ya no existen ya: se aceptan con la estructura
     // genérica JsonHash y su extensión por defecto (desviación documentada).
     DataFormatPreset::plain(
         "2dtoolkit",
@@ -529,9 +528,9 @@ pub const DATA_FORMATS: &[DataFormatPreset] = &[
         "json",
         "Motores minoritarios",
     ),
-    // --- Extras del propio clon -------------------------------------------
-    // No son ids del original: son las dos plantillas nativas que el clon
-    // añadía antes de tener la lista completa.
+    // --- Extras propios ----------------------------------------------------
+    // No son ids de formato: son las dos plantillas nativas que había antes
+    // de tener la lista completa.
     DataFormatPreset::plain(
         "cpp-header",
         "Cabecera C++/ObjC",
@@ -699,7 +698,7 @@ mod tests {
                 "{id} no puede rotar"
             );
         }
-        // Solo los formatos con animaciones en el original las auto-detectan.
+        // Solo los formatos con animaciones las auto-detectan.
         for id in [
             "libgdx",
             "cocos2d",

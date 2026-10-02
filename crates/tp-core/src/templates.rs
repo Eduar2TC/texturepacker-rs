@@ -32,7 +32,7 @@ pub fn metadata_extension(format: TemplateFormat) -> &'static str {
 }
 
 /// Extensión del fichero de datos de un proyecto: la del preset de formato
-/// de datos (`crate::dataformats`, que replica la del original) cuando el
+/// de datos (`crate::dataformats`) cuando el
 /// proyecto declara uno, y la de la familia en caso contrario.
 pub fn data_file_extension(config: &ProjectConfig) -> &'static str {
     match config.data_format_preset() {
@@ -537,7 +537,7 @@ pub fn render_mustache(template: &str, ctx: &Value) -> Result<String> {
     reg.render_template(template, ctx).map_err(Into::into)
 }
 
-/// Extra data files for frameworks, like the original's `--class-file`,
+/// Extra data files for frameworks, like `--class-file`,
 /// `--header-file`, `--source-file` and `--spriteids-file`. Each entry is
 /// `(file name, contents)`; options left empty are skipped.
 ///
@@ -679,7 +679,7 @@ pub(crate) fn builtin_template(format: TemplateFormat) -> &'static str {
 </dict>
 </plist>
 "#,
-        // JSON con `frames` como mapa por nombre (el `json` del original).
+        // JSON con `frames` como mapa por nombre (familia `json`).
         TemplateFormat::JsonHash => r#"{
   "frames": {
 {{#each frames}}    "{{this.filename}}": {

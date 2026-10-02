@@ -148,7 +148,7 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 
 | Zona | Contenido |
 |------|-----------|
-| Barra superior | **Abrir** / **Guardar** / **↺** (restablecer), **➕** añadir sprites, **➖** quitar seleccionados, **Carpeta** (carpeta inteligente), **⚙** ajustes de sprite (pivots y bordes 9-patch), **Publicar**, **✂** (dividir hoja), **▶** (vista previa de animación) y **Tutorial** (abre la página de tutoriales en el navegador), ruta del proyecto |
+| Barra superior | **Abrir** / **Guardar** / **↺** (restablecer), **➕** añadir sprites, **➖** quitar seleccionados, **Carpeta** (carpeta inteligente), **⚙** ajustes de sprite (pivots y bordes 9-patch), **Publicar**, **✂** (dividir hoja), **▶** (vista previa de animación) y **Tutorial** (abre la documentación del proyecto en el navegador), ruta del proyecto |
 | Panel izquierdo | Árbol **Sprites**: carpetas y archivos; selección simple o múltiple (Ctrl/Shift), arrastrar y soltar, «Restaurar (N)» para deshacer exclusiones |
 | Centro | Vista previa del atlas: zoom (−/slider/+/1:1/Ajustar, Ctrl+rueda o pinza), contornos, pivots, **bordes 9-patch** (barras verdes **arrastrables** en el sprite seleccionado), selección de página y de sprite; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
 | Panel derecho | **Ajustes**: **Interfaz** (idioma **Sistema/Español/English** y tema **Sistema/Claro/Oscuro**, guardados en `~/.config/texturepacker-rs/ui.toml` y aplicados al vuelo), Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, **formato de metadatos (63 presets por motor + «Valores recomendados»)**, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado, plantillas, **exportadores propios** (una carpeta de `<id>.hbs` elegibles como plantilla de salida) y **propiedades de la plantilla** (prefijo/media query CSS y `string_property`/`bool_property`) |
@@ -158,10 +158,10 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
    **➕** / **Carpeta**, o rellena **Directorio de entrada**)
    (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM,
    XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis` con `--features gpu-formats`,
-   PKM, PVR/PVRTC (v2 y v3), `.pvr.gz` y `.pvr.ccz`): los 28 formatos que
-   enumera el original, en 30 extensiones).
+   PKM, PVR/PVRTC (v2 y v3), `.pvr.gz` y `.pvr.ccz`): 28 formatos de
+   imagen en 30 extensiones).
    Cada cambio de ajustes reempaqueta la vista al instante (debounce de
-   120 ms), como en la herramienta original.
+   120 ms).
 2. Ajusta tamaño de atlas, padding/extrude, rotación, recorte, polígonos, profundidad de color, formato y cifrado.
 3. Pulsa **«Publicar»**: la vista previa muestra el atlas con marcos, pivots, bordes 9-patch y zoom automático,
    y la pestaña *Log* los tiempos de cada etapa.
@@ -185,8 +185,8 @@ tp-cli pack --input sprites/ --output build/ \
     --max-size 4096 --padding 2 --extrude 1 --format etc2 \
     --strategy bssf --variants 1.0,0.5 --key secreto --template-format json
 
-# Estilo del original: sprites en posiciónles, --format con doble acepción
-# (textura o datos) y metadatos con --data/--sheet
+# Sprites posicionales a mano, --format con doble acepción (textura o
+# datos) y metadatos con --data/--sheet
 tp-cli pack sprites/ hero.png --format phaser \
     --sheet build/atlas.png --data build/atlas.json --verbose
 
@@ -228,16 +228,15 @@ formato de datos elegido. Los huecos que quedaban ya están cerrados (Fase C):
 `--css-sprite-prefix`, `--css-media-query-2x`,
 `--plain-string-property`/`--plain-bool-property` y los alias
 `--disable-rotation`/`--enable-cache-busting`. Las doce opciones de exportadores
-concretos que este clon no escribe sí se registran, pero se rechazan diciendo de
+concretos que este proyecto no escribe sí se registran, pero se rechazan diciendo de
 qué exportador son; `--tracer-tolerance` y `--content-protection` siguen sin
-aceptarse por diferencia de unidades y de cifrado. Detalle en
-`docs/comparativa-texturepacker.md` §5.
+aceptarse por diferencia de unidades y de cifrado.
 
 ## Cobertura de la especificación
 
 | Módulo de la especificación                    | Estado | Detalles |
 |------------------------------------------------|--------|----------|
-| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis`* (*con `--features gpu-formats`), PKM, PVR/PVRTC v2 y v3, `.pvr.gz` y `.pvr.ccz` — los 28 del original |
+| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis`* (*con `--features gpu-formats`), PKM, PVR/PVRTC v2 y v3, `.pvr.gz` y `.pvr.ccz` — 28 formatos de entrada |
 | Alpha trimming + bounding box                  | ✅     | Umbral configurable (0-255) |
 | Deduplicación por hashing (aliases)            | ✅     | xxh3 + comparación byte-exacta; los aliases no ocupan espacio |
 | Auto-downscaling (@2x/@1x)                     | ✅     | `scale_variants` (p. ej. `1.0, 0.5`) con metadatos escalados |
@@ -250,7 +249,7 @@ aceptarse por diferencia de unidades y de cifrado. Detalle en
 | Grid / Basic                                   | ✅     | Rejilla (celda = mayor sprite inflado) y filas de izquierda a derecha con `basic_sort_by`/`basic_order` |
 | Manual (GUI)                                   | ✅     | Arrastra los sprites en la vista previa para fijar su posición (`manual_positions`); los sueltos caen en filas Basic debajo de los fijados. Rejilla opcional que imanta el arrastre (y, si quieres, el flujo de los sueltos) y botón «Limpiar posiciones» (`manual_grid`) |
 | Pack por carpetas (grupos)                     | ✅     | Asigna sprites a grupos en el panel de sprites (arrastre o menú contextual); cada grupo empaqueta en `<salida>/<grupo>/`, la hoja principal queda en la raíz |
-| Pack por carpetas automático                   | ✅     | `auto_folder_groups` (GUI o `--auto-folders`): cada subcarpeta de entrada produce su hoja en la subcarpeta de salida homónima, como en el TexturePacker original |
+| Pack por carpetas automático                   | ✅     | `auto_folder_groups` (GUI o `--auto-folders`): cada subcarpeta de entrada produce su hoja en la subcarpeta de salida homónima |
 | Heurísticas Best / BottomLeft / ContactPoint   | ✅     | `Best` prueba las 5 heurísticas y se queda con el empaquetado más ajustado |
 | Pack mode Fast / Good / Best                   | ✅     | Búsqueda binaria del atlas mínimo (presupuesto de 400 ms / 3 s); Fast solo recorta |
 | Size constraints (AnySize/POT/Múltiplo4/Palabra) | ✅  | El recorte y la búsqueda respetan la restricción sin superar `max_texture_size`; WordAligned usa el ancho de palabra de `color_depth` |
@@ -379,7 +378,7 @@ PixiJS, CSS con clases saneadas (`_1up_idle`), cabecera C++, TSV, texto plano y
 «solo la hoja» (no escribe fichero de datos). El combo «Formato de metadatos» de la GUI
 convierte el proyecto a cualquiera de los 63 presets con sus valores recomendados, y la
 CLI acepta los mismos ids en `--template-format` — con `json` legado reservado al array
-y el hash del original pedido como `json-hash`.
+y el hash disponible como `json-hash`.
 
 ### Pivots y bordes 9-patch por sprite
 
@@ -443,12 +442,11 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
   `.gz` que no lleve `.pvr` delante no se toma como imagen. El PSD
   se abre como el compuesto aplanado (capas fundidas) y el SVG se rasteriza a
   su tamaño intrínseco (o 100×100 si no lo trae) con las fuentes del sistema.
-- **Formatos de salida**: escribe los 17 de la documentación vigente del
-  original (PNG, PNG8, JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ,
+- **Formatos de salida**: escribe los 17 formatos de salida documentados
+  (PNG, PNG8, JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ,
   PKM, KTX, KTX2, ZKTX, ASTC y Basis). KTX2 guarda el contenido **crudo**
   (RGBA8/RGB8/R8, sin supercompresión Basis dentro del contenedor) y `basis`
-  es solo ETC1S; no se implementan los formatos retirados del propio
-  TexturePacker (`atf`, `pvr2`).
+  es solo ETC1S; no se implementan los formatos retirados (`atf`, `pvr2`).
 - **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
   especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
   BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp); otros

@@ -152,8 +152,8 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             if !advanced {
                 return;
             }
-            // Ficheros de datos extra, como los --class-file/--header-file/…
-            // del original (se escriben junto a los metadatos).
+            // Ficheros de datos extra (--class-file/--header-file/…), que se
+            // escriben junto a los metadatos.
             let mut extras_changed = false;
             let extra_fields: [(&str, &mut String); 4] = [
                 ("Class file (Swift)", &mut app.config.class_file),
@@ -329,7 +329,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                 app.config.encryption_key = if key.is_empty() { None } else { Some(key) };
             }
             // Clave global: se guarda una sola vez y se reutiliza en
-            // cualquier proyecto, como en el original.
+            // cualquier proyecto.
             ui.label(t!("Clave global (guardada una vez y reutilizable)"));
             let names = tp_core::keys::list();
             let mut name = app.config.encryption_key_name.clone().unwrap_or_default();
@@ -1037,7 +1037,7 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 }
                 _ => {}
             }
-            // Calidades por formato de textura (mismos rangos que el original).
+            // Calidades por formato de textura.
             match app.config.gpu_format {
                 GpuFormat::Pvrtc4Bpp | GpuFormat::Pvr3Gz | GpuFormat::Pvr3Ccz => {
                     ui.horizontal(|ui| {
@@ -1253,7 +1253,7 @@ const SETTINGS_CHANGED_FLAG: &str = "tp_settings_changed";
 
 /// Opciones de cada escala listada en «Scaling variants»: filtro de sprites,
 /// tamaño máximo de textura y si la variante reutiliza la hoja base.
-/// Presets del diálogo de variantes del original: se eligen y se aplican de
+/// Presets del diálogo de variantes: se eligen y se aplican de
 /// una vez, sobrescribiendo escalas, sufijos y opciones de cada variante.
 fn variant_presets_ui(app: &mut App, ui: &mut egui::Ui) {
     let id = egui::Id::new("variant_preset_selected");
@@ -1518,7 +1518,7 @@ fn alpha_handling_name(a: AlphaHandling) -> &'static str {
     }
 }
 
-/// Combo de formato de datos con todos los presets del original, agrupados
+/// Combo de formato de datos con todos los presets, agrupados
 /// por categoría. Elegir uno convierte el proyecto (familia + extensión) y
 /// aplica sus valores recomendados, como el diálogo «Data format…».
 fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
@@ -1568,8 +1568,8 @@ fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
 
 /// «Exportadores propios»: una carpeta de `<id>.hbs` elegible como plantilla
 /// de salida. La familia y la extensión las sigue mandando el combo
-/// «Formato de metadatos»: el exportador propio sólo aporta el texto, igual
-/// que en el original (y `validate()` sólo acepta ids de formatos oficiales).
+/// «Formato de metadatos»: el exportador propio sólo aporta el texto (y
+/// `validate()` sólo acepta ids de formatos oficiales).
 fn custom_exporters_ui(app: &mut App, ui: &mut egui::Ui) {
     let mut changed = false;
     egui::CollapsingHeader::new(t!("Exportadores propios"))

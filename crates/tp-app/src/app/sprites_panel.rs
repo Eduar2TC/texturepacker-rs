@@ -161,7 +161,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 | egui::scroll_area::ScrollSource::MOUSE_WHEEL,
         )
         .show(ui, |ui| {
-            // Modelo TexturePacker: hojas (sheets) como nodos del panel, con
+            // Modelo: hojas (sheets) como nodos del panel, con
             // sus sprites anidados; el arrastre entre hojas reasigna. Se
             // muestran en cuanto hay más de una hoja (activa o no).
             if app.config.folder_groups.len() > 1 {
@@ -347,7 +347,7 @@ fn collect_sprite_ids(app: &App, path: &Path) -> Vec<String> {
     ids
 }
 
-/// Nodo hoja (sheet) al estilo TexturePacker: contiene sus sprites como
+/// Nodo hoja (sheet): contiene sus sprites como
 /// hijos, acepta sprites arrastrados desde el árbol o de otras hojas y se
 /// puede renombrar/quitar por menú contextual.
 fn render_sheet(
@@ -978,7 +978,7 @@ fn count_files(nodes: &[TreeNode]) -> usize {
         .sum()
 }
 
-/// Sección «Hojas» (multipack manual al estilo TexturePacker): añadir hoja,
+/// Sección «Hojas» (multipack manual): añadir hoja,
 /// renombrar, vaciar y quitar. Los sprites se asignan arrastrándolos a los
 /// nodos de hoja del árbol de arriba.
 fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
@@ -986,7 +986,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
         .id_salt("output_groups")
         .default_open(false)
         .show(ui, |ui| {
-            // Modo automático (estilo TexturePacker original): ignora los
+            // Modo automático: ignora los
             // grupos manuales y crea un grupo por subcarpeta de entrada.
             let mut auto = app.config.auto_folder_groups;
             if ui

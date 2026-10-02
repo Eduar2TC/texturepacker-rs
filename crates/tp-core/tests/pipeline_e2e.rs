@@ -1640,7 +1640,7 @@ fn manual_algorithm_keeps_gui_positions() {
 
 #[test]
 fn auto_folder_groups_mirror_input_subfolders() {
-    // Modo automático (estilo TexturePacker original): cada subcarpeta de
+    // Modo automático: cada subcarpeta de
     // entrada produce su hoja en la subcarpeta de salida correspondiente.
     let fx = Fixture::new("auto_folders");
     let input = make_input_dir(&fx.dir, "in");
@@ -2830,7 +2830,7 @@ fn basis_input_is_ingested_and_packed() {
     assert_eq!(hero["sourceSize"]["h"], 8);
 }
 
-/// Los contenedores que el original lista como entrada pero que faltaban —
+/// Los contenedores de entrada que faltaban —
 /// `.pkm`, `.pvr`, `.pvr.ccz` y `.svgz` — entran por el mismo camino que un PNG.
 #[test]
 fn p15_ingests_pkm_pvr_ccz_and_svgz_inputs() {

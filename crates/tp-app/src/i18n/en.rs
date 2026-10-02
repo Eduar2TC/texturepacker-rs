@@ -75,12 +75,12 @@ pub(crate) static EN: &[(&str, &str)] = &[
         "Publish the sprite sheet to see the animation",
     ),
     (
-        "Abre la página de tutoriales de TexturePacker en el navegador",
-        "Open the TexturePacker tutorials page in your browser",
+        "Abre la documentación del proyecto en el navegador",
+        "Open the project documentation in your browser",
     ),
     (
-        "Abriendo la página de tutoriales en el navegador.",
-        "Opening the tutorials page in your browser.",
+        "Abriendo la documentación en el navegador.",
+        "Opening the documentation in your browser.",
     ),
     ("… Publicando", "… Publishing"),
     ("⏏ Publicar", "⏏ Publish"),

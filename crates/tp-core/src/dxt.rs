@@ -1,5 +1,5 @@
 //! Codificadores DXT1 (BC1) y DXT5 (BC3) propios, con la cuantización
-//! `--dxt-mode` del original (`DXT_LINEAR` / `DXT_PERCEPTUAL`).
+//! `--dxt-mode` (`DXT_LINEAR` / `DXT_PERCEPTUAL`).
 //!
 //! Cada bloque de 4×4 se comprime en 8 bytes (DXT1) o 16 bytes (DXT5: 8 de
 //! alfa + 8 de color). El ajuste de extremos combina tres candidatos

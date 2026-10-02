@@ -60,7 +60,7 @@ pub fn load_image_rgba(path: &Path) -> Result<(i32, i32, Vec<u8>)> {
     }
 }
 
-/// `true` for `something.pvr.gz`: the only `.gz` the original lists as input.
+/// `true` for `something.pvr.gz`: the only `.gz` accepted as input.
 fn is_pvr_gz(path: &Path) -> bool {
     path.file_stem()
         .and_then(|s| s.to_str())
@@ -788,7 +788,7 @@ fn decode_basis(_bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
 }
 
 // ---------------------------------------------------------------------------
-// PKM, PVR y SVGZ (los contenedores que faltaban en la lista del original)
+// PKM, PVR y SVGZ (contenedores de entrada que faltaban)
 // ---------------------------------------------------------------------------
 
 fn be16(bytes: &[u8], off: usize) -> DecodeResult<u16> {

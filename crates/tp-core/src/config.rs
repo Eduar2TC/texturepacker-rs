@@ -91,7 +91,7 @@ impl GdxFilter {
         }
     }
 
-    /// Acepta el token del original en cualquier mayúscula.
+    /// Acepta el token en cualquier mayúscula.
     pub fn parse(v: &str) -> Option<Self> {
         Some(match v.to_ascii_lowercase().as_str() {
             "linear" => GdxFilter::Linear,
@@ -527,7 +527,7 @@ impl PixelFormat {
     }
 
     /// `true` si el formato de textura pedido puede alojar este pixel format
-    /// (tabla del original: solo se pueden elegir los compatibles). Los
+    /// (tabla de referencia: solo se pueden elegir los compatibles). Los
     /// formatos de software siempre valen: los de hardware los ignoran.
     pub fn is_compatible_with(&self, format: GpuFormat) -> bool {
         if !self.is_gpu() {
@@ -593,7 +593,7 @@ impl DxtMode {
         }
     }
 
-    /// Acepta el token del original y sus formas cortas.
+    /// Acepta el token y sus formas cortas.
     pub fn parse(v: &str) -> Option<Self> {
         Some(match v.to_ascii_lowercase().as_str() {
             "dxt_linear" | "linear" => DxtMode::Linear,
@@ -1004,16 +1004,16 @@ impl SortOrder {
 /// Built-in metadata template languages (the spec mentions JSON/XML/Plist/C++).
 ///
 /// Cada variante es una *familia* de salida: la lista completa de
-/// exportadores del original (`crate::dataformats::DATA_FORMATS`) se mapea
+/// exportadores (`crate::dataformats::DATA_FORMATS`) se mapea
 /// sobre estas familias, así que un preset cambia la familia y la extensión
 /// del fichero de datos a la vez.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum TemplateFormat {
-    /// JSON con `frames` como lista (el `json-array` del original).
+    /// JSON con `frames` como lista (familia `json-array`).
     #[default]
     #[serde(rename = "JSON")]
     Json,
-    /// JSON con `frames` como mapa por nombre (`json` del original).
+    /// JSON con `frames` como mapa por nombre (familia `json`).
     #[serde(rename = "JsonHash")]
     JsonHash,
     /// JSON de Phaser 3: una entrada de textura por página bajo `textures`.
@@ -1047,7 +1047,7 @@ pub enum TemplateFormat {
     /// Cabecera C++/ObjC con la tabla de sprites (fichero extra).
     #[serde(rename = "CppHeader")]
     CppHeader,
-    /// TSV con una fila por sprite (fichero propio, sin id en el original).
+    /// TSV con una fila por sprite (fichero propio, sin id).
     #[serde(rename = "TSV")]
     Tsv,
     /// Texto plano (el exportador de ejemplo `plain`).
@@ -1058,8 +1058,8 @@ pub enum TemplateFormat {
     SpriteSheetOnly,
 }
 
-/// Per-variant options of a scaling variant (el diálogo «scaling variants»
-/// del original): qué sprites empaqueta la variante, su tope de tamaño de
+/// Per-variant options of a scaling variant (diálogo «scaling variants»):
+/// qué sprites empaqueta la variante, su tope de tamaño de
 /// textura y si reutiliza la hoja base.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct VariantOptions {
@@ -1081,7 +1081,7 @@ pub struct VariantOptions {
     /// either way: neither can be honoured by scaling the base sheet.
     #[serde(default = "default_true")]
     pub force_identical_layout: bool,
-    /// «Identical layout — accept fractional values» del original: la
+    /// «Identical layout — accept fractional values»: la
     /// variante se queda **fuera** del común divisor, así que su hoja
     /// idéntica admite subpíxeles (aquí se redondean) a cambio de no
     /// estirar el resto de variantes para encajar su denominador.
@@ -1092,8 +1092,8 @@ pub struct VariantOptions {
 /// Smallest denominator `q <= 64` such that `scale` is (almost) `p/q` — the
 /// factor the base sheet has to be divisible by so rescaling it to this
 /// scale stays on integers. `None` when the scale is not representable
-/// (e.g. `0.999`), which is the case the original solves with «accept
-/// fractional values».
+/// (e.g. `0.999`), which is the case solved with «accept fractional
+/// values».
 pub fn scale_denominator(scale: f32) -> Option<i32> {
     if !scale.is_finite() || scale <= 0.0 {
         return None;
@@ -1137,7 +1137,7 @@ pub struct VariantPreset {
 }
 
 /// Presets shipped with the scaling variants dialog. `apply` overwrites the
-/// current variants, exactly like pressing *Apply* on the original.
+/// current variants, exactly like pressing *Apply*.
 pub const VARIANT_PRESETS: &[VariantPreset] = &[
     VariantPreset {
         name: "Ninguna",
@@ -1323,8 +1323,8 @@ pub struct ProjectConfig {
     #[serde(default = "default_webp_quality")]
     pub webp_quality: u16,
     /// Formato de píxel de salida (pixel format): software embebible o
-    /// compresión de hardware (PVRTC/ETC/DXT/ASTC), según la tabla del
-    /// original. Solo formatos compatibles con la textura elegida.
+    /// compresión de hardware (PVRTC/ETC/DXT/ASTC), según la tabla de
+    /// formatos. Solo formatos compatibles con la textura elegida.
     #[serde(default)]
     pub pixel_format: PixelFormat,
     /// Calidad PVRTC (`--pvr-quality`), 0-7, 3 por defecto: pasadas de
@@ -1377,8 +1377,8 @@ pub struct ProjectConfig {
     pub export_template: Option<PathBuf>,
     /// Metadata output language.
     pub template_format: TemplateFormat,
-    /// Id del preset de formato de datos del original
-    /// (`crate::dataformats::DATA_FORMATS`); vacío = el clon solo usa la
+    /// Id del preset de formato de datos
+    /// (`crate::dataformats::DATA_FORMATS`); vacío = sólo se usa la
     /// familia de `template_format` (los proyectos antiguos). Lo fija
     /// [`ProjectConfig::apply_data_format`] y decide la extensión del
     /// fichero de datos.
@@ -1437,7 +1437,7 @@ pub struct ProjectConfig {
     /// name, output root); it also receives every unassigned sprite.
     #[serde(default = "default_folder_groups")]
     pub folder_groups: Vec<FolderGroup>,
-    /// Automatic pack-by-folder (like the original TexturePacker): every
+    /// Automatic pack-by-folder: every
     /// input subfolder becomes an output subfolder — sprites in `<in>/ui/`
     /// land in `<out>/ui/atlas.png`, root-level sprites in `<out>/atlas.png`.
     /// Overrides manual groups when enabled.
@@ -1467,8 +1467,7 @@ pub struct ProjectConfig {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub normal_map_filter: String,
     /// Classify images as normal maps from their color when neither the
-    /// suffix nor the filter matches (blue-dominant heuristic, as in
-    /// TexturePacker's *Auto-detect*).
+    /// suffix nor the filter matches (blue-dominant heuristic).
     #[serde(default)]
     pub normal_map_auto_detect: bool,
     /// Base file name of the normal-map sheet; empty = `<base_file_name>_normal`.
@@ -1798,8 +1797,7 @@ impl ProjectConfig {
     /// To that this adds the **common factor the scaling variants need**:
     /// the base sheet must be divisible by the denominator of every
     /// identical-layout scale, so rescaling it keeps integer sizes and
-    /// coordinates (the original derives the very same factor from the
-    /// variant list).
+    /// coordinates (the factor is derived from the variant list).
     pub fn effective_divisors(&self) -> (i32, i32) {
         let v = self.variant_common_divisor();
         (
@@ -1812,8 +1810,8 @@ impl ProjectConfig {
     /// the base sheet: the LCM of their scale denominators, capped at the
     /// 2048 the `Common divisor` validation allows. Variants that accept
     /// fractional values, pack on their own (sprite filter / own texture
-    /// cap) or have no representable denominator are left out, exactly like
-    /// the original excludes them from the common divisor calculation.
+    /// cap) or have no representable denominator are left out of the common
+    /// divisor calculation.
     pub fn variant_common_divisor(&self) -> i32 {
         let mut div = 1;
         for &scale in &self.scale_variants {
@@ -1879,7 +1877,7 @@ impl ProjectConfig {
     }
 
     /// Convierte el proyecto a otro formato de datos, igual que el botón
-    /// «Data Format» del original: cambia la familia de plantilla, la
+    /// «Data Format»: cambia la familia de plantilla, la
     /// extensión del fichero de datos y aplica los *valores recomendados* del
     /// preset. Devuelve `false` cuando el id no existe (no se toca nada).
     pub fn apply_data_format(&mut self, id: &str) -> bool {
@@ -1894,8 +1892,7 @@ impl ProjectConfig {
     /// `--custom-exporters-directory` + un id propio: si existe
     /// `dir/{id}.hbs`, ese exportador pasa a ser la plantilla de salida y
     /// devuelve `true`. La familia y la extensión las sigue decidiendo
-    /// `data_format`, igual que en el original, donde el exportador propio
-    /// sólo aporta el texto.
+    /// `data_format`, donde el exportador propio sólo aporta el texto.
     ///
     /// **No escribe `data_format`**: `validate()` sólo acepta ids de la lista
     /// oficial, y el id propio no es un formato de datos, es una plantilla.
@@ -1951,8 +1948,8 @@ impl ProjectConfig {
     }
 
     /// Applies a [`VARIANT_PRESETS`] entry by name, overwriting the current
-    /// scale list, suffixes and per-variant options (as the original's
-    /// preset dialog does). Returns `false` when the name is unknown.
+    /// scale list, suffixes and per-variant options. Returns `false` when
+    /// the name is unknown.
     pub fn apply_variant_preset(&mut self, name: &str) -> bool {
         let Some(preset) = VARIANT_PRESETS.iter().find(|p| p.name == name) else {
             return false;

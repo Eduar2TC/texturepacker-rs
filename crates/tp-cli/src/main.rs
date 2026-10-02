@@ -162,7 +162,7 @@ const DECRYPT_VALUES: &[&str] = &["key", "o", "out", "pixel-format"];
 const DECRYPT_FLAGS: &[&str] = &["help", "quiet", "verbose"];
 
 /// Rechaza lo que no esté en los registros: hoy la CLI ignoraba en silencio
-/// cualquier opción desconocida (un `--scale 0.5` del original «funcionaba»
+/// cualquier opción desconocida (un `--scale 0.5` sin registrar «funcionaba»
 /// sin efecto).
 fn check_unknown_options(
     values: &[(String, String)],
@@ -207,8 +207,8 @@ fn check_unknown_options(
     ))
 }
 
-/// Opciones que en el original sólo escriben propiedades de un exportador
-/// concreto y que este clon todavía no plantea. Van registradas (para que no
+/// Opciones que sólo escriben propiedades de un exportador concreto y que
+/// este proyecto todavía no plantea. Van registradas (para que no
 /// parezcan desconocidas) y se rechazan con su motivo: fingirlas sería peor
 /// que no leerlas.
 const EXPORTER_ONLY_OPTIONS: &[(&str, &str)] = &[
@@ -270,7 +270,7 @@ fn check_exporter_only_options(
     ))
 }
 
-/// `<bool>` del original: `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`.
+/// `<bool>`: `true`/`false`, `1`/`0`, `yes`/`no`, `on`/`off`.
 fn parse_bool(value: &str, flag: &str) -> Result<bool, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "1" | "yes" | "on" => Ok(true),
@@ -279,13 +279,13 @@ fn parse_bool(value: &str, flag: &str) -> Result<bool, String> {
     }
 }
 
-/// Línea de `--version`, con el mismo patrón del original.
+/// Línea de `--version`.
 fn version_line() -> String {
     format!("TexturePacker-RS {}", env!("CARGO_PKG_VERSION"))
 }
 
 /// Ids de data formats que aceptan `--format`/`--template-format`, uno por
-/// línea, como el `--exporter-list` del original.
+/// línea.
 fn exporter_list_text() -> String {
     let mut ids: Vec<&str> = tp_core::dataformats::data_format_ids().collect();
     ids.sort_unstable();
@@ -530,7 +530,7 @@ fn parse_args(args: &[String]) -> (Vec<String>, Vec<(String, String)>, Vec<Strin
 }
 
 /// `--variant <escala>[:<nombre>[:<filtro>[:allowfraction[:<ancho>:<alto>]]]]`,
-/// como en el original: se acepta repetida o separada por comas. Los trozos
+/// se acepta repetida o separada por comas. Los trozos
 /// que no empiezan por una escala vuelven al filtro anterior, así que un
 /// filtro con comas escribe bien. Fija también `scale_variants`.
 fn apply_variant_flags(values: &[(String, String)], cfg: &mut ProjectConfig) {
@@ -632,11 +632,11 @@ fn apply_variant_flags(values: &[(String, String)], cfg: &mut ProjectConfig) {
 
 /// Mapea `--template-format` sobre la config.
 ///
-/// Primero los tokens legados del original (cada familia con su semántica
-/// concreta) y después los ids de exportador que el propio original enumera
-/// para sus data formats (`libgdx`, `cocos2d`, `phaser`…), que aplican además
-/// los valores recomendados del preset. `json` legado es el array, así que el
-/// hash del original se pide como `json-hash`.
+/// Primero los tokens legados (cada familia con su semántica concreta) y
+/// después los ids de exportador que documentan los data formats
+/// (`libgdx`, `cocos2d`, `phaser`…), que aplican además los valores
+/// recomendados del preset. `json` legado es el array, así que el hash se
+/// pide como `json-hash`.
 fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), String> {
     match value.to_ascii_lowercase().as_str() {
         "json" => cfg.template_format = TemplateFormat::Json,
@@ -665,11 +665,11 @@ fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), Str
 
 /// Qué es un argumento posicional de la línea de comandos.
 enum Positional {
-    /// Un `.tpproj` (el `.tps` del original ocupa ese sitio).
+    /// Un `.tpproj`.
     Project,
     /// Una carpeta o imagen con sprites.
     Input,
-    /// Algo que no podemos leer, como un `.tps` del original.
+    /// Algo que no podemos leer.
     Unsupported,
 }
 
@@ -708,7 +708,7 @@ fn sheet_matches_data(sheet: &str, data: &str) -> bool {
         .is_some_and(|rest| matches!(rest.trim_start_matches(['-', '_']), "{n}" | "{n0}" | "{n1}"))
 }
 
-/// Rutas del original: `--sheet` fija carpeta, nombre base y formato de
+/// Rutas: `--sheet` fija carpeta, nombre base y formato de
 /// textura por la extensión; `--data` fija carpeta y nombre base. Nuestro
 /// modelo sólo admite un nombre base para los dos, así que se comprueba que
 /// convivan. Devuelve la ruta de `--data` (para validar la extensión cuando
@@ -822,7 +822,7 @@ enum FormatTarget {
     Data,
 }
 
-/// `--format` del original: formato de textura para unos (`png`, `ktx`…) y
+/// `--format`: formato de textura para unos (`png`, `ktx`…) y
 /// formato de datos para otros (`phaser`, `libgdx`…). Los dos conjuntos son
 /// disjuntos, así que el orden de la comprobación no cambia nada.
 fn apply_format(cfg: &mut ProjectConfig, value: &str) -> Result<FormatTarget, String> {
@@ -863,7 +863,7 @@ fn parse_divisor(value: &str, flag: &str) -> Result<i32, String> {
     Ok(d)
 }
 
-/// `--default-pivot-point X,Y` en unidades normalizadas como el original.
+/// `--default-pivot-point X,Y` en unidades normalizadas.
 fn parse_pivot_point(value: &str) -> Result<(f32, f32), String> {
     let bad = || format!("--default-pivot-point inválido: {value} (usa X,Y con valores de 0 a 1)");
     let mut parts = value.split(',');
@@ -1011,7 +1011,7 @@ fn apply_scale_factor(cfg: &mut ProjectConfig, factor: f32) {
     }
 }
 
-/// Opciones de layout que el original expone y la GUI ya sabe aplicar: ejes
+/// Opciones de layout que la GUI ya sabe aplicar: ejes
 /// sueltos del common divisor y pivot por defecto. Va después de
 /// `--common-divisor` para que el eje gane sobre el valor conjunto.
 fn apply_parity_layout_options(
@@ -1106,11 +1106,11 @@ fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
         cfg.flip_vertical = true;
     }
     if has("disable-rotation") {
-        // Alias del original de nuestro `--no-rotation`.
+        // Alias de `--no-rotation`.
         cfg.allow_rotation = false;
     }
     if has("enable-cache-busting") {
-        // Alias del original de nuestro `--cache-busting`.
+        // Alias de `--cache-busting`.
         cfg.cache_busting = true;
     }
     if has("heuristic-mask") {
@@ -1122,8 +1122,8 @@ fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
 }
 
 /// Escribe el proyecto como TOML y devuelve el mensaje de resumen. La
-/// extensión distinta de `.tpproj` se avisa pero no se rechaza, como en el
-/// original, que guarda el archivo que se le pida.
+/// extensión distinta de `.tpproj` se avisa pero no se rechaza: se guarda
+/// el archivo que se le pida.
 fn save_project(cfg: &ProjectConfig, path: &Path) -> Result<String, String> {
     let text = cfg
         .to_toml()
@@ -1221,8 +1221,8 @@ fn cmd_pack(args: &[String]) {
 
     let mut cfg = ProjectConfig::default();
 
-    // Posicionales: un `.tpproj` (como el `.tps` del original) y el resto
-    // son sprites, tal y como se pasan en la línea de comandos del original.
+    // Posicionales: un `.tpproj` y el resto son sprites, tal y como se
+    // pasan en la línea de comandos.
     let mut project: Option<PathBuf> = None;
     let mut inputs: Vec<PathBuf> = Vec::new();
     for raw in &positionals {
@@ -1267,7 +1267,7 @@ fn cmd_pack(args: &[String]) {
             cfg.extra_inputs.push(path);
         }
     }
-    // `--sheet`/`--data` del original: fijan carpeta, nombre base y formato.
+    // `--sheet`/`--data`: fijan carpeta, nombre base y formato.
     let (data_path, path_warning) =
         apply_output_paths(&mut cfg, &values).unwrap_or_else(|e| fail(e));
     if let Some(v) = val("base-name") {
@@ -1541,7 +1541,7 @@ fn cmd_pack(args: &[String]) {
         cfg.normal_map_sheet = v;
     }
 
-    // Opciones booleanas, incluidas las nuevas de paridad con el original.
+    // Opciones booleanas.
     apply_flag_options(&mut cfg, &flags);
 
     if let Some(msg) = path_warning {
@@ -2267,7 +2267,7 @@ mod tests {
         assert_eq!(cfg.template_format, TemplateFormat::Json);
         assert!(cfg.data_format.is_empty());
 
-        // El hash del original se pide como `json-hash` (json = array).
+        // El hash se pide como `json-hash` (json = array).
         let mut cfg = ProjectConfig::default();
         apply_template_format(&mut cfg, "json-hash").unwrap();
         assert_eq!(cfg.template_format, TemplateFormat::JsonHash);
@@ -2423,7 +2423,7 @@ mod tests {
 
     #[test]
     fn sheet_and_data_share_one_base_name() {
-        // El caso del original: atlas-{n}.png junto a atlas.json.
+        // Caso esperado: atlas-{n}.png junto a atlas.json.
         let mut cfg = ProjectConfig::default();
         let values = vec![
             ("sheet".to_string(), "out/atlas-{n}.png".to_string()),
@@ -2502,7 +2502,7 @@ mod tests {
         ));
 
         // El parser devuelve todos los posicionales, en orden, y acepta que
-        // los sprites vayan mezclados con las opciones como en el original.
+        // los sprites vayan mezclados con las opciones.
         let (positionals, values, flags) = parse_args(&args(&[
             "--format",
             "phaser",
@@ -2806,8 +2806,8 @@ mod tests {
 
     #[test]
     fn exporter_only_options_are_registered_and_rejected() {
-        // Ninguna es «desconocida»: están registradas con la grafía del
-        // original, y se rechazan diciendo de qué exportador hablan.
+        // Ninguna es «desconocida»: están registradas con su grafía, y se
+        // rechazan diciendo de qué exportador hablan.
         for (name, format) in EXPORTER_ONLY_OPTIONS {
             let flag = format!("--{name}");
             let list = [flag.as_str(), "valor"];
@@ -2822,7 +2822,7 @@ mod tests {
             assert!(err.contains("--exporter-list"), "{err}");
         }
 
-        // Con bools del original también se acepta la forma sin valor.
+        // Con bools también se acepta la forma sin valor.
         let (_, _, flags) = parse_args(&args(&["--spine-legacy-output"]));
         assert!(check_unknown_options(&[], &flags, PACK_VALUES, PACK_FLAGS).is_ok());
         assert!(check_exporter_only_options(&[], &flags).is_err());
@@ -2921,7 +2921,7 @@ mod tests {
         let mut cfg = ProjectConfig::default();
         assert!(apply_template_format(&mut cfg, "miexportador").is_err());
 
-        // Lo que --exporter-list lista junto a los del original.
+        // Lo que --exporter-list lista.
         assert_eq!(
             tp_core::dataformats::custom_exporter_ids(&dir),
             vec!["miexportador".to_string(), "otro.json".to_string()]

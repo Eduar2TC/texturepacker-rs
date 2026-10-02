@@ -7,9 +7,9 @@ use super::{App, LogKind};
 use crate::i18n::t;
 use eframe::egui;
 
-/// La misma página que abre el botón «Tutorial» del original: la de
-/// tutoriales de TexturePacker en el navegador del usuario.
-pub(crate) const TUTORIAL_URL: &str = "https://www.codeandweb.com/texturepacker/tutorials";
+/// Documentación que abre el botón «Tutorial»: el README del proyecto,
+/// en una pestaña del navegador del usuario.
+pub(crate) const TUTORIAL_URL: &str = "https://github.com/Eduar2TC/texturepacker-rs#readme";
 
 pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
@@ -105,19 +105,17 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             {
                 app.show_animation = true;
             }
-            // Como en el original, «Tutorial» abre la página de tutoriales
-            // en el navegador (egui-winit → `webbrowser`).
+            // «Tutorial» abre la documentación del proyecto en el
+            // navegador (egui-winit → `webbrowser`).
             if ui
                 .button("Tutorial")
-                .on_hover_text(t!(
-                    "Abre la página de tutoriales de TexturePacker en el navegador"
-                ))
+                .on_hover_text(t!("Abre la documentación del proyecto en el navegador"))
                 .clicked()
             {
                 ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
                 app.log(
                     LogKind::Info,
-                    t!("Abriendo la página de tutoriales en el navegador.").into(),
+                    t!("Abriendo la documentación en el navegador.").into(),
                 );
             }
 
@@ -196,10 +194,10 @@ mod tests {
     use super::TUTORIAL_URL;
 
     #[test]
-    fn tutorial_url_points_at_the_official_page() {
+    fn tutorial_url_points_at_the_project_readme() {
         assert_eq!(
             TUTORIAL_URL,
-            "https://www.codeandweb.com/texturepacker/tutorials"
+            "https://github.com/Eduar2TC/texturepacker-rs#readme"
         );
     }
 }

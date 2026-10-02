@@ -173,7 +173,7 @@ fn execute(
     // grupos excluidos (se re-ingestan filtrados).
     if let Some(groups) = groups {
         if config.auto_folder_groups {
-            // Modo automático (estilo TexturePacker original): cada subcarpeta
+            // Modo automático: cada subcarpeta
             // de entrada se convierte en un grupo con su mismo nombre; los
             // sprites de la raíz van a la hoja principal (siempre la página 0
             // y las subcarpetas en orden alfabético, para salida determinista).
@@ -1088,8 +1088,7 @@ fn plan_variants(
 
     // Hoja idéntica redondeada: la escala no queda entera con el común
     // divisor (fraccionario pedido, denominador no representable o tope de
-    // 2048). En el original esos frames se guardan con decimales; aquí se
-    // redondean, así que se avisa.
+    // 2048). Aquí esos frames se guardan redondeados, así que se avisa.
     let div = config.variant_common_divisor();
     for &scale in &identical {
         if scale_denominator(scale).is_some_and(|d| d > 0 && div % d == 0) {

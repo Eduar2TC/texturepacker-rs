@@ -1,7 +1,7 @@
 //! Almacén global de claves de cifrado.
 //!
-//! El original guarda cada clave una sola vez y la reutiliza en cualquier
-//! proyecto; aquí viven en `keys.toml` bajo el directorio de configuración
+//! Cada clave se guarda una sola vez y se reutiliza en cualquier
+//! proyecto; vive en `keys.toml` bajo el directorio de configuración
 //! del usuario. `TEXTUREPACKER_KEYS_FILE` (o `TEXTUREPACKER_KEYS_DIR`)
 //! permite apuntar a otro sitio, que es lo que usan los tests y la CI.
 

@@ -226,8 +226,8 @@ jobs:
               al editar; «Publicar» escribe los ficheros cuando tú decides.
             - **Autowatch**: editar, crear o borrar PNGs refresca la vista al momento.
             - **Algoritmo Manual**: arrastra sprites en la vista para fijar su posición.
-            - **Pack por carpetas**: hojas como en TexturePacker (arrastre entre hojas
-              en el panel) y modo automático que espeja tus subcarpetas de entrada.
+            - **Pack por carpetas**: hojas como nodos del panel (arrastre entre
+              hojas) y modo automático que espeja tus subcarpetas de entrada.
             - **Icono propio** en la ventana, el instalador Windows (.msi), el bundle
               macOS (.app) y el lanzador de Linux.
             - **Instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS, `.msi` con

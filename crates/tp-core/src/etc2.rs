@@ -71,8 +71,8 @@ const SUBBLOCK_TABLE: [[usize; 16]; 2] = [
 ];
 
 /// Esfuerzo de búsqueda que corresponde a una calidad 0-100 (`--etc1-quality`
-/// / `--etc2-quality`). El original usa 70 por defecto, que aquí es ya la
-/// búsqueda completa; por debajo se degradan los ejes de búsqueda.
+/// / `--etc2-quality`). Con 70 por defecto la búsqueda ya es completa; por
+/// debajo se degradan los ejes de búsqueda.
 struct Effort {
     /// Modos T/H (extensión de ETC2 sobre ETC1).
     th: bool,
