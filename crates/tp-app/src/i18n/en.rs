@@ -363,7 +363,10 @@ pub(crate) static EN: &[(&str, &str)] = &[
     ("Proyecto", "Project"),
     ("El hilo de empaquetado terminó inesperadamente.", "The pack thread ended unexpectedly."),
     ("Suelta para añadir al workspace", "Drop to add to the workspace"),
-    ("(sprites o carpetas; se empaquetan al instante)", "(sprites or folders; they pack instantly)"),
+    (
+        "(sprites, carpetas o proyectos; los sprites se empaquetan al instante)",
+        "(sprites, folders or projects; sprites pack instantly)",
+    ),
     ("⤵  Arrastra aquí imágenes o carpetas", "⤵  Drag images or folders here"),
     ("⤵  Sigue soltando imágenes o carpetas", "⤵  Keep dropping images or folders"),
     ("Soltar para colocar aquí", "Drop to place here"),

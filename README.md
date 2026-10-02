@@ -62,6 +62,10 @@ zip de Linux con icono y lanzador `.desktop`.
 - **Editor de pivots visual**: cruces rojas arrastrables sobre cada sprite en
   la vista previa y en su panel, con los valores absolutos en píxeles (junto
   al tamaño de la imagen) y las nueve posiciones predefinidas.
+- **Soltar un proyecto sobre la ventana lo abre**: un `.tpproj` o un `.tps`
+  arrastrados desde el gestor de archivos se abren en el momento (antes se
+  ignoraban por no ser imágenes); un `.toml` que no es de proyecto no toca la
+  configuración cargada.
 
 ### Novedades v0.5.0
 

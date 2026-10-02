@@ -2076,6 +2076,20 @@ impl eframe::App for App {
 /// Soltar ficheros del SO en cualquier parte de la ventana: los añade al
 /// workspace. Devuelve un overlay azul mientras el arrastre esté sobre la
 /// app (feedback estándar) y registra en el Log lo añadido.
+/// Un fichero de proyecto que la ventana sabe abrir al soltarlo. Solo las
+/// extensiones de proyecto: un `Cargo.toml` o un `ui.toml` sueltos encima
+/// no deben reemplazar la configuración cargada.
+fn is_project_file(path: &Path) -> bool {
+    path.is_file()
+        && matches!(
+            path.extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref(),
+            Some("tpproj" | "tps")
+        )
+}
+
 fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
     let (hovered, dropped) =
         ctx.input(|i| (i.raw.hovered_files.clone(), i.raw.dropped_files.clone()));
@@ -2114,7 +2128,7 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
         painter.text(
             screen.center() + egui::vec2(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
-            t!("(sprites o carpetas; se empaquetan al instante)"),
+            t!("(sprites, carpetas o proyectos; los sprites se empaquetan al instante)"),
             egui::FontId::proportional(13.0),
             egui::Color32::from_rgba_unmultiplied(180, 210, 235, 220),
         );
@@ -2129,6 +2143,19 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
     let mut added = 0;
     for file in dropped {
         if let Some(path) = file.path {
+            // Un proyecto soltado (`.tpproj` o `.tps`) se abre en la ventana;
+            // `add_input` lo descartaría por no ser una imagen.
+            if is_project_file(&path) {
+                app.open_project(path.clone());
+                if app.project_path.as_deref() == Some(path.as_path()) {
+                    // El drop corre después de `poll_changes`: se programa el
+                    // repack y el frame siguiente para que el atlas salga ya
+                    // con el proyecto cargado y no a la siguiente interacción.
+                    app.after_workspace_change();
+                    ctx.request_repaint();
+                }
+                continue;
+            }
             if app.add_input(path) {
                 added += 1;
             }
@@ -2585,6 +2612,97 @@ mod on_demand_tests {
         assert!(
             total_after > total_before,
             "el sprite soltado debe aparecer en la vista ({total_before} -> {total_after})"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Soltar un proyecto sobre la ventana lo abre: `.tps` (el del original)
+    /// y `.tpproj` (el nuestro). Antes `add_input` los descartaba por no ser
+    /// imágenes, así que el gesto no hacía nada. Un `.toml` que no es de
+    /// proyecto no debe tocar la configuración cargada.
+    #[test]
+    fn soltar_un_proyecto_lo_abre() {
+        let (mut app, ctx, tmp) = demo("drop_proyecto");
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview de arranque: {boot:?}");
+
+        // Un .tps del original: marcas reconocibles y ruta relativa.
+        let cfg = ProjectConfig {
+            base_file_name: "soltado".into(),
+            input_directory: PathBuf::from("sprites"),
+            ..ProjectConfig::default()
+        };
+        let tps = tmp.join("soltado.tps");
+        tp_core::tps::save_tps(&cfg, &tps).expect("escribir el .tps");
+
+        let slot = settle_until_quiet(&mut app, &ctx);
+        let mut input = crate::testing::idle_input();
+        input.dropped_files = vec![egui::DroppedFile {
+            path: Some(tps.clone()),
+            ..Default::default()
+        }];
+        let _ = app.run_frame(&ctx, input);
+
+        assert_eq!(
+            app.project_path.as_deref(),
+            Some(tps.as_path()),
+            "un .tps soltado debe abrirse como proyecto"
+        );
+        assert_eq!(
+            app.config.base_file_name, "soltado",
+            "los ajustes del .tps deben cargarse"
+        );
+        assert_eq!(
+            app.config.input_directory,
+            tmp.join("sprites"),
+            "las rutas relativas se resuelven contra la carpeta del .tps"
+        );
+        assert!(
+            !app.config.extra_inputs.iter().any(|p| p == &tps),
+            "un proyecto no debe entrar al workspace como sprite"
+        );
+        assert!(
+            slot.lock().unwrap().is_some(),
+            "el frame del drop no programó el siguiente repaint: el proyecto              recién cargado no se vería hasta la siguiente interacción"
+        );
+
+        // El TOML propio, mismo camino.
+        let cfg2 = ProjectConfig {
+            base_file_name: "tpp".into(),
+            ..ProjectConfig::default()
+        };
+        let tpproj = tmp.join("otro.tpproj");
+        std::fs::write(&tpproj, cfg2.to_toml().expect("toml")).unwrap();
+        let mut input = crate::testing::idle_input();
+        input.dropped_files = vec![egui::DroppedFile {
+            path: Some(tpproj.clone()),
+            ..Default::default()
+        }];
+        let _ = app.run_frame(&ctx, input);
+        assert_eq!(
+            app.project_path.as_deref(),
+            Some(tpproj.as_path()),
+            "un .tpproj soltado debe abrirse como proyecto"
+        );
+        assert_eq!(app.config.base_file_name, "tpp");
+
+        // Un toml cualquiera no es un proyecto: se ignora.
+        let ajeno = tmp.join("ui.toml");
+        std::fs::write(&ajeno, "lang = \"es\"\n").unwrap();
+        let mut input = crate::testing::idle_input();
+        input.dropped_files = vec![egui::DroppedFile {
+            path: Some(ajeno.clone()),
+            ..Default::default()
+        }];
+        let _ = app.run_frame(&ctx, input);
+        assert_eq!(
+            app.project_path.as_deref(),
+            Some(tpproj.as_path()),
+            "un .toml que no es de proyecto no debe abrirse"
+        );
+        assert!(
+            !app.config.extra_inputs.iter().any(|p| p == &ajeno),
+            "un .toml tampoco es un sprite"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
