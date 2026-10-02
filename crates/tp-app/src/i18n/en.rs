@@ -584,6 +584,12 @@ pub(crate) static EN: &[(&str, &str)] = &[
         "Nada ha cambiado desde la última publicación; usa «Forzar publicación» para reescribir los ficheros.",
         "Nothing changed since the last publish; use «Force publish» to rewrite the files.",
     ),
+    // Fondo de la vista de animación.
+    ("Personalizado", "Custom"),
+    (
+        "Color de fondo de la vista de animación",
+        "Background colour of the animation preview",
+    ),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

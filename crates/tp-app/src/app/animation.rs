@@ -11,6 +11,9 @@ pub(super) enum Background {
     Dark,
     Light,
     Checker,
+    /// Color elegido por el usuario (el original deja fijar el fondo de la
+    /// ventana de animación a un color cualquiera).
+    Custom(egui::Color32),
 }
 
 impl Background {
@@ -19,6 +22,18 @@ impl Background {
             Background::Dark => "Oscuro",
             Background::Light => "Claro",
             Background::Checker => "Damas",
+            Background::Custom(_) => "Personalizado",
+        }
+    }
+
+    /// Color con el que se rellena el lienzo (para el color libre la
+    /// variante lleva su valor).
+    fn color(self) -> egui::Color32 {
+        match self {
+            Background::Dark => egui::Color32::from_gray(30),
+            Background::Light => egui::Color32::from_gray(210),
+            Background::Checker => egui::Color32::from_gray(70),
+            Background::Custom(c) => c,
         }
     }
 }
@@ -254,7 +269,21 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
                         crate::i18n::translate(bg.label()),
                     );
                 }
+                // Color libre: arranca en gris medio (o en el elegido).
+                let custom = match app.anim.background {
+                    Background::Custom(c) => c,
+                    _ => egui::Color32::from_gray(127),
+                };
+                ui.selectable_value(
+                    &mut app.anim.background,
+                    Background::Custom(custom),
+                    crate::i18n::translate(Background::Custom(custom).label()),
+                );
             });
+        if let Background::Custom(color) = &mut app.anim.background {
+            ui.color_edit_button_srgba(color)
+                .on_hover_text(t!("Color de fondo de la vista de animación"));
+        }
         ui.add(
             egui::Slider::new(&mut app.anim.scale, 0.25..=8.0)
                 .logarithmic(true)
@@ -280,12 +309,6 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
 
     let painter = ui.painter_at(rect);
     match app.anim.background {
-        Background::Dark => {
-            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
-        }
-        Background::Light => {
-            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(210));
-        }
         Background::Checker => {
             let cell = 8.0;
             let mut y = rect.min.y;
@@ -310,6 +333,9 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
                 y += cell;
                 row += 1;
             }
+        }
+        bg => {
+            painter.rect_filled(rect, 0.0, bg.color());
         }
     }
 
@@ -535,6 +561,26 @@ mod tests {
         assert_eq!(Background::Dark.label(), t!("Oscuro"));
         assert_eq!(Background::Light.label(), t!("Claro"));
         assert_eq!(Background::Checker.label(), t!("Damas"));
+        assert_eq!(
+            Background::Custom(egui::Color32::from_rgb(1, 2, 3)).label(),
+            t!("Personalizado")
+        );
+    }
+
+    #[test]
+    fn background_colors_keep_their_palette() {
+        assert_eq!(
+            Background::Dark.color(),
+            egui::Color32::from_gray(30),
+            "el fondo oscuro no cambia de tono"
+        );
+        assert_eq!(Background::Light.color(), egui::Color32::from_gray(210));
+        let c = egui::Color32::from_rgb(200, 30, 60);
+        assert_eq!(
+            Background::Custom(c).color(),
+            c,
+            "el color libre se respeta"
+        );
     }
 
     #[test]
