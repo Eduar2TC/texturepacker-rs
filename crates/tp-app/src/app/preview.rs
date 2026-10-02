@@ -372,6 +372,11 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     let mut border_released = false;
     // El cursor está sobre una banda 9-patch (para no pisar su cursor).
     let mut band_hovered = false;
+    // Pivot arrastrado en el lienzo: (id del sprite, pivot normalizado).
+    let mut pivot_drag: Option<(String, f32, f32)> = None;
+    // La zona de agarre del pivot está bajo el cursor: no debe empezar una
+    // marquesina ni arrastrar el sprite de debajo.
+    let mut pivot_busy = false;
     // Arrastre manual (algoritmo Manual): (id, x, y) destino del sprite.
     let mut manual_moved: Option<(String, i32, i32)> = None;
     let mut manual_stopped = false;
@@ -663,15 +668,58 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             }
 
             if show_pivots {
+                let selected_id = app.selected_sprite.clone();
                 for sprite in &sprites {
                     if sprite.is_alias {
                         continue;
                     }
                     let v = sprite.visible_frame;
-                    let px = v.x as f32 + sprite.pivot.x * v.width as f32;
-                    let py = v.y as f32 + sprite.pivot.y * v.height as f32;
-                    let p = to_screen(px as i32, py as i32);
-                    painter.circle_filled(p, 3.0, egui::Color32::RED);
+                    let (ax, ay) = pivot_in_atlas(
+                        sprite.pivot,
+                        v,
+                        (sprite.offset_x, sprite.offset_y),
+                        (sprite.raw_width, sprite.raw_height),
+                    );
+                    let p = to_screen(ax as i32, ay as i32);
+                    let selected = selected_id.as_deref() == Some(sprite.id.as_str());
+                    let color = if selected {
+                        egui::Color32::from_rgb(255, 90, 90)
+                    } else {
+                        egui::Color32::RED
+                    };
+                    painter.circle_filled(p, if selected { 4.0 } else { 3.0 }, color);
+                    if !selected {
+                        continue;
+                    }
+                    // Zona de agarre: la cruz del sprite seleccionado se
+                    // arrastra para colocar el pivot en píxeles.
+                    let grab = egui::Rect::from_center_size(p, egui::vec2(16.0, 16.0));
+                    let handle = ui
+                        .interact(
+                            grab,
+                            egui::Id::new(("pivot-grab", sprite.id.as_str())),
+                            egui::Sense::drag(),
+                        )
+                        .on_hover_text(t!("Arrastra para colocar el pivot."));
+                    pivot_busy |= handle.hovered() || handle.dragged();
+                    if handle.dragged() {
+                        if let Some(pos) = handle.interact_pointer_pos() {
+                            let origin = to_screen(v.x, v.y);
+                            let (nx, ny) = atlas_to_pivot(
+                                ((pos.x - origin.x) / zoom, (pos.y - origin.y) / zoom),
+                                (sprite.offset_x, sprite.offset_y),
+                                (sprite.raw_width, sprite.raw_height),
+                            );
+                            if (nx - sprite.pivot.x).abs() > 0.001
+                                || (ny - sprite.pivot.y).abs() > 0.001
+                            {
+                                pivot_drag = Some((sprite.id.clone(), nx, ny));
+                            }
+                        }
+                        handle.clone().on_hover_cursor(egui::CursorIcon::Grabbing);
+                    } else if handle.hovered() {
+                        handle.clone().on_hover_cursor(egui::CursorIcon::Grab);
+                    }
                 }
             }
 
@@ -699,7 +747,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             // modo Manual o muestra una vista fantasma en los demás; arrastrar
             // desde zona vacía selecciona por rectángulo.
             let pointer = response.interact_pointer_pos();
-            if response.drag_started() {
+            if response.drag_started() && !pivot_busy {
                 if let Some(p) = pointer {
                     let px = ((p.x - rect.min.x) / zoom) as i32;
                     let py = ((p.y - rect.min.y) / zoom) as i32;
@@ -713,7 +761,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     }
                 }
             }
-            if response.dragged() {
+            if response.dragged() && !pivot_busy {
                 if let Some((id, f)) = &drag_source {
                     if let Some(p) = pointer {
                         if manual_mode {
@@ -762,7 +810,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     );
                 }
             }
-            if response.drag_stopped() {
+            if response.drag_stopped() && !pivot_busy {
                 if drag_source.is_some() {
                     if manual_mode {
                         manual_stopped = true;
@@ -783,7 +831,12 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
 
             // Cursor de agarre al pasar sobre un sprite (sin pisar el
             // cursor de resize de las bandas 9-patch).
-            if hovered.is_some() && drag_source.is_none() && drag.is_none() && !band_hovered {
+            if hovered.is_some()
+                && drag_source.is_none()
+                && drag.is_none()
+                && !band_hovered
+                && !pivot_busy
+            {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
             }
 
@@ -814,7 +867,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             }
 
             // Un click que completa un arrastre de banda no selecciona sprites.
-            if response.clicked() && drag.is_none() {
+            if response.clicked() && drag.is_none() && !pivot_busy {
                 let pos = ui.input(|i| i.pointer.latest_pos());
                 if let Some(pos) = pos {
                     let px = ((pos.x - rect.min.x) / zoom) as i32;
@@ -844,6 +897,15 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
 
     if let Some(factor) = zoom_delta {
         app.zoom = (app.zoom * factor).clamp(0.05, 8.0);
+    }
+    if let Some((id, nx, ny)) = pivot_drag {
+        let index = app
+            .result
+            .as_ref()
+            .and_then(|out| out.result.sprites.iter().position(|s| s.id == id));
+        if let Some(index) = index {
+            super::sprite_settings::apply_pivot(app, &[index], nx, ny);
+        }
     }
     if let Some((edge, value)) = drag {
         set_selected_border_edge(app, edge, value);
@@ -1190,4 +1252,68 @@ fn draw_borders(
         }
     }
     dragged.map(|(edge, value)| (edge, value, released))
+}
+
+/// Punto del pivot dentro del frame visible del atlas.
+///
+/// El pivot se mide sobre la imagen original (0..1 dentro de ella), así que
+/// dentro del recorte vive en `pivot·tamaño original − origen del recorte`,
+/// y el recorte está pegado al origen del frame en el atlas.
+fn pivot_in_atlas(
+    pivot: tp_core::types::Point2D,
+    frame: tp_core::types::Rect,
+    offset: (i32, i32),
+    raw: (i32, i32),
+) -> (f32, f32) {
+    (
+        frame.x as f32 + pivot.x * raw.0.max(1) as f32 - offset.0 as f32,
+        frame.y as f32 + pivot.y * raw.1.max(1) as f32 - offset.1 as f32,
+    )
+}
+
+/// Inversa de [`pivot_in_atlas`] para el arrastre: un punto relativo al
+/// origen del frame → pivot normalizado y clampado a la imagen original
+/// (el recorte empieza en `offset` dentro de esa imagen).
+fn atlas_to_pivot(atlas: (f32, f32), offset: (i32, i32), raw: (i32, i32)) -> (f32, f32) {
+    (
+        ((atlas.0 + offset.0 as f32) / raw.0.max(1) as f32).clamp(0.0, 1.0),
+        ((atlas.1 + offset.1 as f32) / raw.1.max(1) as f32).clamp(0.0, 1.0),
+    )
+}
+
+#[cfg(test)]
+mod pivot_tests {
+    use super::*;
+
+    #[test]
+    fn el_pivot_se_mide_sobre_la_imagen_original() {
+        // Sprite 64×64 recortado a 40×30 con origen (6, 9), frame en (10,20).
+        let frame = tp_core::types::Rect::new(10, 20, 40, 30);
+        let (ax, ay) = pivot_in_atlas(
+            tp_core::types::Point2D::new(0.5, 0.5),
+            frame,
+            (6, 9),
+            (64, 64),
+        );
+        assert_eq!((ax, ay), (36.0, 43.0));
+    }
+
+    #[test]
+    fn el_arrastre_vuelve_al_mismo_pivot() {
+        let frame = tp_core::types::Rect::new(10, 20, 40, 30);
+        let pivot = tp_core::types::Point2D::new(0.25, 0.75);
+        let (ax, ay) = pivot_in_atlas(pivot, frame, (6, 9), (64, 64));
+        let at = (ax - frame.x as f32, ay - frame.y as f32);
+        let (nx, ny) = atlas_to_pivot(at, (6, 9), (64, 64));
+        assert!((nx - pivot.x).abs() < 1e-5 && (ny - pivot.y).abs() < 1e-5);
+    }
+
+    #[test]
+    fn el_pivot_arrastrado_no_sale_de_la_imagen() {
+        assert_eq!(
+            atlas_to_pivot((-100.0, 1e6), (6, 9), (64, 32)),
+            (0.0, 1.0),
+            "arrastre fuera del marco: clampado a los bordes"
+        );
+    }
 }

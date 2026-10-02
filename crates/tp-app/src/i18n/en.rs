@@ -590,6 +590,9 @@ pub(crate) static EN: &[(&str, &str)] = &[
         "Color de fondo de la vista de animación",
         "Background colour of the animation preview",
     ),
+    // Editor de pivots: vista y arrastre.
+    ("Arrastra para colocar el pivot.", "Drag to place the pivot."),
+    ("Imagen de {} × {} px", "{} × {} px image"),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {
