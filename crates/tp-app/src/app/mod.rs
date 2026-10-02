@@ -2707,6 +2707,48 @@ mod on_demand_tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
+    /// La app arrancada con un `.tps` del original —el mismo camino que usan
+    /// el argumento de la línea de comandos y el diálogo de abrir— carga los
+    /// ajustes y deja la vista previa al día.
+    #[test]
+    fn arranca_con_un_tps_del_original() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_ondemand_tps_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        let tpproj = create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        let toml = std::fs::read_to_string(&tpproj).expect("leer el .tpproj");
+        let cfg = ProjectConfig::from_toml(&toml).expect("config del .tpproj");
+        let tps = tmp.join("demo.tps");
+        tp_core::tps::save_tps(&cfg, &tps).expect("escribir el .tps");
+
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(tps.clone()));
+        assert_eq!(
+            app.project_path.as_deref(),
+            Some(tps.as_path()),
+            "la app debe quedar sobre el .tps"
+        );
+        assert_eq!(
+            app.config.input_directory, sprites,
+            "los ajustes del .tps deben cargarse"
+        );
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview del .tps: {boot:?}");
+        let out = app.result().expect("el .tps debe producir vista previa");
+        assert!(
+            out.result.total_sprites > 0,
+            "el .tps apunta a la carpeta de sprites: deben empaquetarse"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     /// El binario arranca **sin proyecto cargado**: `variants_text` nace como
     /// `"1.0"` mientras `scale_variants` se serializa como `"1"`. Si la
     /// comparación es textual, `poll_changes` repite `after_workspace_change`
