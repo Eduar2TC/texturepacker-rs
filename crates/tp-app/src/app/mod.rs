@@ -1228,7 +1228,12 @@ impl App {
         }
     }
 
-    fn start_pack(&mut self) {
+    /// Publica la hoja.
+    ///
+    /// `force` reescribe los ficheros aunque nada haya cambiado desde la
+    /// última publicación (la entrada «Forzar publicación» del menú del
+    /// original); sin ella, una hoja ya al día se deja como está.
+    fn start_pack(&mut self, force: bool) {
         self.commit_paths();
         self.parse_variants();
         if let Err(e) = self.config.validate() {
@@ -1243,13 +1248,24 @@ impl App {
             );
             return;
         }
+        if !force && self.files_written && !self.snapshot_changed() {
+            self.log(
+                LogKind::Info,
+                t!("Nada ha cambiado desde la última publicación; usa «Forzar publicación» para reescribir los ficheros.")
+                    .into(),
+            );
+            return;
+        }
         // Cancel any pending preview: the export replaces it.
         self.pending = None;
         self.pending_seq = None;
         self.preview_retry_used = false;
         let snapshot = self.workspace_snapshot();
         let (tx, rx) = std::sync::mpsc::channel();
-        let cfg = self.config.clone();
+        let mut cfg = self.config.clone();
+        // La fuerza es un ajuste de ejecución: no se persiste en el .tpproj
+        // (por eso no toca `self.config`, que es lo que firma el snapshot).
+        cfg.force_publish = force;
         let grouped = self.groups_active();
         std::thread::spawn(move || {
             let result = if grouped {
@@ -2133,7 +2149,7 @@ fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
         app.save_project();
     }
     if consume(ctx, egui::Key::P) && app.running.is_none() {
-        app.start_pack();
+        app.start_pack(false);
     }
 
     // Zoom de teclado (sin modificadores, como en Figma/Photoshop):

@@ -312,7 +312,7 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
                 );
             }
             if app.split.auto_publish && app.running.is_none() {
-                app.start_pack();
+                app.start_pack(false);
             }
         }
         Err(e) => app.log(

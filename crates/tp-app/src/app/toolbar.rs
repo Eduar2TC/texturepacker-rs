@@ -135,8 +135,31 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                     .on_hover_text(t!("Empaquetar y exportar el sprite sheet — Ctrl+P"))
                     .clicked()
                 {
-                    app.start_pack();
+                    app.start_pack(false);
                 }
+                // Menú de publicación, como el del original: publicar solo
+                // cuando algo cambió y una entrada para forzar la escritura.
+                ui.menu_button("☰", |ui| {
+                    let publishing = app.running.is_some();
+                    if ui
+                        .add_enabled(!publishing, egui::Button::new(t!("Publicar")))
+                        .on_hover_text(t!("Empaquetar y exportar el sprite sheet — Ctrl+P"))
+                        .clicked()
+                    {
+                        ui.close();
+                        app.start_pack(false);
+                    }
+                    if ui
+                        .add_enabled(!publishing, egui::Button::new(t!("Forzar publicación")))
+                        .on_hover_text(t!("Reescribe los ficheros aunque nada haya cambiado"))
+                        .clicked()
+                    {
+                        ui.close();
+                        app.start_pack(true);
+                    }
+                })
+                .response
+                .on_hover_text(t!("Más opciones de publicación"));
                 if publishing {
                     ui.spinner();
                 }

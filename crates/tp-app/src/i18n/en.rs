@@ -571,6 +571,19 @@ pub(crate) static EN: &[(&str, &str)] = &[
     (" (rejilla: {} px)", " (grid: {} px)"),
 
     ("Auto-detectar animaciones", "Auto-detect animations"),
+
+    // Menú de publicación (paridad con el botón del original).
+    ("Publicar", "Publish"),
+    ("Forzar publicación", "Force publish"),
+    ("Más opciones de publicación", "More publishing options"),
+    (
+        "Reescribe los ficheros aunque nada haya cambiado",
+        "Rewrites the files even when nothing changed",
+    ),
+    (
+        "Nada ha cambiado desde la última publicación; usa «Forzar publicación» para reescribir los ficheros.",
+        "Nothing changed since the last publish; use «Force publish» to rewrite the files.",
+    ),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {
