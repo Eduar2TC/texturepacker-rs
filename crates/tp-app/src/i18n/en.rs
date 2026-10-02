@@ -564,6 +564,11 @@ pub(crate) static EN: &[(&str, &str)] = &[
     ("Crea otra hoja: se escribirá en su subcarpeta de salida. Arrastra sprites al nodo de la hoja para llenarla", "Creates another sheet: it will be written to its output subfolder. Drag sprites onto the sheet node to fill it"),
     ("Arrastra sprites del árbol (o entre hojas) para moverlos; cada hoja se escribe en su subcarpeta de salida.", "Drag sprites from the tree (or between sheets) to move them; each sheet is written to its output subfolder."),
     ("Algoritmo", "Algorithm"),
+    ("Rejilla: {} px", "Grid: {} px"),
+    ("Rejilla: no", "No grid"),
+    ("Ninguna", "None"),
+    ("— no escribir", "— do not write"),
+    (" (rejilla: {} px)", " (grid: {} px)"),
 
     ("Auto-detectar animaciones", "Auto-detect animations"),
 ];

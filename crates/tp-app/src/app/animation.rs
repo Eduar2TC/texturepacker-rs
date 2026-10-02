@@ -245,10 +245,14 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(t!("Fondo:"));
         egui::ComboBox::from_id_salt("anim_bg")
-            .selected_text(app.anim.background.label())
+            .selected_text(crate::i18n::translate(app.anim.background.label()))
             .show_ui(ui, |ui| {
                 for bg in [Background::Dark, Background::Light, Background::Checker] {
-                    ui.selectable_value(&mut app.anim.background, bg, bg.label());
+                    ui.selectable_value(
+                        &mut app.anim.background,
+                        bg,
+                        crate::i18n::translate(bg.label()),
+                    );
                 }
             });
         ui.add(

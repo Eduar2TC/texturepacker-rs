@@ -1729,9 +1729,9 @@ fn template_properties_body(app: &mut App, ui: &mut egui::Ui) {
     let before = plain_bool_choice(app.config.plain_bool_property);
     let mut choice = before;
     egui::ComboBox::from_id_salt("plain_bool_property")
-        .selected_text(PLAIN_BOOL_LABELS[choice])
+        .selected_text(plain_bool_labels()[choice])
         .show_ui(ui, |ui| {
-            for (i, label) in PLAIN_BOOL_LABELS.iter().enumerate() {
+            for (i, label) in plain_bool_labels().iter().enumerate() {
                 ui.selectable_value(&mut choice, i, *label);
             }
         });
@@ -1742,8 +1742,11 @@ fn template_properties_body(app: &mut App, ui: &mut egui::Ui) {
 }
 
 /// Etiquetas del tri-estado de `plain_bool_property` (índice =
-/// [`plain_bool_choice`]).
-const PLAIN_BOOL_LABELS: [&str; 3] = ["— no escribir", "true", "false"];
+/// [`plain_bool_choice`]). Fn y no `const` para poder pasar cada etiqueta
+/// por `t!()`.
+fn plain_bool_labels() -> [&'static str; 3] {
+    [t!("— no escribir"), "true", "false"]
+}
 
 /// `Some("")` no es un valor: vacío y en blanco vuelven a `None`, como en
 /// `texture_path`.
@@ -1756,7 +1759,7 @@ fn none_if_empty(value: String) -> Option<String> {
 }
 
 /// El tri-estado de `plain_bool_property` como índice de
-/// [`PLAIN_BOOL_LABELS`] (0 = `None`).
+/// [`plain_bool_labels`] (0 = `None`).
 fn plain_bool_choice(value: Option<bool>) -> usize {
     match value {
         None => 0,
@@ -1904,8 +1907,8 @@ mod tests {
             assert_eq!(plain_bool_choice(value), choice);
             assert_eq!(plain_bool_value(choice), value);
         }
-        assert_eq!(PLAIN_BOOL_LABELS.len(), 3);
-        assert_eq!(PLAIN_BOOL_LABELS[plain_bool_choice(Some(false))], "false");
+        assert_eq!(plain_bool_labels().len(), 3);
+        assert_eq!(plain_bool_labels()[plain_bool_choice(Some(false))], "false");
     }
 
     #[test]

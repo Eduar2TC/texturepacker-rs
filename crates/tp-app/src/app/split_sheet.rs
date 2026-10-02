@@ -90,7 +90,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             .source
             .as_ref()
             .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "Ninguna".to_string());
+            .unwrap_or_else(|| t!("Ninguna").to_string());
         ui.label(t!("Hoja: {}", name));
         if ui.button(t!("Elegir hoja…")).clicked() {
             pick_sheet(app, ctx);

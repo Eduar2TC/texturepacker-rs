@@ -117,9 +117,9 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
         if app.config.effective_algorithm() == tp_core::config::PackingAlgorithm::Manual {
             ui.separator();
             let grid_label = if let Some(g) = &app.config.manual_grid {
-                format!("Rejilla: {} px", g.step)
+                t!("Rejilla: {} px", g.step)
             } else {
-                "Rejilla: no".to_string()
+                t!("Rejilla: no").to_string()
             };
             ui.menu_button(grid_label, |ui| {
                 let mut grid_changed = false;
@@ -885,7 +885,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         }
         if manual_stopped {
             let grid_note = match app.config.manual_grid {
-                Some(g) => format!(" (rejilla: {} px)", g.step),
+                Some(g) => t!(" (rejilla: {} px)", g.step),
                 None => String::new(),
             };
             app.log(

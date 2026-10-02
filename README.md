@@ -30,7 +30,7 @@ Capa de Entrada (CLI / GUI / .tpproj)
 | Crate        | Descripción                                                              |
 |--------------|--------------------------------------------------------------------------|
 | `tp-core`    | Motor: pipeline completo, paralelo con Rayon, sin estado global mutable. |
-| `tp-app`     | App de escritorio (egui/eframe): árbol de sprites, preview del atlas con zoom, ajustes (básicos/avanzados), pestañas Log/Salida/Sprites/Malla, pivots. |
+| `tp-app`     | App de escritorio (egui/eframe): árbol de sprites, preview del atlas con zoom, ajustes (básicos/avanzados), pestañas Log/Salida/Sprites/Malla, pivots, interfaz en español o inglés con tema claro/oscuro. |
 | `tp-cli`     | Interfaz de línea de comandos para headless/CI.                          |
 
 ## Descargas
@@ -48,6 +48,13 @@ zip de Linux con icono y lanzador `.desktop`.
 
 ### Novedades v0.4.0
 
+- **Idioma y tema configurables**: la sección **Interfaz** de Ajustes (la
+  primera) elige entre español e inglés y entre el tema del sistema, claro
+  y oscuro; la preferencia se guarda en
+  `~/.config/texturepacker-rs/ui.toml` y se aplica sin reiniciar. El
+  inglés cubre la interfaz y los mensajes que escribe el motor — Log,
+  avisos, errores y las etiquetas de los formatos de metadatos —, que en
+  el código siguen siendo español y se traducen al mostrarlos.
 - **Arrastrar sprites del panel al lienzo**: suelta sprites del árbol sobre
   la vista para colocarlos donde quieras — activa el algoritmo Manual, fija
   las posiciones relativas de la selección, imanta a la rejilla y respeta el
@@ -144,7 +151,7 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 | Barra superior | **Abrir** / **Guardar** / **↺** (restablecer), **➕** añadir sprites, **➖** quitar seleccionados, **Carpeta** (carpeta inteligente), **⚙** ajustes de sprite (pivots y bordes 9-patch), **Publicar**, **✂** (dividir hoja), **▶** (vista previa de animación) y **Tutorial** (abre la página de tutoriales en el navegador), ruta del proyecto |
 | Panel izquierdo | Árbol **Sprites**: carpetas y archivos; selección simple o múltiple (Ctrl/Shift), arrastrar y soltar, «Restaurar (N)» para deshacer exclusiones |
 | Centro | Vista previa del atlas: zoom (−/slider/+/1:1/Ajustar, Ctrl+rueda o pinza), contornos, pivots, **bordes 9-patch** (barras verdes **arrastrables** en el sprite seleccionado), selección de página y de sprite; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
-| Panel derecho | **Ajustes**: Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, **formato de metadatos (63 presets por motor + «Valores recomendados»)**, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado, plantillas, **exportadores propios** (una carpeta de `<id>.hbs` elegibles como plantilla de salida) y **propiedades de la plantilla** (prefijo/media query CSS y `string_property`/`bool_property`) |
+| Panel derecho | **Ajustes**: **Interfaz** (idioma **Sistema/Español/English** y tema **Sistema/Claro/Oscuro**, guardados en `~/.config/texturepacker-rs/ui.toml` y aplicados al vuelo), Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, **formato de metadatos (63 presets por motor + «Valores recomendados»)**, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado, plantillas, **exportadores propios** (una carpeta de `<id>.hbs` elegibles como plantilla de salida) y **propiedades de la plantilla** (prefijo/media query CSS y `string_property`/`bool_property`) |
 | Ventanas flotantes | **✂ Dividir hoja**: elige una hoja, corta en rejilla (columnas × filas) o por tamaño fijo con margen/espaciado, previsualiza la rejilla y escribe los PNG, los añade al proyecto y publica. **▶ Vista previa de animación**: grupos por nombre de archivo, FPS, repetir, transporte (⏮ ⏸ ⏭), fondo (damas/alfa/negro), escala y sprites rotados |
 
 1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
@@ -460,8 +467,9 @@ AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 366 tests (entre ellos el del tipo de error
-`TpError`, con mensajes en español): algoritmos (trim, hash, pack, earcut,
+`cargo test --workspace` ejecuta 382 tests (entre ellos el del tipo de error
+`TpError`, con mensajes en español en el código que la GUI traduce al
+idioma elegido): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
 (algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
 de tamaño POT/múltiplo 4/palabra, tamaño fijo, force squared y búsqueda
