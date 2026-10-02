@@ -103,8 +103,11 @@ mod tests {
     use super::*;
 
     fn temp() -> PathBuf {
-        let n = std::sync::atomic::AtomicU32::new(0);
-        let n = n.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        // Contador del proceso, no por llamada: si cada `temp()` empezaba
+        // en 0, los tests que lo usan compartían ruta y se pisan (uno deja
+        // el toml ilegible y el otro lee los valores por defecto).
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         std::env::temp_dir().join(format!("tp-app-ui-prefs-{}-{n}.toml", std::process::id()))
     }
 
