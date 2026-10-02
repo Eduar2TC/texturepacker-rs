@@ -4101,7 +4101,7 @@ checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
 
 [[package]]
 name = "tp-app"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "eframe",
  "image",
@@ -4115,14 +4115,14 @@ dependencies = [
 
 [[package]]
 name = "tp-basis"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "basis-universal",
 ]
 
 [[package]]
 name = "tp-cli"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "image",
  "regex",
@@ -4132,7 +4132,7 @@ dependencies = [
 
 [[package]]
 name = "tp-core"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "aes-gcm",
  "astcenc-rs",

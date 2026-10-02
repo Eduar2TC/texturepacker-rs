@@ -46,6 +46,42 @@ comprimidos, hay **instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS,
 `.msi` con WiX en Windows (instala tp-app y tp-cli, añade tp-cli al PATH) y un
 zip de Linux con icono y lanzador `.desktop`.
 
+### Novedades v0.5.0
+
+- **Interfaz en español o inglés, con tema claro, oscuro o el del sistema**:
+  la sección **Interfaz** de Ajustes elige idioma y tema; la preferencia se
+  guarda en `~/.config/texturepacker-rs/ui.toml` y se aplica sin reiniciar.
+  El inglés cubre la interfaz y los mensajes que escribe el motor (Log,
+  avisos, errores y las etiquetas de los formatos de metadatos).
+- **Paridad con la CLI de referencia**: opciones registradas y rechazo de lo
+  desconocido con pista de `--help`, `--format` con doble acepción (textura o
+  datos), `--data`/`--sheet` con nombre base común y `--help` completo; y
+  toda la Fase C: `--max-width`/`--max-height`, `--background-color`,
+  `--ignore-files`, `--replace`, `--dpi`, `--heuristic-mask`,
+  `--force-publish`, `--scale`, `--save`, `--convert-texture`,
+  `--custom-exporters-directory` y las propiedades de exportador.
+- **63 presets de formato de datos con conversión**: el combo «Formato de
+  metadatos» agrupa por familia, aplica los valores recomendados y cambia a
+  la vez familia, extensión y plantilla; los exportadores propios (`<id>.hbs`)
+  se eligen y se quitan desde el colapsable «Exportadores propios».
+- **Entrada y salida completas**: los 28 formatos de entrada de la lista
+  oficial (PBM/PGM/PPM, XBM, XPM, ASTC, KTX/KTX2, PSD, SVG/SVGZ, `.basis`,
+  PKM, PVR, `.pvr.gz`, `.pvr.ccz`…) y los 17 formatos de salida, con KTX2 y
+  Basis ETC1S.
+- **Empaquetado corregido**: guillotina real, align to grid que alinea sin
+  estirar, pivots y bordes 9-patch de la GUI que llegan al atlas, hoja
+  principal que conserva sus sprites listados y pestaña «Archivos» que lista
+  exactamente lo que se va a publicar.
+- **Variantes de escala con estado**: tabla por escala, filtro y tope por
+  variante, presets aplicables y valores fraccionarios con el común divisor
+  derivado de las escalas idénticas.
+- **Mapas de normales y calidades de GPU**: detección por sufijo, filtro o
+  color con aviso, calidades PVRTC/ETC/ASTC y pixel formats validados por
+  compatibilidad; clave global de cifrado guardada una sola vez y
+  reutilizable entre proyectos.
+- **Botón «Tutorial»** en la barra superior y arrastrar ficheros desde el
+  gestor de archivos también en Wayland.
+
 ### Novedades v0.4.0
 
 - **Idioma y tema configurables**: la sección **Interfaz** de Ajustes (la
@@ -85,28 +121,10 @@ zip de Linux con icono y lanzador `.desktop`.
   el árbol de sprites conviven (antes un overlay robaba el press), menú
   contextual «Mover a hoja…» funcional y la barra de zoom ya no desborda.
 
-### Novedades v0.2.0
-
-- **Espacio de trabajo dinámico**: vista previa en memoria sin escribir en
-  disco, con autorefresco (debounce) y «Publicar» como paso explícito de
-  exportación.
-- **Autowatch**: editar, crear o borrar PNGs del directorio de entrada (o de
-  las carpetas inteligentes) refresca la vista previa automáticamente,
-  también con la ventana en segundo plano.
-- **Algoritmo Manual**: arrastra los sprites en la vista previa para fijar
-  su posición (`manual_positions`), con rejilla de imán opcional, «Limpiar
-  posiciones» y persistencia en el proyecto.
-- **Pack por carpetas**: grupos manuales con arrastre a subcarpetas de
-  salida o modo automático (`--auto-folders`) que espeja el árbol de
-  entrada.
-- **Indicador de frescura** en la barra de zoom (Publicando… /
-  Actualizando… / Desactualizado) y espejo del Log a stderr
-  (`TP_LOG_STDERR=1`).
-
 ```bash
 # Ejemplo: usar la CLI de la última release (Linux x64)
-curl -LO https://github.com/Eduar2TC/texturepacker-rs/releases/latest/download/tp-cli-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf tp-cli-x86_64-unknown-linux-gnu.tar.gz && ./tp-cli --help
+curl -LO https://github.com/Eduar2TC/texturepacker-rs/releases/latest/download/tp-cli-linux-x64.tar.gz
+tar -xzf tp-cli-linux-x64.tar.gz && ./tp-cli --help
 ```
 
 La app de escritorio en Linux necesita las librerías GTK3 del sistema

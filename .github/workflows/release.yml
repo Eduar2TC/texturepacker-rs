@@ -222,14 +222,18 @@ jobs:
           body: |
             ## Novedades
 
-            - **Vista de trabajo dinámica**: la vista previa se recalcula en memoria
-              al editar; «Publicar» escribe los ficheros cuando tú decides.
-            - **Autowatch**: editar, crear o borrar PNGs refresca la vista al momento.
-            - **Algoritmo Manual**: arrastra sprites en la vista para fijar su posición.
-            - **Pack por carpetas**: hojas como nodos del panel (arrastre entre
-              hojas) y modo automático que espeja tus subcarpetas de entrada.
-            - **Icono propio** en la ventana, el instalador Windows (.msi), el bundle
-              macOS (.app) y el lanzador de Linux.
+            - **Interfaz en español o inglés** con tema claro, oscuro o el del
+              sistema (sección «Interfaz» de Ajustes).
+            - **Paridad con la CLI de referencia**: opciones registradas y las
+              desconocidas se rechazan con pista de `--help`; `--format` con
+              doble acepción (textura o datos).
+            - **63 presets de formato de datos** con conversión y exportadores
+              propios `<id>.hbs` elegibles desde la GUI.
+            - **Entrada (28 formatos) y salida (17 formatos)** al completo, con
+              KTX2 y Basis ETC1S.
+            - **Empaquetado corregido**: guillotina real, align to grid que alinea
+              sin estirar, pivots y bordes 9-patch que llegan al atlas y pestaña
+              «Archivos» sincronizada con la publicación.
             - **Instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS, `.msi` con
               WiX en Windows y zip con lanzador `.desktop` en Linux.
 
