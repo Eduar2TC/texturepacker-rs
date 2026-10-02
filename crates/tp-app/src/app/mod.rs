@@ -2749,6 +2749,183 @@ mod on_demand_tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
+    /// Carpeta temporal propia de cada test (se borra al terminar).
+    fn carpeta_temporal(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "tp_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    /// Ensayo de rendimiento de la app completa, tal como corre la suite
+    /// (compilación de debug): arranque con proyecto, frames de UI en
+    /// marcha, repack al cambiar un ajuste y publicación a disco. Imprime
+    /// la tabla de tiempos y marca techos laxos: solo deben saltar con
+    /// regresiones de orden de magnitud, no con el ruido de la máquina.
+    #[test]
+    fn rendimiento_de_la_app() {
+        let tmp = carpeta_temporal("rendimiento");
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        let project = create_example_project(&tmp, &sprites).expect("demo");
+        let ctx = egui::Context::default();
+
+        // 1) Arranque con proyecto + primer preview.
+        let t = std::time::Instant::now();
+        let mut app = App::new_for_testing(ctx.clone(), Some(project));
+        let boot = pump_until_fresh(&mut app, &ctx);
+        let arranque_ms = t.elapsed().as_millis();
+        assert!(!boot.stuck, "primer preview: {boot:?}");
+        let total = app
+            .result()
+            .expect("el arranque deja atlas")
+            .result
+            .total_sprites;
+        assert!(total > 0, "la demo tiene sprites: {total}");
+
+        // 2) Frames de UI con la app ya caliente (sin trabajo pendiente).
+        let n = 30u128;
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = app.run_frame(&ctx, crate::testing::idle_input());
+        }
+        let frame_ms = t.elapsed().as_millis() / n;
+
+        // 3) Repack tras cambiar un ajuste real.
+        let antes = preview_updates(&app);
+        app.config.padding = 7;
+        app.after_workspace_change();
+        let t = std::time::Instant::now();
+        let out = pump_until_fresh(&mut app, &ctx);
+        let repack_ms = t.elapsed().as_millis();
+        assert!(!out.stuck, "repack: {out:?}");
+        assert!(
+            preview_updates(&app) > antes,
+            "el cambio de ajuste debe reempaquetar"
+        );
+
+        // 4) Publicación real a disco (el hilo va en paralelo: se bombea
+        //    hasta que termina, con un tope por si nunca acaba).
+        let salida = app.config.output_directory.clone();
+        let t = std::time::Instant::now();
+        app.start_pack(true);
+        let deadline = std::time::Instant::now() + TIMEOUT;
+        while app.running.is_some() && std::time::Instant::now() < deadline {
+            let _ = app.run_frame(&ctx, crate::testing::idle_input());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(
+            app.running.is_none(),
+            "la publicación no terminó en {TIMEOUT:?}"
+        );
+        let publicar_ms = t.elapsed().as_millis();
+        let hojas: Vec<PathBuf> = std::fs::read_dir(&salida)
+            .map(|rd| {
+                rd.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("png"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            !hojas.is_empty(),
+            "la publicación debe escribir la hoja en {}",
+            salida.display()
+        );
+
+        println!(
+            "rendimiento ({total} sprites, debug):\n  \
+             arranque + primer preview: {arranque_ms} ms\n  \
+             frame medio de UI: {frame_ms} ms\n  \
+             repack tras cambio de ajuste: {repack_ms} ms\n  \
+             publicación a disco: {publicar_ms} ms"
+        );
+        assert!(
+            arranque_ms < 15_000,
+            "arranque y primer preview demasiado lentos: {arranque_ms} ms"
+        );
+        assert!(
+            frame_ms < 150,
+            "frame de UI medio demasiado lento: {frame_ms} ms"
+        );
+        assert!(
+            repack_ms < 10_000,
+            "repack tras cambio de ajuste demasiado lento: {repack_ms} ms"
+        );
+        assert!(
+            publicar_ms < 10_000,
+            "publicación a disco demasiado lenta: {publicar_ms} ms"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// El mismo ensayo con un workspace grande (150 sprites de 32×32):
+    /// el pipeline debe seguir en el mismo orden de magnitud, no al
+    /// cuadrado del número de sprites.
+    #[test]
+    fn rendimiento_con_workspace_grande() {
+        let tmp = carpeta_temporal("rendimiento_grande");
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        for i in 0..150u32 {
+            let mut px = vec![0u8; 32 * 32 * 4];
+            for (j, p) in px.chunks_exact_mut(4).enumerate() {
+                p.copy_from_slice(&[
+                    (i % 251) as u8,
+                    ((i * 7 + j as u32) % 241) as u8,
+                    (j % 97) as u8,
+                    255,
+                ]);
+            }
+            image::RgbaImage::from_raw(32, 32, px)
+                .expect("buffer cuadra")
+                .save(sprites.join(format!("sprite_{i:03}.png")))
+                .expect("guardar sprite");
+        }
+        let cfg = ProjectConfig {
+            input_directory: sprites.clone(),
+            output_directory: tmp.join("out"),
+            ..ProjectConfig::default()
+        };
+        let project = tmp.join("grande.tpproj");
+        std::fs::write(&project, cfg.to_toml().expect("toml")).expect("escribir");
+
+        let ctx = egui::Context::default();
+        let t = std::time::Instant::now();
+        let mut app = App::new_for_testing(ctx.clone(), Some(project));
+        let boot = pump_until_fresh(&mut app, &ctx);
+        let preview_ms = t.elapsed().as_millis();
+        assert!(!boot.stuck, "preview grande: {boot:?}");
+        let total = app.result().expect("atlas grande").result.total_sprites;
+        assert_eq!(total, 150, "los 150 sprites deben empaquetarse");
+
+        let n = 10u128;
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = app.run_frame(&ctx, crate::testing::idle_input());
+        }
+        let frame_ms = t.elapsed().as_millis() / n;
+
+        println!(
+            "rendimiento (150 sprites, debug):\n  \
+             primer preview: {preview_ms} ms\n  \
+             frame medio de UI: {frame_ms} ms"
+        );
+        assert!(
+            preview_ms < 60_000,
+            "el preview de 150 sprites tardó demasiado: {preview_ms} ms"
+        );
+        assert!(
+            frame_ms < 150,
+            "frame de UI con atlas grande demasiado lento: {frame_ms} ms"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     /// El binario arranca **sin proyecto cargado**: `variants_text` nace como
     /// `"1.0"` mientras `scale_variants` se serializa como `"1"`. Si la
     /// comparación es textual, `poll_changes` repite `after_workspace_change`
