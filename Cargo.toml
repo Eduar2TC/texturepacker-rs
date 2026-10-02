@@ -35,6 +35,9 @@ flate2 = "1"
 # sprite). Ya entraba vía bindgen (build), así que no es una dependencia nueva
 # del árbol.
 regex = "1"
+# Lectura de proyectos `.tps` del original (XML de QSettings de Qt).
+# Ya entraba vía resvg/usvg, así que sólo se fija la versión.
+roxmltree = "0.21"
 
 [profile.release]
 lto = "thin"

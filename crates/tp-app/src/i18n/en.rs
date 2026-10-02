@@ -25,13 +25,13 @@ pub(crate) static EN: &[(&str, &str)] = &[
     ),
     ("📂 Abrir", "📂 Open"),
     (
-        "Abrir proyecto (.tpproj) — Ctrl+O",
-        "Open project (.tpproj) — Ctrl+O",
+        "Abrir proyecto (.tpproj o .tps) — Ctrl+O",
+        "Open project (.tpproj or .tps) — Ctrl+O",
     ),
     ("💾 Guardar", "💾 Save"),
     (
-        "Guardar proyecto (.tpproj) — Ctrl+S",
-        "Save project (.tpproj) — Ctrl+S",
+        "Guardar proyecto (.tpproj o .tps) — Ctrl+S",
+        "Save project (.tpproj or .tps) — Ctrl+S",
     ),
     (
         "Restablecer la configuración por defecto",

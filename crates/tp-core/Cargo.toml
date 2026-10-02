@@ -31,6 +31,8 @@ regex.workspace = true
 texture2ddecoder = "0.1.2"
 # Entrada .psd (Adobe Photoshop, Apache-2.0) y .svg (render con resvg, que
 # reexporta usvg/tiny-skia; Apache-2.0 OR MIT).
+# Proyectos `.tps` del original: XML de QSettings de Qt.
+roxmltree.workspace = true
 psd = "0.3"
 resvg = "0.48"
 

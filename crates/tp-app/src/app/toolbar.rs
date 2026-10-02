@@ -17,14 +17,14 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             // --- Proyecto ---
             if ui
                 .button(t!("📂 Abrir"))
-                .on_hover_text(t!("Abrir proyecto (.tpproj) — Ctrl+O"))
+                .on_hover_text(t!("Abrir proyecto (.tpproj o .tps) — Ctrl+O"))
                 .clicked()
             {
                 app.load_project();
             }
             if ui
                 .button(t!("💾 Guardar"))
-                .on_hover_text(t!("Guardar proyecto (.tpproj) — Ctrl+S"))
+                .on_hover_text(t!("Guardar proyecto (.tpproj o .tps) — Ctrl+S"))
                 .clicked()
             {
                 app.save_project();

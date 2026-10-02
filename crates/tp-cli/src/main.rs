@@ -302,7 +302,7 @@ fn help_text() -> String {
         "TexturePacker-RS {}\n\
          \n\
          USOS:\n\
-         \x20 tp-cli pack <proyecto.tpproj>\n\
+         \x20 tp-cli pack <proyecto.tpproj|proyecto.tps>\n\
          \x20 tp-cli pack --input DIR --output DIR [opciones]\n\
          \x20 tp-cli pack [opciones] <carpeta|imagen>…   (como el original: los sprites\n\
          \x20                       pueden ir en posiciónles, mezclados con las opciones)\n\
@@ -346,8 +346,8 @@ fn help_text() -> String {
          \x20 --texture-path RUTA   Prefijo de la textura en los metadatos (alias: --texturepath)\n\
          \x20 --print-json          Imprimir los metadatos JSON en stdout\n\
          \x20 --force-publish       Reescribir la salida aunque los bytes no hayan cambiado\n\
-         \x20 --save FICHERO        Guardar la configuración como .tpproj y terminar sin\n\
-         \x20                        empaquetar (avisa si la extensión no es .tpproj)\n\
+         \x20 --save FICHERO        Guardar la configuración como .tpproj (o .tps, el XML\n\
+         \x20                        del original) y terminar sin empaquetar\n\
          \n\
          ATLAS:\n\
          \x20 --max-size N          Tamaño máximo del atlas (512..8192, potencia de 2)\n\
@@ -665,12 +665,10 @@ fn apply_template_format(cfg: &mut ProjectConfig, value: &str) -> Result<(), Str
 
 /// Qué es un argumento posicional de la línea de comandos.
 enum Positional {
-    /// Un `.tpproj`.
+    /// Un `.tpproj` (TOML) o un `.tps` del original (XML).
     Project,
     /// Una carpeta o imagen con sprites.
     Input,
-    /// Algo que no podemos leer.
-    Unsupported,
 }
 
 fn classify_positional(path: &Path) -> Positional {
@@ -679,8 +677,7 @@ fn classify_positional(path: &Path) -> Positional {
         .and_then(|e| e.to_str())
         .map(|e| e.to_ascii_lowercase());
     match ext.as_deref() {
-        Some("tpproj") | Some("toml") => Positional::Project,
-        Some("tps") => Positional::Unsupported,
+        Some("tpproj") | Some("toml") | Some("tps") => Positional::Project,
         _ => Positional::Input,
     }
 }
@@ -1125,16 +1122,42 @@ fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
 /// extensión distinta de `.tpproj` se avisa pero no se rechaza: se guarda
 /// el archivo que se le pida.
 fn save_project(cfg: &ProjectConfig, path: &Path) -> Result<String, String> {
-    let text = cfg
-        .to_toml()
-        .map_err(|e| format!("No se pudo serializar el proyecto: {e}"))?;
+    let is_tps = path.extension().and_then(|e| e.to_str()) == Some("tps");
+    // El formato lo decide la extensión: `.tps` escribe el XML del original
+    // (el subconjunto que aquí se entiende), cualquier otra cosa TOML.
+    let text = if is_tps {
+        tp_core::tps::write_tps(cfg)
+    } else {
+        cfg.to_toml()
+            .map_err(|e| format!("No se pudo serializar el proyecto: {e}"))?
+    };
     std::fs::write(path, text)
         .map_err(|e| format!("No se pudo escribir {}: {e}", path.display()))?;
     let mut msg = format!("✔ Proyecto guardado en {}", path.display());
-    if path.extension().and_then(|e| e.to_str()) != Some("tpproj") {
+    if !is_tps && path.extension().and_then(|e| e.to_str()) != Some("tpproj") {
         msg.push_str(" (aviso: la extensión no es .tpproj)");
     }
     Ok(msg)
+}
+
+/// Carga el positional de proyecto: `.tpproj`/`.toml` es TOML propio y
+/// `.tps` es el XML del original (con sus avisos de ajustes no soportados).
+fn load_project_arg(path: &Path, quiet: bool) -> Result<ProjectConfig, String> {
+    let is_tps = path.extension().and_then(|e| e.to_str()) == Some("tps");
+    if is_tps {
+        let project = tp_core::tps::load_tps(path)
+            .map_err(|e| format!("Proyecto inválido {}: {e}", path.display()))?;
+        if !quiet {
+            for warning in &project.warnings {
+                eprintln!("aviso: {warning}");
+            }
+        }
+        return Ok(project.config);
+    }
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
+    ProjectConfig::from_toml(&text)
+        .map_err(|e| format!("Proyecto inválido {}: {e}", path.display()))
 }
 
 /// `--convert-texture FICHERO`: convierte una sola imagen al formato
@@ -1233,9 +1256,6 @@ fn cmd_pack(args: &[String]) {
                 }
                 project = Some(PathBuf::from(raw));
             }
-            Positional::Unsupported => fail(format!(
-                "{raw}: los proyectos del original (.tps) no son legibles; usa un .tpproj"
-            )),
             Positional::Input => {
                 if !Path::new(raw).exists() {
                     fail(format!("no existe: {raw}"));
@@ -1249,10 +1269,7 @@ fn cmd_pack(args: &[String]) {
     }
 
     if let Some(p) = &project {
-        let text = std::fs::read_to_string(p)
-            .unwrap_or_else(|e| fail(format!("No se pudo leer {}: {e}", p.display())));
-        cfg = ProjectConfig::from_toml(&text)
-            .unwrap_or_else(|e| fail(format!("Proyecto inválido {}: {e}", p.display())));
+        cfg = load_project_arg(p, quiet).unwrap_or_else(|e| fail(e));
     }
     if let Some(v) = val("input") {
         cfg.input_directory = PathBuf::from(v);
@@ -1571,10 +1588,10 @@ fn cmd_pack(args: &[String]) {
     }
 
     if cfg.input_directory.as_os_str().is_empty() {
-        fail("Falta --input DIR (o pasa los sprites en posiciónles o un .tpproj)".into());
+        fail("Falta --input DIR (o pasa los sprites en posiciónles o un .tpproj/.tps)".into());
     }
     if cfg.output_directory.as_os_str().is_empty() {
-        fail("Falta --output DIR, --sheet/--data (o un .tpproj)".into());
+        fail("Falta --output DIR, --sheet/--data (o un .tpproj/.tps)".into());
     }
 
     if has("verbose") && !quiet {
@@ -2479,6 +2496,25 @@ mod tests {
     }
 
     #[test]
+    fn un_tps_del_original_se_carga_como_proyecto() {
+        let dir = std::env::temp_dir().join(format!("tpcli_tps_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp");
+        let path = dir.join("proj.tps");
+        let cfg = ProjectConfig {
+            input_directory: PathBuf::from("sprites"),
+            ..ProjectConfig::default()
+        };
+        tp_core::tps::save_tps(&cfg, &path).expect("escribir");
+        let loaded = load_project_arg(&path, true).expect("cargar");
+        // Las rutas relativas del .tps se resuelven contra su carpeta.
+        assert_eq!(loaded.input_directory, dir.join("sprites"));
+        // Y se puede volver a escribir en el mismo formato.
+        let saved = save_project(&loaded, &dir.join("guardado.tps")).expect("guardar");
+        assert!(saved.contains("guardado.tps"), "mensaje: {saved}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn positionals_are_split_into_project_inputs_and_errors() {
         assert!(matches!(
             classify_positional(Path::new("game.tpproj")),
@@ -2490,7 +2526,7 @@ mod tests {
         ));
         assert!(matches!(
             classify_positional(Path::new("game.tps")),
-            Positional::Unsupported
+            Positional::Project
         ));
         assert!(matches!(
             classify_positional(Path::new("sprites")),

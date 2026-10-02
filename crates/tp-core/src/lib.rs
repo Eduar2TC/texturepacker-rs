@@ -37,6 +37,7 @@ pub mod pvrtc;
 pub mod reader;
 pub mod split;
 pub mod templates;
+pub mod tps;
 pub mod types;
 
 pub use config::{

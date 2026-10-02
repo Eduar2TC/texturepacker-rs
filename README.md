@@ -46,6 +46,23 @@ comprimidos, hay **instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS,
 `.msi` con WiX en Windows (instala tp-app y tp-cli, añade tp-cli al PATH) y un
 zip de Linux con icono y lanzador `.desktop`.
 
+### Novedades (en desarrollo)
+
+- **Proyectos del original (`.tps`) legibles y escribibles**: `tp-core::tps`
+  traduce el XML de QSettings que guarda TexturePacker — `tp-cli pack
+  proyecto.tps`, abrir con `Ctrl+O` y guardar con `Ctrl+S`, porque el formato
+  lo decide la extensión — agrupa los `<struct>` que comparten varios
+  sprites, resuelve las rutas relativas contra la carpeta del `.tps` y avisa
+  de los ajustes sin equivalente de una sola vez.
+- **«Publicar» con menú y forzado**: el botón publica y su menú ☰ añade
+  «Publicar» y «Forzar publicación»; si nada ha cambiado desde la última
+  salida, la publicación se omite con un aviso en el Log, como en el original.
+- **Fondo de color libre en la vista de animación**: además de claro, oscuro
+  y tablero de ajedrez, se puede elegir cualquier color («Personalizado»).
+- **Editor de pivots visual**: cruces rojas arrastrables sobre cada sprite en
+  la vista previa y en su panel, con los valores absolutos en píxeles (junto
+  al tamaño de la imagen) y las nueve posiciones predefinidas.
+
 ### Novedades v0.5.0
 
 - **Interfaz en español o inglés, con tema claro, oscuro o el del sistema**:
@@ -139,7 +156,7 @@ Requiere Rust ≥ 1.93 y un compilador C/C++ solo si se habilita ASTC.
 cargo run -p tp-app
 
 # Abre un proyecto directamente
-cargo run -p tp-app -- ruta/al/proyecto.tpproj
+cargo run -p tp-app -- ruta/al/proyecto.tpproj   # también acepta proyecto.tps
 
 # Autotest de la app: abre un proyecto de ejemplo y verifica la vista previa
 # sin interacción humana (imprime SMOKE PASS y devuelve 0 si todo va bien)
@@ -184,7 +201,7 @@ La ventana organiza el flujo de trabajo en cuatro zonas:
 3. Pulsa **«Publicar»**: la vista previa muestra el atlas con marcos, pivots, bordes 9-patch y zoom automático,
    y la pestaña *Log* los tiempos de cada etapa.
 4. Edita pivots y bordes 9-patch con **⚙** (se guardan en `pivots.json` y `borders.json` junto a
-   los sprites) y guarda la configuración con **Guardar** (`.tpproj`) para reutilizarla.
+   los sprites) y guarda la configuración con **Guardar** (`.tpproj` o `.tps`) para reutilizarla.
 
 En la vista previa: **arrastra un sprite** para moverlo (en el algoritmo *Manual* fija su
 posición; en los demás muestra una vista fantasma que sugiere el modo Manual), **arrastra
@@ -195,8 +212,9 @@ deseleccionar y **Supr** quita los seleccionados. Atajos: `Ctrl+O` abrir, `Ctrl+
 ## Uso rápido (CLI)
 
 ```bash
-# Proyecto guardado
+# Proyecto guardado (el nuestro en TOML o el del original en XML)
 tp-cli pack proyecto.tpproj
+tp-cli pack proyecto.tps
 
 # Todo por parámetros
 tp-cli pack --input sprites/ --output build/ \
@@ -299,9 +317,15 @@ aceptarse por diferencia de unidades y de cifrado.
 | Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
 | Cifrado simétrico de textura (AES-GCM)         | ✅     | AES-256-GCM; archivos `*.tpenc`, `tp-cli decrypt` |
 | Motor de plantillas (Mustache)                 | ✅     | handlebars; **63 presets de formato de datos en 15 familias** (JSON lista/hash, Phaser, PixiJS, XML, Starling, Plist Cocos2D/UIKit, atlas libGDX/Spine, CSS, C++ header, TSV, texto, solo hoja) + plantillas personalizadas |
+| Proyectos del original (`.tps`)                | ✅     | XML de QSettings leído y escrito por `tp-core::tps` (`tp-cli pack proyecto.tps`, `Ctrl+O`/`Ctrl+S`); los ajustes sin equivalente se agrupan en un único aviso |
 | Auto-detect animations                         | ✅     | `walk_001..walk_003` se agrupan como animación `walk` en `meta.animations` (JSON) y en la sección `animations` del Plist; desactivable (`enable_auto_detect_animations`, `--no-auto-animations`) |
 
-## Formato de proyecto (`.tpproj`)
+## Formato de proyecto (`.tpproj` y `.tps`)
+
+`.tpproj` es TOML propio; `.tps` es el XML de QSettings que guarda el
+original: de él se leen los ajustes equivalentes (los que no lo tienen se
+agrupan en un único aviso) y se reescribe el subconjunto que aquí se
+entiende. El formato que se escribe lo decide la extensión del fichero.
 
 TOML con los campos de `ProjectConfig` (ver `crates/tp-core/src/config.rs`):
 
