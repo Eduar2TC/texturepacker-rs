@@ -2,6 +2,7 @@
 //! PNG frames on a regular grid and add them to the project.
 
 use super::{App, LogKind};
+use crate::i18n::t;
 use eframe::egui;
 use std::path::PathBuf;
 use tp_core::split::{grid_cells, GridMode, SplitSpec};
@@ -71,7 +72,7 @@ pub(super) fn split_window(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_split;
-    egui::Window::new("Dividir hoja")
+    egui::Window::new(t!("Dividir hoja"))
         .id(egui::Id::new("split_sheet"))
         .open(&mut open)
         .default_size([430.0, 400.0])
@@ -90,8 +91,8 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             .as_ref()
             .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "Ninguna".to_string());
-        ui.label(format!("Hoja: {name}"));
-        if ui.button("Elegir hoja…").clicked() {
+        ui.label(t!("Hoja: {}", name));
+        if ui.button(t!("Elegir hoja…")).clicked() {
             pick_sheet(app, ctx);
         }
     });
@@ -99,9 +100,9 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let Some(spec) = app.split.spec() else {
         ui.separator();
         ui.label(
-            egui::RichText::new(
-                "Elige una hoja (sprite sheet) para dividirla en sprites individuales.",
-            )
+            egui::RichText::new(t!(
+                "Elige una hoja (sprite sheet) para dividirla en sprites individuales."
+            ))
             .weak(),
         );
         // egui sizes windows by content; keep the panel tall enough while empty.
@@ -118,7 +119,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "Sin hoja seleccionada",
+            t!("Sin hoja seleccionada"),
             egui::FontId::proportional(13.0),
             egui::Color32::from_gray(120),
         );
@@ -127,55 +128,55 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         ui.label(format!("{} × {} px", app.split.img_w, app.split.img_h));
         ui.separator();
-        ui.label(format!(
+        ui.label(t!(
             "{} celda(s) de {} px",
             grid_cells(app.split.img_w, app.split.img_h, &spec).len(),
             if app.split.use_grid {
                 "variable"
             } else {
-                "fijo"
+                t!("fijo")
             }
         ));
     });
 
     // --- grid settings --------------------------------------------------
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut app.split.use_grid, true, "Columnas × filas");
-        ui.selectable_value(&mut app.split.use_grid, false, "Tamaño fijo");
+        ui.selectable_value(&mut app.split.use_grid, true, t!("Columnas × filas"));
+        ui.selectable_value(&mut app.split.use_grid, false, t!("Tamaño fijo"));
     });
     ui.horizontal(|ui| {
         if app.split.use_grid {
             ui.add(
                 egui::DragValue::new(&mut app.split.cols)
                     .range(1..=128)
-                    .prefix("cols "),
+                    .prefix(t!("cols ")),
             );
             ui.add(
                 egui::DragValue::new(&mut app.split.rows)
                     .range(1..=128)
-                    .prefix("filas "),
+                    .prefix(t!("filas ")),
             );
         } else {
             ui.add(
                 egui::DragValue::new(&mut app.split.cell_w)
                     .range(1..=4096)
-                    .prefix("ancho "),
+                    .prefix(t!("ancho ")),
             );
             ui.add(
                 egui::DragValue::new(&mut app.split.cell_h)
                     .range(1..=4096)
-                    .prefix("alto "),
+                    .prefix(t!("alto ")),
             );
         }
         ui.add(
             egui::DragValue::new(&mut app.split.margin)
                 .range(0..=512)
-                .prefix("margen "),
+                .prefix(t!("margen ")),
         );
         ui.add(
             egui::DragValue::new(&mut app.split.spacing)
                 .range(0..=128)
-                .prefix("espaciado "),
+                .prefix(t!("espaciado ")),
         );
     });
 
@@ -225,14 +226,14 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     // --- options & action ----------------------------------------------
     ui.checkbox(
         &mut app.split.exclude_source,
-        "Excluir la hoja original del set de sprites",
+        t!("Excluir la hoja original del set de sprites"),
     );
-    ui.checkbox(&mut app.split.auto_publish, "Publicar al terminar");
+    ui.checkbox(&mut app.split.auto_publish, t!("Publicar al terminar"));
     ui.horizontal(|ui| {
         let can_split = !cells.is_empty() && app.split.source.is_some();
         if ui
-            .add_enabled(can_split, egui::Button::new("Dividir"))
-            .on_hover_text("Escribe cada celda como PNG y la añade al proyecto")
+            .add_enabled(can_split, egui::Button::new(t!("Dividir")))
+            .on_hover_text(t!("Escribe cada celda como PNG y la añade al proyecto"))
             .clicked()
         {
             run_split(app, &spec, cells.len());
@@ -246,7 +247,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
 fn pick_sheet(app: &mut App, ctx: &egui::Context) {
     let picked = rfd::FileDialog::new()
         .add_filter(
-            "Imágenes",
+            t!("Imágenes"),
             &[
                 "png", "webp", "jpg", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "tif", "dds",
                 "qoi", "pbm", "pgm", "ppm", "pnm", "xbm", "xpm", "astc", "ktx", "ktx2", "basis",
@@ -270,9 +271,15 @@ fn pick_sheet(app: &mut App, ctx: &egui::Context) {
             app.split.img_w = w;
             app.split.img_h = h;
             app.split.source = Some(path.clone());
-            app.log(LogKind::Info, format!("Hoja cargada: {}", path.display()));
+            app.log(LogKind::Info, t!("Hoja cargada: {}", path.display()));
         }
-        Err(e) => app.log(LogKind::Error, format!("No se pudo cargar la hoja: {e}")),
+        Err(e) => app.log(
+            LogKind::Error,
+            t!(
+                "No se pudo cargar la hoja: {}",
+                crate::i18n::tr(&e.to_string())
+            ),
+        ),
     }
 }
 
@@ -283,7 +290,7 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
             debug_assert_eq!(files.len(), expected);
             app.log(
                 LogKind::Info,
-                format!(
+                t!(
                     "{} sprite(s) escritos en {}.",
                     files.len(),
                     out_dir.display()
@@ -293,24 +300,27 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
                 app.exclude(&spec.source);
                 app.log(
                     LogKind::Info,
-                    format!("Hoja original excluida: {}", spec.source.display()),
+                    t!("Hoja original excluida: {}", spec.source.display()),
                 );
             }
             if app.add_input(out_dir.clone()) {
-                app.log(
-                    LogKind::Info,
-                    format!("Carpeta añadida: {}", out_dir.display()),
-                );
+                app.log(LogKind::Info, t!("Carpeta añadida: {}", out_dir.display()));
             } else {
                 app.log(
                     LogKind::Warning,
-                    "La carpeta de sprites ya estaba añadida.".into(),
+                    t!("La carpeta de sprites ya estaba añadida.").into(),
                 );
             }
             if app.split.auto_publish && app.running.is_none() {
                 app.start_pack();
             }
         }
-        Err(e) => app.log(LogKind::Error, format!("No se pudo dividir la hoja: {e}")),
+        Err(e) => app.log(
+            LogKind::Error,
+            t!(
+                "No se pudo dividir la hoja: {}",
+                crate::i18n::tr(&e.to_string())
+            ),
+        ),
     }
 }

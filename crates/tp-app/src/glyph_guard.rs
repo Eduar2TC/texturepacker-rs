@@ -89,6 +89,10 @@ pub(crate) fn literals(src: &str) -> Vec<(usize, String)> {
 }
 
 /// Descodifica los escapes que usamos en el código (`\u{2192}`, `\n`, `\"`…).
+///
+/// La barra al final de línea hace continuación, como en Rust: se come el salto
+/// **y** la sangría de la línea siguiente (`"hola \` + `     mundo"` es
+/// `hola mundo`), que es justo lo que compila el compilador.
 pub(crate) fn unescape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut it = s.chars().peekable();
@@ -98,6 +102,21 @@ pub(crate) fn unescape(s: &str) -> String {
             continue;
         }
         match it.next() {
+            Some('\n') => {
+                while matches!(it.peek(), Some(' ') | Some('\t')) {
+                    it.next();
+                }
+            }
+            Some('\r') => {
+                if it.peek() == Some(&'\n') {
+                    it.next();
+                    while matches!(it.peek(), Some(' ') | Some('\t')) {
+                        it.next();
+                    }
+                } else {
+                    out.push('\r');
+                }
+            }
             Some('u') => {
                 if it.peek() == Some(&'{') {
                     it.next();

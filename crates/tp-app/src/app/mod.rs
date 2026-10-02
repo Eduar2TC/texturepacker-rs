@@ -26,21 +26,77 @@ const PREVIEW_DEBOUNCE_MS: u64 = 120;
 const SNAPSHOT_POLL_MS: u64 = 150;
 /// Cuánto dura el resaltado de «recién añadido» (árbol y lienzo).
 const JUST_ADDED_HL: std::time::Duration = std::time::Duration::from_secs(8);
-/// Color compartido del resaltado «recién añadido».
-pub(crate) const JUST_ADDED_COLOR: egui::Color32 = egui::Color32::from_rgb(130, 220, 160);
-
 /// Umbral (px) a partir del cual el panel inferior se considera abierto.
 const BOTTOM_OPEN_HEIGHT: f32 = 180.0;
 
-/// Estilo visual global: tema oscuro con esquinas suaves, acento cian y
-/// sliders rellenos. Llamado una vez por frame; solo construye el estilo
-/// nuevo la primera vez.
+/// Verde del resaltado «recién añadido», legible sobre los dos temas.
+pub(crate) fn just_added_color(v: &egui::Visuals) -> egui::Color32 {
+    if v.dark_mode {
+        egui::Color32::from_rgb(130, 220, 160)
+    } else {
+        egui::Color32::from_rgb(0, 132, 74)
+    }
+}
+
+/// Ámbar de aviso (carpetas inteligentes, «empaqueta sola», avisos).
+pub(crate) fn amber_color(v: &egui::Visuals) -> egui::Color32 {
+    if v.dark_mode {
+        egui::Color32::from_rgb(230, 190, 60)
+    } else {
+        egui::Color32::from_rgb(150, 105, 0)
+    }
+}
+
+/// Azul informativo (carpetas anidadas, «publicando…», «actualizando…»).
+pub(crate) fn info_color(v: &egui::Visuals) -> egui::Color32 {
+    if v.dark_mode {
+        egui::Color32::from_rgb(120, 170, 255)
+    } else {
+        egui::Color32::from_rgb(20, 100, 205)
+    }
+}
+
+/// Gris tenue de los textos de las zonas de arrastre (fondo de panel).
+pub(crate) fn muted_color(v: &egui::Visuals) -> egui::Color32 {
+    if v.dark_mode {
+        egui::Color32::from_gray(150)
+    } else {
+        egui::Color32::from_gray(100)
+    }
+}
+
+/// El mismo gris, pero en su variante de «pasado por encima».
+pub(crate) fn muted_hover_color(v: &egui::Visuals) -> egui::Color32 {
+    if v.dark_mode {
+        egui::Color32::from_rgb(180, 225, 255)
+    } else {
+        egui::Color32::from_rgb(20, 100, 205)
+    }
+}
+
+/// Tinte de fondo de las zonas de arrastre (blanco en oscuro, negro en claro).
+pub(crate) fn drop_tint(v: &egui::Visuals, hover: bool) -> egui::Color32 {
+    if hover {
+        egui::Color32::from_rgba_unmultiplied(120, 200, 255, 60)
+    } else if v.dark_mode {
+        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18)
+    } else {
+        egui::Color32::from_rgba_unmultiplied(0, 0, 0, 14)
+    }
+}
+
+/// Estilo visual global: esquinas suaves, selección y enlaces teñidos con el
+/// acento, sliders rellenos. Se aplica a los estilos oscuro y claro a la vez
+/// y sólo la primera vez (los valores no dependen del tema elegido).
 fn apply_theme(ctx: &egui::Context, theme: crate::ui_prefs::Theme) {
     if ctx.memory(|m| m.data.get_temp::<bool>(egui::Id::new("tp_theme"))) == Some(true) {
         return;
     }
     theme.apply(ctx);
-    ctx.style_mut(|style| {
+    // Se tocan los dos estilos (oscuro y claro) a la vez: egui elige uno de
+    // ellos según la preferencia, así que un cambio de tema en caliente no
+    // pierde estos ajustes.
+    ctx.all_styles_mut(|style| {
         let v = &mut style.visuals;
         v.window_corner_radius = 8.into();
         v.menu_corner_radius = 6.into();
@@ -49,15 +105,24 @@ fn apply_theme(ctx: &egui::Context, theme: crate::ui_prefs::Theme) {
         v.widgets.hovered.corner_radius = 5.into();
         v.widgets.active.corner_radius = 5.into();
         v.widgets.open.corner_radius = 5.into();
-        v.selection.bg_fill = egui::Color32::from_rgb(38, 98, 115);
+        v.selection.bg_fill = if v.dark_mode {
+            egui::Color32::from_rgb(38, 98, 115)
+        } else {
+            egui::Color32::from_rgb(166, 206, 227)
+        };
         v.selection.stroke.width = 1.0;
-        v.hyperlink_color = egui::Color32::from_rgb(97, 175, 239);
+        v.hyperlink_color = if v.dark_mode {
+            egui::Color32::from_rgb(97, 175, 239)
+        } else {
+            egui::Color32::from_rgb(0, 94, 190)
+        };
         v.slider_trailing_fill = true;
         v.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.4 };
         v.collapsing_header_frame = true;
     });
     ctx.memory_mut(|m| m.data.insert_temp(egui::Id::new("tp_theme"), true));
 }
+use crate::i18n::t;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, TryRecvError};
@@ -368,7 +433,7 @@ impl App {
         apply_theme(&egui_ctx, app.prefs.theme());
         app.log(
             LogKind::Info,
-            "Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».".into(),
+            t!("Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».").into(),
         );
         app.sync_paths();
         app.sync_variants();
@@ -419,7 +484,7 @@ impl App {
         if let Err(err) = self.prefs.save_to(&self.prefs_path) {
             self.log(
                 LogKind::Warning,
-                format!("No se pudieron guardar los ajustes de interfaz: {err}"),
+                t!("No se pudieron guardar los ajustes de interfaz: {}", err),
             );
         }
     }
@@ -506,6 +571,9 @@ impl App {
     }
 
     fn log(&mut self, kind: LogKind, text: String) {
+        // Punto de paso único de lo que llega del motor: los mensajes de
+        // tp-core son españoles y aquí se pasan al idioma de la interfaz.
+        let text = crate::i18n::tr(&text);
         // Espejo opcional del Log a stderr (TP_LOG_STDERR=1): permite seguir
         // la sesión desde un terminal o en CI sin depender de la GUI.
         static MIRROR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
@@ -727,7 +795,7 @@ impl App {
                         self.apply_output(ctx, out, false);
                         self.log(
                             LogKind::Info,
-                            format!("Vista previa actualizada en {} ms.", msg.elapsed_ms),
+                            t!("Vista previa actualizada en {} ms.", msg.elapsed_ms),
                         );
                         // El resultado acabamos de aplicarlo: el indicador de
                         // frescura solo sigue en «Desactualizado» si el disco
@@ -740,7 +808,10 @@ impl App {
                         }
                     }
                     Err(e) => {
-                        self.log(LogKind::Error, format!("Vista previa: {e}"));
+                        self.log(
+                            LogKind::Error,
+                            t!("Vista previa: {}", crate::i18n::tr(&e.to_string())),
+                        );
                         // El atlas en pantalla ya no refleja el workspace.
                         self.preview_stale = true;
                         // Un único reintento: con autowatch el fichero pudo
@@ -760,7 +831,7 @@ impl App {
                 self.pending = None;
                 self.log(
                     LogKind::Error,
-                    "El hilo de vista previa terminó inesperadamente.".into(),
+                    t!("El hilo de vista previa terminó inesperadamente.").into(),
                 );
             }
         }
@@ -952,7 +1023,7 @@ impl App {
         if self.result.is_none() {
             self.log(
                 LogKind::Warning,
-                "Espera a que la vista se calcule antes de colocar sprites.".into(),
+                t!("Espera a que la vista se calcule antes de colocar sprites.").into(),
             );
             return 0;
         }
@@ -962,7 +1033,7 @@ impl App {
             self.config.algorithm = tp_core::config::PackingAlgorithm::Manual;
             self.log(
                 LogKind::Info,
-                "Algoritmo cambiado a Manual: los sprites soltados fijan su posición.".into(),
+                t!("Algoritmo cambiado a Manual: los sprites soltados fijan su posición.").into(),
             );
         }
 
@@ -995,7 +1066,12 @@ impl App {
                 .cloned();
             self.log(
                 LogKind::Info,
-                format!("{n} sprite(s) colocados en ({px}, {py}): se reempaqueta al instante."),
+                t!(
+                    "{} sprite(s) colocados en ({}, {}): se reempaqueta al instante.",
+                    n,
+                    px,
+                    py
+                ),
             );
             self.pending_force = true;
             self.after_workspace_change();
@@ -1146,7 +1222,7 @@ impl App {
         {
             self.log(
                 LogKind::Error,
-                "Selecciona un directorio de entrada o añade sprites.".into(),
+                t!("Selecciona un directorio de entrada o añade sprites.").into(),
             );
             return;
         }
@@ -1173,11 +1249,11 @@ impl App {
         self.packed_snapshot = Some(snapshot);
         self.change_seq += 1;
         let origin = if self.config.input_directory.as_os_str().is_empty() {
-            "sprites añadidos".to_string()
+            t!("sprites añadidos").to_string()
         } else {
             self.config.input_directory.display().to_string()
         };
-        self.log(LogKind::Info, format!("Publicando desde {origin} ..."));
+        self.log(LogKind::Info, t!("Publicando desde {} ...", origin));
     }
 
     /// Directory that receives the 9-patch/pivot sidecar files (the smart
@@ -1225,24 +1301,30 @@ impl App {
                 let pages = out.pages.len();
                 self.log(
                     LogKind::Info,
-                    format!(
-                        "Publicación completa: {total} sprites ({aliases} aliases), {pages} página(s)."
+                    t!(
+                        "Publicación completa: {} sprites ({} aliases), {} página(s).",
+                        total,
+                        aliases,
+                        pages
                     ),
                 );
                 for w in &out.result.warnings {
                     self.log(LogKind::Warning, w.clone());
                 }
                 for (stage, ms) in &out.result.stage_times_ms {
-                    self.log(LogKind::Info, format!("  [{stage}] {ms} ms"));
+                    self.log(LogKind::Info, t!("  [{}] {} ms", stage, ms));
                 }
                 for f in &out.result.output_files {
-                    self.log(LogKind::Info, format!("  ➡ {f}"));
+                    self.log(LogKind::Info, t!("  ➡ {}", f));
                 }
                 self.apply_output(ctx, out, true);
                 self.fit_zoom();
             }
             Err(e) => {
-                self.log(LogKind::Error, format!("Empaquetado fallido: {e}"));
+                self.log(
+                    LogKind::Error,
+                    t!("Empaquetado fallido: {}", crate::i18n::tr(&e.to_string())),
+                );
             }
         }
     }
@@ -1373,7 +1455,7 @@ impl App {
             self.selected_paths.insert(p);
             self.sync_selected_sprite();
         }
-        self.log(LogKind::Info, format!("{removed} sprite(s) quitado(s)."));
+        self.log(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
         self.change_seq += 1;
         self.request_preview(true);
     }
@@ -1420,7 +1502,7 @@ impl App {
         if tp_core::ingest::normalize_path(&self.config.input_directory) == norm {
             self.log(
                 LogKind::Warning,
-                "Ese directorio es el de entrada principal; quítalo en Ajustes > Datos.".into(),
+                t!("Ese directorio es el de entrada principal; quítalo en Ajustes > Datos.").into(),
             );
             return;
         }
@@ -1436,7 +1518,7 @@ impl App {
         self.selected_paths.retain(|p| !p.starts_with(dir));
         self.log(
             LogKind::Info,
-            format!("Carpeta inteligente quitada: {}", dir.display()),
+            t!("Carpeta inteligente quitada: {}", dir.display()),
         );
         self.start_watcher();
         self.change_seq += 1;
@@ -1462,7 +1544,7 @@ impl App {
             return;
         }
         self.config.excluded_inputs.clear();
-        self.log(LogKind::Info, format!("{count} sprite(s) restaurado(s)."));
+        self.log(LogKind::Info, t!("{} sprite(s) restaurado(s).", count));
         self.change_seq += 1;
         self.request_preview(true);
     }
@@ -1528,14 +1610,14 @@ impl App {
         if indices.is_empty() {
             self.log(
                 LogKind::Warning,
-                "Selecciona sprites antes de detectar bordes.".into(),
+                t!("Selecciona sprites antes de detectar bordes.").into(),
             );
             return;
         }
         let Some(mut out) = self.result.take() else {
             self.log(
                 LogKind::Warning,
-                "Publica el atlas antes de detectar bordes.".into(),
+                t!("Publica el atlas antes de detectar bordes.").into(),
             );
             return;
         };
@@ -1559,9 +1641,10 @@ impl App {
                 Err(e) => {
                     self.log(
                         LogKind::Warning,
-                        format!(
-                            "No se pudo leer {} para detectar bordes: {e}",
-                            path.display()
+                        t!(
+                            "No se pudo leer {} para detectar bordes: {}",
+                            path.display(),
+                            crate::i18n::tr(&e.to_string())
                         ),
                     );
                     continue;
@@ -1581,21 +1664,25 @@ impl App {
                 Some(b) => {
                     detected += 1;
                     self.config.border_overrides.insert(id.clone(), b);
-                    self.log(LogKind::Info, format!("{id}: bordes detectados {b:?}"));
+                    self.log(
+                        LogKind::Info,
+                        t!("{}: bordes detectados {}", id, format!("{b:?}")),
+                    );
                 }
                 None => {
                     self.config.border_overrides.remove(&id);
                     self.log(
                         LogKind::Warning,
-                        format!("{id}: sin barras sólidas, se quita el 9-patch"),
+                        t!("{}: sin barras sólidas, se quita el 9-patch", id),
                     );
                 }
             }
         }
         self.log(
             LogKind::Info,
-            format!(
-                "Detección de bordes 9-patch: {detected} de {} sprite(s) con barras sólidas",
+            t!(
+                "Detección de bordes 9-patch: {} de {} sprite(s) con barras sólidas",
+                detected,
                 indices.len()
             ),
         );
@@ -1606,14 +1693,14 @@ impl App {
         let Some(dir) = self.sidecar_dir() else {
             self.log(
                 LogKind::Error,
-                "Añade sprites primero: los archivos se guardan junto a ellos.".into(),
+                t!("Añade sprites primero: los archivos se guardan junto a ellos.").into(),
             );
             return;
         };
         let Some(out) = &self.result else {
             self.log(
                 LogKind::Error,
-                "Publica primero el atlas antes de guardar pivots.".into(),
+                t!("Publica primero el atlas antes de guardar pivots.").into(),
             );
             return;
         };
@@ -1632,13 +1719,10 @@ impl App {
         let path = dir.join("pivots.json");
         match serde_json::to_string_pretty(&map) {
             Ok(text) => match std::fs::write(&path, text) {
-                Ok(_) => self.log(
-                    LogKind::Info,
-                    format!("Pivots guardados en {}", path.display()),
-                ),
-                Err(e) => self.log(LogKind::Error, format!("No se pudo guardar: {e}")),
+                Ok(_) => self.log(LogKind::Info, t!("Pivots guardados en {}", path.display())),
+                Err(e) => self.log(LogKind::Error, t!("No se pudo guardar: {}", e)),
             },
-            Err(e) => self.log(LogKind::Error, format!("No se pudo serializar: {e}")),
+            Err(e) => self.log(LogKind::Error, t!("No se pudo serializar: {}", e)),
         }
         // Bordes 9-patch a un archivo propio (solo sprites con bordes).
         self.write_borders_file(&dir, &borders);
@@ -1653,7 +1737,7 @@ impl App {
                     if !borders.is_empty() {
                         self.log(
                             LogKind::Info,
-                            format!(
+                            t!(
                                 "Bordes 9-patch guardados en {} ({} sprite(s))",
                                 bpath.display(),
                                 borders.len()
@@ -1661,14 +1745,11 @@ impl App {
                         );
                     }
                 }
-                Err(e) => self.log(
-                    LogKind::Error,
-                    format!("No se pudo guardar borders.json: {e}"),
-                ),
+                Err(e) => self.log(LogKind::Error, t!("No se pudo guardar borders.json: {}", e)),
             },
             Err(e) => self.log(
                 LogKind::Error,
-                format!("No se pudo serializar borders.json: {e}"),
+                t!("No se pudo serializar borders.json: {}", e),
             ),
         }
     }
@@ -1696,7 +1777,7 @@ impl App {
             if std::fs::write(&path, text).is_ok() {
                 self.log(
                     LogKind::Info,
-                    format!(
+                    t!(
                         "borders.json actualizado automáticamente ({} borde(s))",
                         borders.len()
                     ),
@@ -1709,7 +1790,7 @@ impl App {
         self.commit_paths();
         let path = self.project_path.clone().or_else(|| {
             rfd::FileDialog::new()
-                .add_filter("Proyecto", &["tpproj"])
+                .add_filter(t!("Proyecto"), &["tpproj"])
                 .save_file()
         });
         let Some(path) = path else { return };
@@ -1718,20 +1799,20 @@ impl App {
             Ok(text) => match std::fs::write(&path, text) {
                 Ok(_) => {
                     self.project_path = Some(path.clone());
-                    self.log(
-                        LogKind::Info,
-                        format!("Proyecto guardado en {}", path.display()),
-                    );
+                    self.log(LogKind::Info, t!("Proyecto guardado en {}", path.display()));
                 }
-                Err(e) => self.log(LogKind::Error, format!("No se pudo guardar: {e}")),
+                Err(e) => self.log(LogKind::Error, t!("No se pudo guardar: {}", e)),
             },
-            Err(e) => self.log(LogKind::Error, format!("Config inválida: {e}")),
+            Err(e) => self.log(
+                LogKind::Error,
+                t!("Config inválida: {}", crate::i18n::tr(&e.to_string())),
+            ),
         }
     }
 
     fn load_project(&mut self) {
         let Some(path) = rfd::FileDialog::new()
-            .add_filter("Proyecto", &["tpproj"])
+            .add_filter(t!("Proyecto"), &["tpproj"])
             .pick_file()
         else {
             return;
@@ -1753,14 +1834,14 @@ impl App {
                     self.tree_kb_focus = false;
                     self.start_watcher();
                     self.project_path = Some(path.clone());
-                    self.log(
-                        LogKind::Info,
-                        format!("Proyecto cargado: {}", path.display()),
-                    );
+                    self.log(LogKind::Info, t!("Proyecto cargado: {}", path.display()));
                 }
-                Err(e) => self.log(LogKind::Error, format!("Proyecto inválido: {e}")),
+                Err(e) => self.log(
+                    LogKind::Error,
+                    t!("Proyecto inválido: {}", crate::i18n::tr(&e.to_string())),
+                ),
             },
-            Err(e) => self.log(LogKind::Error, format!("No se pudo leer: {e}")),
+            Err(e) => self.log(LogKind::Error, t!("No se pudo leer: {}", e)),
         }
     }
 
@@ -1792,7 +1873,7 @@ impl eframe::App for App {
                     self.running = None;
                     self.log(
                         LogKind::Error,
-                        "El hilo de empaquetado terminó inesperadamente.".into(),
+                        t!("El hilo de empaquetado terminó inesperadamente.").into(),
                     );
                 }
             }
@@ -1827,18 +1908,18 @@ impl eframe::App for App {
                                 .map(|pi| pi.fill_ratio)
                                 .unwrap_or(0.0);
                             ui.label(
-                                egui::RichText::new(format!(
-                                    "Página {} · {}×{} px · relleno {:.0}%",
+                                egui::RichText::new(t!(
+                                    "Página {} · {}×{} px · relleno {}%",
                                     p.index + 1,
                                     p.width,
                                     p.height,
-                                    fill * 100.0
+                                    format!("{:.0}", fill * 100.0)
                                 ))
                                 .weak(),
                             );
                             if pages > 1 {
                                 ui.label(
-                                    egui::RichText::new(format!(
+                                    egui::RichText::new(t!(
                                         "· {}/{}",
                                         self.selected_page + 1,
                                         pages
@@ -1849,21 +1930,20 @@ impl eframe::App for App {
                         }
                         ui.separator();
                         ui.label(
-                            egui::RichText::new(format!(
+                            egui::RichText::new(t!(
                                 "{} sprites · {} aliases",
-                                out.result.total_sprites, out.result.alias_count
+                                out.result.total_sprites,
+                                out.result.alias_count
                             ))
                             .weak(),
                         );
                     } else {
-                        ui.label(
-                            egui::RichText::new("Sin atlas — añade sprites".to_string()).weak(),
-                        );
+                        ui.label(egui::RichText::new(t!("Sin atlas — añade sprites")).weak());
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.project_path.is_none() {
                             ui.label(
-                                egui::RichText::new("proyecto sin guardar — Ctrl+S")
+                                egui::RichText::new(t!("proyecto sin guardar — Ctrl+S"))
                                     .weak()
                                     .italics(),
                             );
@@ -1962,9 +2042,9 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
             egui::StrokeKind::Outside,
         );
         let text = if hovered.len() == 1 {
-            "Suelta para añadir al workspace".to_string()
+            t!("Suelta para añadir al workspace").to_string()
         } else {
-            format!("Suelta para añadir {} elementos", hovered.len())
+            t!("Suelta para añadir {} elementos", hovered.len())
         };
         painter.text(
             screen.center() + egui::vec2(0.0, -16.0),
@@ -1976,7 +2056,7 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
         painter.text(
             screen.center() + egui::vec2(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
-            "(sprites o carpetas; se empaquetan al instante)",
+            t!("(sprites o carpetas; se empaquetan al instante)"),
             egui::FontId::proportional(13.0),
             egui::Color32::from_rgba_unmultiplied(180, 210, 235, 220),
         );
@@ -1997,7 +2077,7 @@ fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
         }
     }
     if added > 0 {
-        app.log(LogKind::Info, format!("{added} sprite(s) añadido(s)."));
+        app.log(LogKind::Info, t!("{} sprite(s) añadido(s).", added));
         // Empaqueta ya, sin esperar al debounce: el lienzo arranca a
         // calcular en el mismo gesto y no en el siguiente round-trip.
         app.request_preview(false);

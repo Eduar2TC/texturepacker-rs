@@ -1,6 +1,7 @@
 //! Center preview panel (sprite sheet) plus the bottom zoom bar.
 
 use super::{App, PreviewState};
+use crate::i18n::t;
 use eframe::egui;
 use std::path::PathBuf;
 
@@ -49,21 +50,21 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
             PreviewState::Publishing => {
                 ui.spinner();
                 ui.label(
-                    egui::RichText::new("Publicando…")
-                        .color(egui::Color32::from_rgb(120, 170, 255)),
+                    egui::RichText::new(t!("Publicando…"))
+                        .color(super::info_color(ui.visuals())),
                 );
             }
             PreviewState::Updating => {
                 ui.spinner();
                 ui.label(
-                    egui::RichText::new("Actualizando…")
-                        .color(egui::Color32::from_rgb(120, 170, 255)),
+                    egui::RichText::new(t!("Actualizando…"))
+                        .color(super::info_color(ui.visuals())),
                 );
             }
             PreviewState::Stale => {
                 ui.label(
-                    egui::RichText::new("⚠ Desactualizado")
-                        .color(egui::Color32::from_rgb(230, 180, 60)),
+                    egui::RichText::new(t!("⚠ Desactualizado"))
+                        .color(super::amber_color(ui.visuals())),
                 );
             }
             PreviewState::Ok => {}
@@ -74,14 +75,14 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
             if ui.button("◀").clicked() && app.selected_page > 0 {
                 app.selected_page -= 1;
             }
-            ui.label(format!("Página {}/{}", app.selected_page + 1, pages));
+            ui.label(t!("Página {}/{}", app.selected_page + 1, pages));
             if ui.button("▶").clicked() && app.selected_page + 1 < pages {
                 app.selected_page += 1;
             }
             ui.separator();
         }
 
-        if ui.button("−").on_hover_text("Alejar").clicked() {
+        if ui.button("−").on_hover_text(t!("Alejar")).clicked() {
             zoom_step(app, -1);
         }
         ui.add(
@@ -89,27 +90,27 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                 .logarithmic(true)
                 .text("Zoom"),
         );
-        if ui.button("+").on_hover_text("Acercar").clicked() {
+        if ui.button("+").on_hover_text(t!("Acercar")).clicked() {
             zoom_step(app, 1);
         }
-        if ui.button("1:1").on_hover_text("Zoom al 100% (tamaño real)").clicked() {
+        if ui.button("1:1").on_hover_text(t!("Zoom al 100% (tamaño real)")).clicked() {
             app.zoom = 1.0;
         }
         if ui
-            .button("Ajustar")
-            .on_hover_text("Encuadrar el atlas completo en la vista")
+            .button(t!("Ajustar"))
+            .on_hover_text(t!("Encuadrar el atlas completo en la vista"))
             .clicked()
         {
             app.fit_zoom();
         }
 
         ui.separator();
-        ui.menu_button("Vista", |ui| {
-            ui.checkbox(&mut app.show_outlines, "Mostrar contornos")
-                .on_hover_text("Marcos y triangulación de los sprites");
+        ui.menu_button(t!("Vista"), |ui| {
+            ui.checkbox(&mut app.show_outlines, t!("Mostrar contornos"))
+                .on_hover_text(t!("Marcos y triangulación de los sprites"));
             ui.checkbox(&mut app.show_pivots, "Pivots");
-            ui.checkbox(&mut app.show_borders, "Bordes 9-patch")
-                .on_hover_text("Barras verdes de los bordes 9-patch de cada sprite");
+            ui.checkbox(&mut app.show_borders, t!("Bordes 9-patch"))
+                .on_hover_text(t!("Barras verdes de los bordes 9-patch de cada sprite"));
         });
 
         // Controles del algoritmo Manual, en un menú para no saturar la barra.
@@ -124,8 +125,8 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                 let mut grid_changed = false;
                 let mut grid_on = app.config.manual_grid.is_some();
                 if ui
-                    .checkbox(&mut grid_on, "Imán de rejilla")
-                    .on_hover_text("Imanta el arrastre a una rejilla fija; con «Rejilla en filas» también ordena los sprites sueltos")
+                    .checkbox(&mut grid_on, t!("Imán de rejilla"))
+                    .on_hover_text(t!("Imanta el arrastre a una rejilla fija; con «Rejilla en filas» también ordena los sprites sueltos"))
                     .changed()
                 {
                     app.config.manual_grid = if grid_on {
@@ -140,13 +141,13 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                         .add(
                             egui::Slider::new(&mut g.step, 2..=256)
                                 .logarithmic(true)
-                                .text("Paso"),
+                                .text(t!("Paso")),
                         )
-                        .on_hover_text("Separación de la rejilla en píxeles del atlas")
+                        .on_hover_text(t!("Separación de la rejilla en píxeles del atlas"))
                         .changed();
                     grid_changed |= ui
-                        .checkbox(&mut g.snap_flow, "Rejilla en filas")
-                        .on_hover_text("Los sprites sin posición fija también se alinean a la rejilla")
+                        .checkbox(&mut g.snap_flow, t!("Rejilla en filas"))
+                        .on_hover_text(t!("Los sprites sin posición fija también se alinean a la rejilla"))
                         .changed();
                 }
                 if grid_changed {
@@ -154,8 +155,8 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                 }
                 ui.separator();
                 if ui
-                    .button("Limpiar posiciones manuales")
-                    .on_hover_text("Borra todas las posiciones manuales: los sprites vuelven al flujo automático")
+                    .button(t!("Limpiar posiciones manuales"))
+                    .on_hover_text(t!("Borra todas las posiciones manuales: los sprites vuelven al flujo automático"))
                     .clicked()
                 {
                     let cleared = app.config.manual_positions.len();
@@ -163,7 +164,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                     if cleared > 0 {
                         app.log(
                             super::LogKind::Info,
-                            format!("{cleared} posición(es) manual(es) eliminada(s)."),
+                            t!("{} posición(es) manual(es) eliminada(s).", cleared),
                         );
                         app.after_workspace_change();
                     }
@@ -175,7 +176,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
         if let Some(name) = &app.selected_sprite {
             ui.separator();
             ui.add(
-                egui::Label::new(egui::RichText::new(format!("Seleccionado: {name}")).strong())
+                egui::Label::new(egui::RichText::new(t!("Seleccionado: {}", name)).strong())
                     .truncate(),
             );
         }
@@ -221,7 +222,7 @@ fn drop_target(ui: &mut egui::Ui, hovering: bool) {
     let tint = if hovering {
         egui::Color32::from_rgba_unmultiplied(120, 200, 255, 45)
     } else {
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 22)
+        super::drop_tint(ui.visuals(), false)
     };
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(ui.available_width().min(520.0), 84.0),
@@ -236,12 +237,12 @@ fn drop_target(ui: &mut egui::Ui, hovering: bool) {
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
-        "⤵  Arrastra aquí imágenes o carpetas",
+        t!("⤵  Arrastra aquí imágenes o carpetas"),
         egui::FontId::proportional(16.0),
         if hovering {
-            egui::Color32::from_rgb(160, 215, 255)
+            super::muted_hover_color(ui.visuals())
         } else {
-            egui::Color32::from_gray(150)
+            super::muted_color(ui.visuals())
         },
     );
     ui.weak("PNG · WebP · JPG · TGA · BMP · GIF · DDS · QOI");
@@ -254,25 +255,21 @@ fn drop_strip(ui: &mut egui::Ui, hovering: bool) {
         egui::vec2(ui.available_width().min(520.0), 44.0),
         egui::Sense::hover(),
     );
-    let tint = if hovering {
-        egui::Color32::from_rgba_unmultiplied(120, 200, 255, 60)
-    } else {
-        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 18)
-    };
+    let tint = super::drop_tint(ui.visuals(), hovering);
     ui.painter().rect_filled(rect, 8.0, tint);
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
         if hovering {
-            "Suelta para añadir al workspace"
+            t!("Suelta para añadir al workspace")
         } else {
-            "⤵  Sigue soltando imágenes o carpetas"
+            t!("⤵  Sigue soltando imágenes o carpetas")
         },
         egui::FontId::proportional(14.0),
         if hovering {
-            egui::Color32::from_rgb(180, 225, 255)
+            super::muted_hover_color(ui.visuals())
         } else {
-            egui::Color32::from_gray(150)
+            super::muted_color(ui.visuals())
         },
     );
 }
@@ -296,7 +293,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 + usize::from(!app.config.input_directory.as_os_str().is_empty());
             let frescos = app.just_added_names();
             let resumen = if frescos.len() > 6 {
-                format!("{}, +{} más", frescos[..6].join(", "), frescos.len() - 6)
+                t!("{}, +{} más", frescos[..6].join(", "), frescos.len() - 6)
             } else {
                 frescos.join(", ")
             };
@@ -304,18 +301,19 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 ui.vertical_centered(|ui| {
                     ui.spinner();
                     ui.add_space(10.0);
-                    ui.heading("Preparando el sprite sheet…");
+                    ui.heading(t!("Preparando el sprite sheet…"));
                     ui.label(
-                        egui::RichText::new(format!(
-                            "{elems} elemento(s) en el workspace · la vista previa se calcula sola"
+                        egui::RichText::new(t!(
+                            "{} elemento(s) en el workspace · la vista previa se calcula sola",
+                            elems
                         ))
                         .weak(),
                     );
                     if !resumen.is_empty() {
                         ui.add_space(8.0);
                         ui.label(
-                            egui::RichText::new(format!("✔ Recién añadido: {resumen}"))
-                                .color(super::JUST_ADDED_COLOR),
+                            egui::RichText::new(t!("✔ Recién añadido: {}", resumen))
+                                .color(super::just_added_color(ui.visuals())),
                         );
                     }
                     ui.add_space(16.0);
@@ -329,14 +327,16 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         ui.centered_and_justified(|ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.heading("Aún no hay sprite sheet");
-                ui.label("Añade sprites y la vista previa se calculará al momento.");
+                ui.heading(t!("Aún no hay sprite sheet"));
+                ui.label(t!(
+                    "Añade sprites y la vista previa se calculará al momento."
+                ));
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("➕ Añadir sprites…").clicked() {
+                    if ui.button(t!("➕ Añadir sprites…")).clicked() {
                         super::toolbar::add_sprites_dialog(app);
                     }
-                    if ui.button("📁 Añadir carpeta…").clicked() {
+                    if ui.button(t!("📁 Añadir carpeta…")).clicked() {
                         super::toolbar::add_smart_folder_dialog(app);
                     }
                 });
@@ -348,7 +348,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         return;
     };
     if out.pages.is_empty() {
-        ui.label("El resultado no tiene páginas.");
+        ui.label(t!("El resultado no tiene páginas."));
         return;
     }
     if app.selected_page >= out.pages.len() {
@@ -489,9 +489,9 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         .unwrap_or(tp_core::types::Rect::new(0, 0, 64, 64));
                     let (g, _) = ghost_rect(first.0, first.1, f.width, f.height, zoom, rect);
                     let label = if drag.ids.len() == 1 {
-                        "Soltar para colocar aquí".to_string()
+                        t!("Soltar para colocar aquí").to_string()
                     } else {
-                        format!("Soltar {} sprites aquí", drag.ids.len())
+                        t!("Soltar {} sprites aquí", drag.ids.len())
                     };
                     painter.text(
                         egui::pos2(g.center().x, g.max.y + 14.0),
@@ -583,9 +583,13 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                                 "{}x{} px{}",
                                 s.raw_width,
                                 s.raw_height,
-                                if s.is_rotated { " · rotado 90°" } else { "" }
+                                if s.is_rotated {
+                                    t!(" · rotado 90°")
+                                } else {
+                                    ""
+                                }
                             ));
-                            ui.label(format!(
+                            ui.label(t!(
                                 "frame ({}, {}) {}x{} · página {}",
                                 f.x,
                                 f.y,
@@ -599,7 +603,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                                     s.alias_target_id.as_deref().unwrap_or("?")
                                 ));
                             }
-                            ui.label(egui::RichText::new("Ctrl+rueda o pinza: zoom").weak());
+                            ui.label(egui::RichText::new(t!("Ctrl+rueda o pinza: zoom")).weak());
                         });
                     }
                 }
@@ -803,7 +807,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 painter.text(
                     g.left_top() + egui::vec2(0.0, -6.0),
                     egui::Align2::LEFT_BOTTOM,
-                    "Algoritmo «Manual» para fijar posición",
+                    t!("Algoritmo «Manual» para fijar posición"),
                     egui::FontId::proportional(11.0),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 185),
                 );
@@ -886,7 +890,10 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             };
             app.log(
                 super::LogKind::Info,
-                format!("Posición manual fijada{grid_note} (se guarda con el proyecto)."),
+                t!(
+                    "Posición manual fijada{} (se guarda con el proyecto).",
+                    grid_note
+                ),
             );
         }
     }
@@ -952,7 +959,7 @@ fn select_sprites_in_rect(app: &mut App, x0: i32, y0: i32, x1: i32, y1: i32) {
     }
     app.log(
         super::LogKind::Info,
-        format!("{} sprite(s) seleccionados por rectángulo.", ids.len()),
+        t!("{} sprite(s) seleccionados por rectángulo.", ids.len()),
     );
 }
 

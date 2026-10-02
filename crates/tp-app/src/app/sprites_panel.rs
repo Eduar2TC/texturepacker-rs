@@ -1,6 +1,7 @@
 //! Left sprites panel: tree of folders and sprites, drag & drop target.
 
 use super::{App, LogKind};
+use crate::i18n::t;
 use eframe::egui;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -87,13 +88,13 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     let total = count_files(&tree);
 
     ui.horizontal(|ui| {
-        ui.strong(format!("Sprites ({total})"));
+        ui.strong(t!("Sprites ({})", total));
         let hidden = app.hidden_count();
         if hidden > 0 {
             ui.separator();
             if ui
-                .small_button(format!("↺ Restaurar ({hidden})"))
-                .on_hover_text("Volver a incluir los sprites quitados")
+                .small_button(t!("↺ Restaurar ({})", hidden))
+                .on_hover_text(t!("Volver a incluir los sprites quitados"))
                 .clicked()
             {
                 app.restore_excluded();
@@ -102,14 +103,14 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .small_button("−")
-                .on_hover_text("Plegar todas las carpetas")
+                .on_hover_text(t!("Plegar todas las carpetas"))
                 .clicked()
             {
                 app.tree_force_open = Some(false);
             }
             if ui
                 .small_button("+")
-                .on_hover_text("Desplegar todas las carpetas")
+                .on_hover_text(t!("Desplegar todas las carpetas"))
                 .clicked()
             {
                 app.tree_force_open = Some(true);
@@ -118,7 +119,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     });
     let filter_response = ui.add(
         egui::TextEdit::singleline(&mut app.tree_filter)
-            .hint_text("Filtrar sprites…")
+            .hint_text(t!("Filtrar sprites…"))
             .desired_width(f32::INFINITY),
     );
     app.tree_filter_focused = filter_response.has_focus();
@@ -129,11 +130,9 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     if tree.is_empty() {
         ui.add_space(8.0);
         let msg = if app.tree_filter.is_empty() {
-            "Arrastra imágenes o carpetas
-desde tu sistema a cualquier
-parte de la ventana."
+            t!("Arrastra imágenes o carpetas\ndesde tu sistema a cualquier\nparte de la ventana.")
         } else {
-            "Ningún sprite coincide con el filtro."
+            t!("Ningún sprite coincide con el filtro.")
         };
         ui.add_space(12.0);
         ui.vertical_centered(|ui| {
@@ -186,7 +185,7 @@ parte de la ventana."
         Some(TreeAction::Remove(path)) => {
             let removed = app.remove_path(&path);
             app.selected_paths.remove(&path);
-            app.log(LogKind::Info, format!("{removed} sprite(s) quitado(s)."));
+            app.log(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
             app.after_workspace_change();
         }
         Some(TreeAction::RemoveSmart(dir)) => app.remove_smart_folder(&dir),
@@ -200,13 +199,13 @@ parte de la ventana."
             let moved = app.move_sprites_to_group(&ids, sheet_index);
             if moved > 0 {
                 let shown = if name.is_empty() {
-                    "hoja principal".to_string()
+                    t!("hoja principal").to_string()
                 } else {
                     name
                 };
                 app.log(
                     LogKind::Info,
-                    format!("{moved} sprite(s) movidos a «{shown}»."),
+                    t!("{} sprite(s) movidos a «{}».", moved, shown),
                 );
             }
         }
@@ -223,13 +222,13 @@ parte de la ventana."
                     .map(|g| g.name.clone())
                     .unwrap_or_default();
                 let shown = if name.is_empty() {
-                    "hoja principal".to_string()
+                    t!("hoja principal").to_string()
                 } else {
                     name
                 };
                 app.log(
                     LogKind::Info,
-                    format!("{moved} sprite(s) movidos a «{shown}»."),
+                    t!("{} sprite(s) movidos a «{}».", moved, shown),
                 );
             }
         }
@@ -247,13 +246,13 @@ parte de la ventana."
             if moved > 0 {
                 app.log(
                     LogKind::Info,
-                    format!("{moved} sprite(s) movidos al grupo «{group}»."),
+                    t!("{} sprite(s) movidos al grupo «{}».", moved, group),
                 );
             }
         }
         Some(TreeAction::CopyPath(path)) => {
             ui.ctx().copy_text(path.display().to_string());
-            app.log(LogKind::Info, format!("Ruta copiada: {}", path.display()));
+            app.log(LogKind::Info, t!("Ruta copiada: {}", path.display()));
         }
         None => {}
     }
@@ -275,7 +274,11 @@ parte de la ventana."
                 if moved > 0 {
                     app.log(
                         LogKind::Info,
-                        format!("{} sprite(s) movidos al grupo «{target}».", drag.ids.len()),
+                        t!(
+                            "{} sprite(s) movidos al grupo «{}».",
+                            drag.ids.len(),
+                            target
+                        ),
                     );
                 }
             }
@@ -357,13 +360,13 @@ fn render_sheet(
 ) {
     let id = egui::Id::new(("tree_sheet", group.name.clone()));
     let title = if group.name.is_empty() {
-        "(hoja principal)".to_string()
+        t!("(hoja principal)").to_string()
     } else {
         group.name.clone()
     };
     let mut open = group.name.is_empty();
     let header = egui::CollapsingHeader::new(
-        egui::RichText::new(format!("📂 {title} ({})", group.sprites.len())).strong(),
+        egui::RichText::new(t!("📂 {} ({})", title, group.sprites.len())).strong(),
     )
     .id_salt(id)
     .default_open(group.name.is_empty());
@@ -392,7 +395,7 @@ fn render_sheet(
             let selected = app.selected_paths.contains(p);
             // Recién soltado: el color señala «aquí acaba de entrar».
             let label = if app.is_just_added(p) {
-                egui::RichText::new(name.as_str()).color(super::JUST_ADDED_COLOR)
+                egui::RichText::new(name.as_str()).color(super::just_added_color(ui.visuals()))
             } else {
                 egui::RichText::new(name.as_str())
             };
@@ -404,7 +407,7 @@ fn render_sheet(
                 walk.action = Some(TreeAction::Select(p.clone(), mode));
             }
             resp.context_menu(|ui| {
-                if ui.button("Quitar sprite").clicked() {
+                if ui.button(t!("Quitar sprite")).clicked() {
                     walk.action = Some(TreeAction::Remove(p.clone()));
                     ui.close();
                 }
@@ -438,10 +441,10 @@ fn render_sheet(
             }
         }
         if paths.len() != group.sprites.len() {
-            ui.weak("(algunos sprites aún no están cargados)");
+            ui.weak(t!("(algunos sprites aún no están cargados)"));
         }
         if paths.is_empty() {
-            ui.weak("Suelta sprites aquí");
+            ui.weak(t!("Suelta sprites aquí"));
         }
     });
 
@@ -496,14 +499,14 @@ fn render_node(
         let mut name = match node.origin {
             Origin::Smart => egui::RichText::new(node.name.clone())
                 .strong()
-                .color(egui::Color32::from_rgb(230, 200, 60)),
+                .color(super::amber_color(ui.visuals())),
             Origin::Nested => egui::RichText::new(node.name.clone())
                 .strong()
-                .color(egui::Color32::from_rgb(120, 170, 255)),
+                .color(super::info_color(ui.visuals())),
             Origin::Normal => egui::RichText::new(node.name.clone()).strong(),
         };
         if app.is_just_added(&node.path) {
-            name = name.color(super::JUST_ADDED_COLOR);
+            name = name.color(super::just_added_color(ui.visuals()));
         }
         if let Some(open) = force {
             // CollapsingHeader::show() calcula su id dentro de un ui.vertical(...)
@@ -537,16 +540,17 @@ fn render_node(
             walk.drop_target = Some(node.name.clone());
         }
     } else {
-        let mut name =
-            match node.origin {
-                Origin::Smart => egui::RichText::new(node.name.clone())
-                    .color(egui::Color32::from_rgb(230, 200, 60)),
-                Origin::Nested => egui::RichText::new(node.name.clone())
-                    .color(egui::Color32::from_rgb(120, 170, 255)),
-                Origin::Normal => egui::RichText::new(node.name.clone()),
-            };
+        let mut name = match node.origin {
+            Origin::Smart => {
+                egui::RichText::new(node.name.clone()).color(super::amber_color(ui.visuals()))
+            }
+            Origin::Nested => {
+                egui::RichText::new(node.name.clone()).color(super::info_color(ui.visuals()))
+            }
+            Origin::Normal => egui::RichText::new(node.name.clone()),
+        };
         if app.is_just_added(&node.path) {
-            name = name.color(super::JUST_ADDED_COLOR);
+            name = name.color(super::just_added_color(ui.visuals()));
         }
         let selected = app.selected_paths.contains(&node.path);
         let response = ui.selectable_label(selected, name);
@@ -566,10 +570,10 @@ fn render_node(
                 .map(|(i, g)| (i, g.name.clone()))
                 .collect();
             if sheets.len() > 1 {
-                ui.menu_button("Mover a hoja…", |ui| {
+                ui.menu_button(t!("Mover a hoja…"), |ui| {
                     for (i, name) in &sheets {
                         let label = if name.is_empty() {
-                            "(hoja principal)".to_string()
+                            t!("(hoja principal)").to_string()
                         } else {
                             name.clone()
                         };
@@ -581,11 +585,11 @@ fn render_node(
                     }
                 });
             }
-            if ui.button("Quitar sprite").clicked() {
+            if ui.button(t!("Quitar sprite")).clicked() {
                 walk.action = Some(TreeAction::Remove(node.path.clone()));
                 ui.close();
             }
-            if ui.button("Copiar ruta").clicked() {
+            if ui.button(t!("Copiar ruta")).clicked() {
                 walk.action = Some(TreeAction::CopyPath(node.path.clone()));
                 ui.close();
             }
@@ -630,7 +634,7 @@ fn dir_menu(
 ) {
     let has_groups = groups.iter().any(|g| !g.name.is_empty());
     if has_groups {
-        ui.menu_button("Mover a grupo…", |ui| {
+        ui.menu_button(t!("Mover a grupo…"), |ui| {
             for g in groups {
                 if g.name.is_empty() {
                     continue;
@@ -643,15 +647,18 @@ fn dir_menu(
         });
         ui.separator();
     }
-    if node.origin == Origin::Smart && ui.button("Quitar carpeta inteligente").clicked() {
+    if node.origin == Origin::Smart && ui.button(t!("Quitar carpeta inteligente")).clicked() {
         *action = Some(TreeAction::RemoveSmart(node.path.clone()));
         ui.close();
     }
-    if ui.button("Quitar carpeta (todos los sprites)").clicked() {
+    if ui
+        .button(t!("Quitar carpeta (todos los sprites)"))
+        .clicked()
+    {
         *action = Some(TreeAction::Remove(node.path.clone()));
         ui.close();
     }
-    if ui.button("Copiar ruta").clicked() {
+    if ui.button(t!("Copiar ruta")).clicked() {
         *action = Some(TreeAction::CopyPath(node.path.clone()));
         ui.close();
     }
@@ -975,7 +982,7 @@ fn count_files(nodes: &[TreeNode]) -> usize {
 /// renombrar, vaciar y quitar. Los sprites se asignan arrastrándolos a los
 /// nodos de hoja del árbol de arriba.
 fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new("Hojas (pack por carpetas)")
+    egui::CollapsingHeader::new(t!("Hojas (pack por carpetas)"))
         .id_salt("output_groups")
         .default_open(false)
         .show(ui, |ui| {
@@ -983,18 +990,18 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
             // grupos manuales y crea un grupo por subcarpeta de entrada.
             let mut auto = app.config.auto_folder_groups;
             if ui
-                .checkbox(&mut auto, "Automático por carpetas de entrada")
-                .on_hover_text(
+                .checkbox(&mut auto, t!("Automático por carpetas de entrada"))
+                .on_hover_text(t!(
                     "Cada subcarpeta de entrada produce su hoja en la subcarpeta de salida \
-                     con el mismo nombre; los sprites de la raíz van a la hoja principal",
-                )
+                     con el mismo nombre; los sprites de la raíz van a la hoja principal"
+                ))
                 .changed()
             {
                 app.config.auto_folder_groups = auto;
                 app.after_workspace_change();
             }
             if auto {
-                ui.weak("Las asignaciones manuales se ignoran en este modo.");
+                ui.weak(t!("Las asignaciones manuales se ignoran en este modo."));
                 return;
             }
 
@@ -1005,13 +1012,13 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
             for (i, g) in app.config.folder_groups.iter_mut().enumerate() {
                 ui.horizontal(|ui| {
                     if g.name.is_empty() {
-                        ui.strong("(hoja principal)");
+                        ui.strong(t!("(hoja principal)"));
                     } else {
                         if ui
                             .small_button("×")
-                            .on_hover_text(
-                                "Quitar este grupo (sus sprites vuelven a la hoja principal)",
-                            )
+                            .on_hover_text(t!(
+                                "Quitar este grupo (sus sprites vuelven a la hoja principal)"
+                            ))
                             .clicked()
                         {
                             remove = Some(i);
@@ -1019,16 +1026,16 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                         ui.add(
                             egui::TextEdit::singleline(&mut g.name)
                                 .desired_width(120.0)
-                                .hint_text("subcarpeta de salida"),
+                                .hint_text(t!("subcarpeta de salida")),
                         );
                     }
-                    ui.label(format!("({})", g.sprites.len()))
-                        .on_hover_text("Sprites asignados a este grupo");
+                    ui.label(t!("({})", g.sprites.len()))
+                        .on_hover_text(t!("Sprites asignados a este grupo"));
                     if !g.name.is_empty()
                         && !app.selected_paths.is_empty()
                         && ui
-                            .small_button("↪ Selección")
-                            .on_hover_text("Mover los sprites seleccionados a este grupo")
+                            .small_button(t!("↪ Selección"))
+                            .on_hover_text(t!("Mover los sprites seleccionados a este grupo"))
                             .clicked()
                     {
                         assign = Some(i);
@@ -1036,8 +1043,8 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                     if !g.name.is_empty()
                         && !g.sprites.is_empty()
                         && ui
-                            .small_button("Vaciar")
-                            .on_hover_text("Devolver todos sus sprites a la hoja principal")
+                            .small_button(t!("Vaciar"))
+                            .on_hover_text(t!("Devolver todos sus sprites a la hoja principal"))
                             .clicked()
                     {
                         clear = Some(i);
@@ -1047,7 +1054,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
             if let Some(i) = remove {
                 let name = app.config.folder_groups[i].name.clone();
                 app.config.folder_groups.remove(i);
-                app.log(LogKind::Info, format!("Grupo «{name}» eliminado."));
+                app.log(LogKind::Info, t!("Grupo «{}» eliminado.", name));
                 app.after_workspace_change();
             }
             if let Some(i) = clear {
@@ -1060,18 +1067,18 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                     let name = app.config.folder_groups[i].name.clone();
                     app.log(
                         LogKind::Info,
-                        format!("{moved} sprite(s) movidos al grupo «{name}»."),
+                        t!("{} sprite(s) movidos al grupo «{}».", moved, name),
                     );
                 }
             }
 
             ui.add_space(4.0);
             if ui
-                .button("+ Añadir hoja")
-                .on_hover_text(
+                .button(t!("+ Añadir hoja"))
+                .on_hover_text(t!(
                     "Crea otra hoja: se escribirá en su subcarpeta de salida. \
-                     Arrastra sprites al nodo de la hoja para llenarla",
-                )
+                     Arrastra sprites al nodo de la hoja para llenarla"
+                ))
                 .clicked()
             {
                 let mut n = 1;
@@ -1086,11 +1093,11 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                     name: name.clone(),
                     sprites: Vec::new(),
                 });
-                app.log(LogKind::Info, format!("Hoja «{name}» creada."));
+                app.log(LogKind::Info, t!("Hoja «{}» creada.", name));
             }
-            ui.weak(
+            ui.weak(t!(
                 "Arrastra sprites del árbol (o entre hojas) para moverlos; cada \
-                 hoja se escribe en su subcarpeta de salida.",
-            );
+                 hoja se escribe en su subcarpeta de salida."
+            ));
         });
 }

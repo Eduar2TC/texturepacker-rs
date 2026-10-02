@@ -1,29 +1,32 @@
 //! Floating "Sprite settings" window: pivot editor for the selected sprites.
 
 use super::{App, LogKind};
+use crate::i18n::t;
 use eframe::egui;
 use tp_core::types::Point2D;
 
-const PRESETS: [(&str, f32, f32); 9] = [
-    ("Centro", 0.5, 0.5),
-    ("Arriba izq.", 0.0, 0.0),
-    ("Arriba", 0.5, 0.0),
-    ("Arriba der.", 1.0, 0.0),
-    ("Izq.", 0.0, 0.5),
-    ("Der.", 1.0, 0.5),
-    ("Abajo izq.", 0.0, 1.0),
-    ("Abajo", 0.5, 1.0),
-    ("Abajo der.", 1.0, 1.0),
-];
+fn presets() -> [(&'static str, f32, f32); 9] {
+    [
+        (t!("Centro"), 0.5, 0.5),
+        (t!("Arriba izq."), 0.0, 0.0),
+        (t!("Arriba"), 0.5, 0.0),
+        (t!("Arriba der."), 1.0, 0.0),
+        (t!("Izq."), 0.0, 0.5),
+        (t!("Der."), 1.0, 0.5),
+        (t!("Abajo izq."), 0.0, 1.0),
+        (t!("Abajo"), 0.5, 1.0),
+        (t!("Abajo der."), 1.0, 1.0),
+    ]
+}
 
 pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_sprite_settings;
-    egui::Window::new("Ajustes de sprite")
+    egui::Window::new(t!("Ajustes de sprite"))
         .open(&mut open)
         .default_width(360.0)
         .resizable(true)
         .show(ctx, |ui| {
-            ui.label("Pivot por defecto para sprites nuevos");
+            ui.label(t!("Pivot por defecto para sprites nuevos"));
             ui.horizontal(|ui| {
                 ui.add(
                     egui::DragValue::new(&mut app.config.default_pivot_x)
@@ -43,14 +46,14 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
             let indices = app.selected_sprite_indices();
             if indices.is_empty() {
                 ui.label(
-                    egui::RichText::new(
-                        "Selecciona sprites en el panel izquierdo o en la vista previa.",
-                    )
+                    egui::RichText::new(t!(
+                        "Selecciona sprites en el panel izquierdo o en la vista previa."
+                    ))
                     .weak(),
                 );
                 return;
             }
-            ui.label(format!("{} sprite(s) seleccionado(s)", indices.len()));
+            ui.label(t!("{} sprite(s) seleccionado(s)", indices.len()));
 
             let (mut px, mut py) = match app.result.as_ref() {
                 Some(out) => match out.result.sprites.get(indices[0]) {
@@ -81,9 +84,9 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                 }
             });
 
-            ui.label("Posiciones predefinidas");
+            ui.label(t!("Posiciones predefinidas"));
             ui.horizontal_wrapped(|ui| {
-                for (label, x, y) in PRESETS {
+                for (label, x, y) in presets() {
                     if ui.button(label).clicked() {
                         apply_pivot(app, &indices, x, y);
                     }
@@ -95,10 +98,10 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
             // -------- 9-patch / 3-patch --------
             ui.heading("Bordes 9-patch");
             ui.label(
-                egui::RichText::new(
+                egui::RichText::new(t!(
                     "Barras [izq, arriba, der, abajo] en píxeles de la imagen original. \
-                     Todo a 0 desactiva el 9-patch.",
-                )
+                     Todo a 0 desactiva el 9-patch."
+                ))
                 .weak(),
             );
             let mut border = app
@@ -120,7 +123,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                if ui.button("9-patch centro").clicked() {
+                if ui.button(t!("9-patch centro")).clicked() {
                     border = [8, 8, 8, 8];
                     border_changed = true;
                 }
@@ -132,17 +135,17 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                     border = [0, 8, 0, 8];
                     border_changed = true;
                 }
-                if ui.button("Sin bordes").clicked() {
+                if ui.button(t!("Sin bordes")).clicked() {
                     border = [0; 4];
                     border_changed = true;
                 }
             });
             if ui
-                .button("🔎 Detectar barras sólidas")
-                .on_hover_text(
+                .button(t!("🔎 Detectar barras sólidas"))
+                .on_hover_text(t!(
                     "Detecta los bordes 9-patch analizando las filas/columnas de color \
-                     sólido del sprite original (ignora márgenes transparentes)",
-                )
+                     sólido del sprite original (ignora márgenes transparentes)"
+                ))
                 .clicked()
             {
                 app.detect_borders();
@@ -153,12 +156,12 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
 
             ui.separator();
             if ui
-                .button("💾 Guardar pivots en pivots.json")
-                .on_hover_text(
+                .button(t!("💾 Guardar pivots en pivots.json"))
+                .on_hover_text(t!(
                     "Escribe pivots.json y borders.json junto a los sprites, para que \
                      el CLI (y otros proyectos) usen los mismos pivots. En la GUI ya \
-                     se aplican solos y viajan en el .tpproj.",
-                )
+                     se aplican solos y viajan en el .tpproj."
+                ))
                 .clicked()
             {
                 app.save_pivots();
@@ -179,7 +182,7 @@ fn apply_pivot(app: &mut App, indices: &[usize], x: f32, y: f32) {
     } else {
         app.log(
             LogKind::Warning,
-            "Publica el atlas antes de editar pivots.".into(),
+            t!("Publica el atlas antes de editar pivots.").into(),
         );
     }
 }
@@ -204,7 +207,7 @@ fn apply_border(app: &mut App, indices: &[usize], border: [i32; 4]) {
     } else {
         app.log(
             LogKind::Warning,
-            "Publica el atlas antes de editar bordes 9-patch.".into(),
+            t!("Publica el atlas antes de editar bordes 9-patch.").into(),
         );
     }
 }

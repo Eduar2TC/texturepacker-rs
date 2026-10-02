@@ -4,6 +4,7 @@
 //! principal destacada a la derecha, atajos mostrados en los tooltips.
 
 use super::{App, LogKind};
+use crate::i18n::t;
 use eframe::egui;
 
 /// La misma página que abre el botón «Tutorial» del original: la de
@@ -15,22 +16,22 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
         ui.horizontal(|ui| {
             // --- Proyecto ---
             if ui
-                .button("📂 Abrir")
-                .on_hover_text("Abrir proyecto (.tpproj) — Ctrl+O")
+                .button(t!("📂 Abrir"))
+                .on_hover_text(t!("Abrir proyecto (.tpproj) — Ctrl+O"))
                 .clicked()
             {
                 app.load_project();
             }
             if ui
-                .button("💾 Guardar")
-                .on_hover_text("Guardar proyecto (.tpproj) — Ctrl+S")
+                .button(t!("💾 Guardar"))
+                .on_hover_text(t!("Guardar proyecto (.tpproj) — Ctrl+S"))
                 .clicked()
             {
                 app.save_project();
             }
             if ui
                 .button("↺")
-                .on_hover_text("Restablecer la configuración por defecto")
+                .on_hover_text(t!("Restablecer la configuración por defecto"))
                 .clicked()
             {
                 app.reset_defaults();
@@ -39,17 +40,17 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
 
             // --- Sprites ---
             if ui
-                .button("➕ Añadir")
-                .on_hover_text("Añadir sprites al workspace")
+                .button(t!("➕ Añadir"))
+                .on_hover_text(t!("Añadir sprites al workspace"))
                 .clicked()
             {
                 add_sprites_dialog(app);
             }
             let can_remove = !app.selected_paths.is_empty();
             if ui
-                .add_enabled(can_remove, egui::Button::new("➖ Quitar"))
-                .on_hover_text("Quitar los sprites seleccionados")
-                .on_disabled_hover_text("Selecciona sprites en el panel izquierdo")
+                .add_enabled(can_remove, egui::Button::new(t!("➖ Quitar")))
+                .on_hover_text(t!("Quitar los sprites seleccionados"))
+                .on_disabled_hover_text(t!("Selecciona sprites en el panel izquierdo"))
                 .clicked()
             {
                 // Orden visual del panel: tras quitar, el cursor queda en la
@@ -62,8 +63,10 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 app.remove_selected(&order);
             }
             if ui
-                .button("📁 Carpeta")
-                .on_hover_text("Añadir carpeta inteligente (se sincroniza con el disco)")
+                .button(t!("📁 Carpeta"))
+                .on_hover_text(t!(
+                    "Añadir carpeta inteligente (se sincroniza con el disco)"
+                ))
                 .clicked()
             {
                 add_smart_folder_dialog(app);
@@ -74,15 +77,17 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             let sprite_settings = egui::Button::new("⚙ Sprite").selected(app.show_sprite_settings);
             if ui
                 .add(sprite_settings)
-                .on_hover_text("Ajustes de sprite (pivots y bordes 9-patch)")
+                .on_hover_text(t!("Ajustes de sprite (pivots y bordes 9-patch)"))
                 .clicked()
             {
                 app.show_sprite_settings = !app.show_sprite_settings;
             }
-            let split = egui::Button::new("✂ Dividir").selected(app.show_split);
+            let split = egui::Button::new(t!("✂ Dividir")).selected(app.show_split);
             if ui
                 .add(split)
-                .on_hover_text("Dividir una hoja (sprite sheet) en sprites individuales")
+                .on_hover_text(t!(
+                    "Dividir una hoja (sprite sheet) en sprites individuales"
+                ))
                 .clicked()
             {
                 app.show_split = !app.show_split;
@@ -93,9 +98,9 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 .map(|o| !o.result.sprites.is_empty())
                 .unwrap_or(false);
             if ui
-                .add_enabled(has_sprites, egui::Button::new("▶ Animación"))
-                .on_hover_text("Vista previa de animación de los sprites seleccionados")
-                .on_disabled_hover_text("Publica el sprite sheet para ver la animación")
+                .add_enabled(has_sprites, egui::Button::new(t!("▶ Animación")))
+                .on_hover_text(t!("Vista previa de animación de los sprites seleccionados"))
+                .on_disabled_hover_text(t!("Publica el sprite sheet para ver la animación"))
                 .clicked()
             {
                 app.show_animation = true;
@@ -104,13 +109,15 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             // en el navegador (egui-winit → `webbrowser`).
             if ui
                 .button("Tutorial")
-                .on_hover_text("Abre la página de tutoriales de TexturePacker en el navegador")
+                .on_hover_text(t!(
+                    "Abre la página de tutoriales de TexturePacker en el navegador"
+                ))
                 .clicked()
             {
                 ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
                 app.log(
                     LogKind::Info,
-                    "Abriendo la página de tutoriales en el navegador.".into(),
+                    t!("Abriendo la página de tutoriales en el navegador.").into(),
                 );
             }
 
@@ -119,15 +126,15 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 let publishing = app.running.is_some();
                 let publish = egui::Button::new(
                     egui::RichText::new(if publishing {
-                        "… Publicando"
+                        t!("… Publicando")
                     } else {
-                        "⏏ Publicar"
+                        t!("⏏ Publicar")
                     })
                     .strong(),
                 );
                 if ui
                     .add_enabled(!publishing, publish)
-                    .on_hover_text("Empaquetar y exportar el sprite sheet — Ctrl+P")
+                    .on_hover_text(t!("Empaquetar y exportar el sprite sheet — Ctrl+P"))
                     .clicked()
                 {
                     app.start_pack();
@@ -143,7 +150,7 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
 pub(super) fn add_sprites_dialog(app: &mut App) {
     let Some(files) = rfd::FileDialog::new()
         .add_filter(
-            "Imágenes",
+            t!("Imágenes"),
             &[
                 "png", "webp", "jpg", "jpeg", "tga", "bmp", "gif", "ico", "tiff", "tif", "dds",
                 "qoi", "pbm", "pgm", "ppm", "pnm", "xbm", "xpm", "astc", "ktx", "ktx2", "basis",
@@ -161,9 +168,12 @@ pub(super) fn add_sprites_dialog(app: &mut App) {
         }
     }
     if added > 0 {
-        app.log(LogKind::Info, format!("{added} sprite(s) añadido(s)."));
+        app.log(LogKind::Info, t!("{} sprite(s) añadido(s).", added));
     } else {
-        app.log(LogKind::Warning, "No se añadieron sprites nuevos.".into());
+        app.log(
+            LogKind::Warning,
+            t!("No se añadieron sprites nuevos.").into(),
+        );
     }
 }
 
@@ -172,11 +182,11 @@ pub(super) fn add_smart_folder_dialog(app: &mut App) {
         return;
     };
     if app.add_input(dir) {
-        app.log(LogKind::Info, "Carpeta inteligente añadida.".into());
+        app.log(LogKind::Info, t!("Carpeta inteligente añadida.").into());
     } else {
         app.log(
             LogKind::Warning,
-            "La carpeta ya está en el proyecto.".into(),
+            t!("La carpeta ya está en el proyecto.").into(),
         );
     }
 }

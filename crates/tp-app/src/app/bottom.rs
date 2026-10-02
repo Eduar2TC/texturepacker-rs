@@ -1,6 +1,7 @@
 //! Bottom panel: log, output details, sprite table and mesh views.
 
 use super::{App, BottomTab, LogKind};
+use crate::i18n::t;
 use eframe::egui;
 
 pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
@@ -10,23 +11,23 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         if ui
             .small_button(chevron)
             .on_hover_text(if app.bottom_collapsed {
-                "Mostrar el panel"
+                t!("Mostrar el panel")
             } else {
-                "Plegar el panel y dejar la vista del atlas en pantalla completa"
+                t!("Plegar el panel y dejar la vista del atlas en pantalla completa")
             })
             .clicked()
         {
             app.bottom_collapsed = !app.bottom_collapsed;
         }
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Log, "Log");
-        ui.selectable_value(&mut app.bottom_tab, BottomTab::Output, "Salida");
+        ui.selectable_value(&mut app.bottom_tab, BottomTab::Output, t!("Salida"));
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Sprites, "Sprites");
-        ui.selectable_value(&mut app.bottom_tab, BottomTab::Mesh, "Malla");
+        ui.selectable_value(&mut app.bottom_tab, BottomTab::Mesh, t!("Malla"));
         // Estado resumido siempre visible, incluso con el panel plegado.
         if let Some(out) = &app.result {
             ui.separator();
             ui.label(
-                egui::RichText::new(format!(
+                egui::RichText::new(t!(
                     "{} sprites · {} aliases · {} página(s)",
                     out.result.total_sprites,
                     out.result.alias_count,
@@ -40,11 +41,8 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         if has_errors {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button(
-                        egui::RichText::new("✖ Error")
-                            .color(egui::Color32::from_rgb(255, 110, 110)),
-                    )
-                    .on_hover_text("Ir al Log")
+                    .small_button(egui::RichText::new("✖ Error").color(ui.visuals().error_fg_color))
+                    .on_hover_text(t!("Ir al Log"))
                     .clicked()
                 {
                     app.bottom_tab = BottomTab::Log;
@@ -73,10 +71,11 @@ fn log_view(app: &App, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             for entry in &app.logs {
+                let visuals = ui.visuals();
                 let color = match entry.kind {
-                    LogKind::Info => egui::Color32::from_gray(200),
-                    LogKind::Warning => egui::Color32::from_rgb(255, 200, 80),
-                    LogKind::Error => egui::Color32::from_rgb(255, 100, 100),
+                    LogKind::Info => visuals.text_color(),
+                    LogKind::Warning => visuals.warn_fg_color,
+                    LogKind::Error => visuals.error_fg_color,
                 };
                 ui.colored_label(color, &entry.text);
             }
@@ -85,7 +84,7 @@ fn log_view(app: &App, ui: &mut egui::Ui) {
 
 fn output_view(app: &App, ui: &mut egui::Ui) {
     let Some(out) = &app.result else {
-        ui.centered_and_justified(|ui| ui.label("Ejecuta un empaquetado primero."));
+        ui.centered_and_justified(|ui| ui.label(t!("Ejecuta un empaquetado primero.")));
         return;
     };
     let result = &out.result;
@@ -95,45 +94,45 @@ fn output_view(app: &App, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             let (title, hint) = if app.files_written {
                 (
-                    "Archivos generados",
-                    "Escritos en el disco durante la última publicación.",
+                    t!("Archivos generados"),
+                    t!("Escritos en el disco durante la última publicación."),
                 )
             } else {
                 (
-                    "Archivos que se publicarán",
-                    "Vista previa: aún no existen; esta es la lista exacta que                      escribirá «Publicar».",
+                    t!("Archivos que se publicarán"),
+                    t!("Vista previa: aún no existen; esta es la lista exacta que                      escribirá «Publicar»."),
                 )
             };
             ui.label(egui::RichText::new(title).strong()).on_hover_text(hint);
             if result.output_files.is_empty() {
-                ui.label("(ninguno: añade sprites y publica)");
+                ui.label(t!("(ninguno: añade sprites y publica)"));
             }
             for f in &result.output_files {
                 ui.monospace(format!("  ➡ {f}"));
             }
             ui.horizontal(|ui| {
-                ui.strong("Tiempos por etapa");
+                ui.strong(t!("Tiempos por etapa"));
                 for (stage, ms) in &result.stage_times_ms {
                     ui.monospace(format!("{ms:>6} ms"));
                     ui.label(stage);
                 }
             });
             ui.horizontal(|ui| {
-                ui.strong("Avisos");
+                ui.strong(t!("Avisos"));
                 if result.warnings.is_empty() {
-                    ui.label("(ninguno)");
+                    ui.label(t!("(ninguno)"));
                 }
                 for w in &result.warnings {
-                    ui.colored_label(egui::Color32::from_rgb(255, 200, 80), w);
+                    ui.colored_label(ui.visuals().warn_fg_color, crate::i18n::tr(w));
                 }
             });
             for p in &result.pages {
-                ui.label(format!(
-                    "Página {}: {}x{} · relleno {:.1}% · {}",
+                ui.label(t!(
+                    "Página {}: {}x{} · relleno {}% · {}",
                     p.index,
                     p.width,
                     p.height,
-                    p.fill_ratio * 100.0,
+                    format!("{:.1}", p.fill_ratio * 100.0),
                     p.file_name
                 ));
             }
@@ -142,7 +141,7 @@ fn output_view(app: &App, ui: &mut egui::Ui) {
 
 fn sprites_view(app: &mut App, ui: &mut egui::Ui) {
     let Some(out) = &app.result else {
-        ui.centered_and_justified(|ui| ui.label("Ejecuta un empaquetado primero."));
+        ui.centered_and_justified(|ui| ui.label(t!("Ejecuta un empaquetado primero.")));
         return;
     };
     let mut selected: Option<String> = None;
@@ -155,14 +154,14 @@ fn sprites_view(app: &mut App, ui: &mut egui::Ui) {
                 .min_col_width(70.0)
                 .show(ui, |ui| {
                     ui.strong("id");
-                    ui.strong("tamaño");
-                    ui.strong("recortado");
+                    ui.strong(t!("tamaño"));
+                    ui.strong(t!("recortado"));
                     ui.strong("frame (x,y,w,h)");
                     ui.strong("rot");
-                    ui.strong("página");
+                    ui.strong(t!("página"));
                     ui.strong("alias");
                     ui.strong("pivot");
-                    ui.strong("malla");
+                    ui.strong(t!("malla"));
                     ui.end_row();
                     for s in &out.result.sprites {
                         let is_sel = app.selected_sprite.as_deref() == Some(s.id.as_str());
@@ -197,12 +196,14 @@ fn sprites_view(app: &mut App, ui: &mut egui::Ui) {
 
 fn mesh_view(app: &App, ui: &mut egui::Ui) {
     let Some(out) = &app.result else {
-        ui.centered_and_justified(|ui| ui.label("Ejecuta un empaquetado primero."));
+        ui.centered_and_justified(|ui| ui.label(t!("Ejecuta un empaquetado primero.")));
         return;
     };
     let Some(sel) = &app.selected_sprite else {
         ui.centered_and_justified(|ui| {
-            ui.label("Selecciona un sprite en la vista previa o en la tabla Sprites.");
+            ui.label(t!(
+                "Selecciona un sprite en la vista previa o en la tabla Sprites."
+            ));
         });
         return;
     };
@@ -210,17 +211,19 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
         return;
     };
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("Malla de «{sel}»")).strong());
+        ui.label(egui::RichText::new(t!("Malla de «{}»", sel)).strong());
         if sprite.is_alias {
-            ui.label(egui::RichText::new("(alias — reutiliza el frame de su objetivo)").weak());
+            ui.label(egui::RichText::new(t!("(alias — reutiliza el frame de su objetivo)")).weak());
         }
     });
     match &sprite.mesh {
         None => {
-            ui.label("Este sprite no tiene malla (modo polígono desactivado o sprite alias).");
+            ui.label(t!(
+                "Este sprite no tiene malla (modo polígono desactivado o sprite alias)."
+            ));
         }
         Some(mesh) => {
-            ui.label(format!(
+            ui.label(t!(
                 "Vértices: {} · Triángulos: {} · Contornos: {}",
                 mesh.vertices.len(),
                 mesh.indices.len() / 3,
@@ -267,8 +270,10 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
                 painter.line_segment([pc, pa], stroke);
             }
             ui.label(
-                egui::RichText::new("Azul: contorno exterior · Rojo: agujeros · Gris: triángulos")
-                    .weak(),
+                egui::RichText::new(t!(
+                    "Azul: contorno exterior · Rojo: agujeros · Gris: triángulos"
+                ))
+                .weak(),
             );
         }
     }

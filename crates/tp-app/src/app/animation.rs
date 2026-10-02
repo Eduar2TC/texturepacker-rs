@@ -2,6 +2,7 @@
 //! is a selection, otherwise the frames of every sprite group.
 
 use super::App;
+use crate::i18n::t;
 use eframe::egui;
 use tp_core::types::Rect;
 
@@ -81,7 +82,7 @@ pub(super) fn animation_window(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_animation;
-    egui::Window::new("Vista previa de animación")
+    egui::Window::new(t!("Vista previa de animación"))
         .id(egui::Id::new("animation_preview"))
         .open(&mut open)
         .default_size([380.0, 340.0])
@@ -97,9 +98,9 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let frames = collect_frames(app);
     if frames.is_empty() {
         let msg = if app.selected_paths.is_empty() {
-            "No hay sprites empaquetados.\nAñade sprites y pulsa «Publicar»."
+            t!("No hay sprites empaquetados.\nAñade sprites y pulsa «Publicar».")
         } else {
-            "Ningún sprite de la selección está publicado.\nPulsa «Publicar» o quita la selección."
+            t!("Ningún sprite de la selección está publicado.\nPulsa «Publicar» o quita la selección.")
         };
         ui.label(egui::RichText::new(msg).weak());
         return;
@@ -140,7 +141,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     }
     if !app.selected_paths.is_empty() {
         ui.label(
-            egui::RichText::new(format!(
+            egui::RichText::new(t!(
                 "Secuencia: selección ({} sprite(s)). Quita la selección para ver todos.",
                 frames.len()
             ))
@@ -149,7 +150,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     }
     if groups.len() > 1 {
         ui.horizontal(|ui| {
-            ui.label("Animación:");
+            ui.label(t!("Animación:"));
             let mut current = app.anim.group.clone();
             egui::ComboBox::from_id_salt("anim_group")
                 .selected_text(&current)
@@ -176,7 +177,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         .map(|(_, f)| f)
         .collect();
     if frames.is_empty() {
-        ui.label(egui::RichText::new("Ese grupo no tiene fotogramas.").weak());
+        ui.label(egui::RichText::new(t!("Ese grupo no tiene fotogramas.")).weak());
         return;
     }
     if app.anim.frame >= frames.len() {
@@ -199,11 +200,19 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             app.anim.playing = !app.anim.playing;
             app.anim.accumulator = 0.0;
         }
-        if ui.button("⏮").on_hover_text("Primer fotograma").clicked() {
+        if ui
+            .button("⏮")
+            .on_hover_text(t!("Primer fotograma"))
+            .clicked()
+        {
             app.anim.playing = false;
             app.anim.frame = 0;
         }
-        if ui.button("⏭").on_hover_text("Último fotograma").clicked() {
+        if ui
+            .button("⏭")
+            .on_hover_text(t!("Último fotograma"))
+            .clicked()
+        {
             app.anim.playing = false;
             app.anim.frame = frames.len() - 1;
         }
@@ -213,7 +222,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             .add(
                 egui::Slider::new(&mut frame, 0..=frames.len() - 1)
                     .integer()
-                    .text("Fotograma"),
+                    .text(t!("Fotograma")),
             )
             .changed()
         {
@@ -229,12 +238,12 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
                 .integer()
                 .text("FPS"),
         );
-        ui.checkbox(&mut app.anim.loop_anim, "Repetir");
-        ui.checkbox(&mut app.anim.playing, "Reproducir");
+        ui.checkbox(&mut app.anim.loop_anim, t!("Repetir"));
+        ui.checkbox(&mut app.anim.playing, t!("Reproducir"));
     });
 
     ui.horizontal(|ui| {
-        ui.label("Fondo:");
+        ui.label(t!("Fondo:"));
         egui::ComboBox::from_id_salt("anim_bg")
             .selected_text(app.anim.background.label())
             .show_ui(ui, |ui| {
@@ -245,7 +254,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         ui.add(
             egui::Slider::new(&mut app.anim.scale, 0.25..=8.0)
                 .logarithmic(true)
-                .text("Escala"),
+                .text(t!("Escala")),
         );
     });
 
@@ -519,9 +528,9 @@ mod tests {
 
     #[test]
     fn background_labels_are_spanish() {
-        assert_eq!(Background::Dark.label(), "Oscuro");
-        assert_eq!(Background::Light.label(), "Claro");
-        assert_eq!(Background::Checker.label(), "Damas");
+        assert_eq!(Background::Dark.label(), t!("Oscuro"));
+        assert_eq!(Background::Light.label(), t!("Claro"));
+        assert_eq!(Background::Checker.label(), t!("Damas"));
     }
 
     #[test]
