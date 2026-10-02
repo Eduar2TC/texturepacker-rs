@@ -347,7 +347,7 @@ fn pivot_preview(
     painter.rect_stroke(
         orig,
         0.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
         egui::StrokeKind::Inside,
     );
 
@@ -379,7 +379,7 @@ fn pivot_preview(
         cross,
     );
     painter.circle_filled(p, 3.0, egui::Color32::from_rgb(255, 60, 60));
-    painter.circle_stroke(p, 3.0, egui::Stroke::new(1.0, egui::Color32::WHITE));
+    painter.circle_stroke(p, 3.0, egui::Stroke::new(1.0_f32, egui::Color32::WHITE));
 
     if !response.dragged() {
         return None;
