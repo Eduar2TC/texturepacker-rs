@@ -373,8 +373,18 @@ impl App {
     /// Constructor interno compartido: funciona con cualquier `egui::Context`,
     /// incluido uno puro de pruebas (sin ventana ni GPU).
     fn build(egui_ctx: egui::Context, initial_project: Option<PathBuf>) -> Self {
+        Self::build_with_prefs(egui_ctx, initial_project, crate::ui_prefs::UiPrefs::load())
+    }
+
+    /// Igual que [`build`] pero con las preferencias que se le den: así los
+    /// tests no leen el `ui.toml` real ni exponen la suite a la elección de
+    /// idioma de la máquina que la lanza.
+    fn build_with_prefs(
+        egui_ctx: egui::Context,
+        initial_project: Option<PathBuf>,
+        prefs: crate::ui_prefs::UiPrefs,
+    ) -> Self {
         let cc = eframe::CreationContext::_new_kittest(egui_ctx.clone());
-        let prefs = crate::ui_prefs::UiPrefs::load();
         crate::i18n::set_choice(prefs.lang_choice());
         let prefs_path = crate::ui_prefs::UiPrefs::path();
         let mut app = Self {
@@ -448,13 +458,20 @@ impl App {
     /// (típicamente uno headless de pruebas): mismo arranque que la ventana
     /// nativa —tema, log de bienvenida, watcher y proyecto inicial—.
     pub fn new_for_testing(egui_ctx: egui::Context, initial_project: Option<PathBuf>) -> Self {
-        let mut app = Self::build(egui_ctx, initial_project);
+        // Preferencias propias con el idioma ya fijado a español: los tests no
+        // deben cambiar según el locale de quien lance la suite ni según el
+        // ui.toml de su máquina, y todas las hebras del proceso ven siempre el
+        // mismo idioma (si no, una construcción en paralelo reabriría la
+        // ventana del sistema en medio de otra prueba).
+        let prefs = crate::ui_prefs::UiPrefs {
+            lang: crate::i18n::LangChoice::Es.id().to_string(),
+            ..Default::default()
+        };
+        let mut app = Self::build_with_prefs(egui_ctx, initial_project, prefs);
         static TEST_FILE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
         let n = TEST_FILE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         app.prefs_path =
             std::env::temp_dir().join(format!("tp-app-ui-{}-{n}.toml", std::process::id()));
-        // Idioma fijo: los tests no deben cambiar según el locale de quien
-        // lance la suite ni según el ui.toml de su máquina.
         crate::i18n::set_choice(crate::i18n::LangChoice::Es);
         app
     }
@@ -2203,7 +2220,7 @@ mod drag_payload_tests {
     #[test]
     fn payload_set_then_read_without_frames() {
         let ctx = egui::Context::default();
-        let mut app = App::build(ctx.clone(), None);
+        let mut app = App::new_for_testing(ctx.clone(), None);
         begin_sprite_drag(&app, &ctx, vec!["a".into(), "b".into()]);
         let got = SpriteDrag::payload(&ctx);
         assert!(
@@ -2218,7 +2235,7 @@ mod drag_payload_tests {
     #[test]
     fn payload_survives_a_frame_without_release() {
         let ctx = egui::Context::default();
-        let mut app = App::build(ctx.clone(), None);
+        let mut app = App::new_for_testing(ctx.clone(), None);
         begin_sprite_drag(&app, &ctx, vec!["a".into()]);
         let _ = app.run_frame(&ctx, egui::RawInput::default());
         assert!(
@@ -2255,7 +2272,7 @@ mod on_demand_tests {
         std::fs::create_dir_all(&sprites).unwrap();
         let project = create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
         let ctx = egui::Context::default();
-        let app = App::build(ctx.clone(), Some(project));
+        let app = App::new_for_testing(ctx.clone(), Some(project));
         (app, ctx, tmp)
     }
 

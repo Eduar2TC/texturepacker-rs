@@ -1475,9 +1475,10 @@ mod tests {
             let s = out.sprites.iter().find(|s| s.id == id).unwrap();
             s.normal_path.as_ref().unwrap().display().to_string()
         };
-        assert!(normal_of("box.png").ends_with("normals/box.png"));
-        assert!(normal_of("orb.png").ends_with("orb-det.png"));
-        assert!(normal_of("hero.png").ends_with("hero_n.png"));
+        // Comparación por componentes: en Windows el separador es `\`.
+        assert!(Path::new(&normal_of("box.png")).ends_with("normals/box.png"));
+        assert!(Path::new(&normal_of("orb.png")).ends_with("orb-det.png"));
+        assert!(Path::new(&normal_of("hero.png")).ends_with("hero_n.png"));
         assert!(
             out.warnings
                 .iter()

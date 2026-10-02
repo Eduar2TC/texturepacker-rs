@@ -114,7 +114,12 @@ pub fn detect(var: impl Fn(&str) -> Result<String, std::env::VarError>) -> Lang 
         .find_map(|k| var(k).ok())
         .unwrap_or_default();
     let value = value.trim().to_ascii_lowercase();
-    if value.is_empty() || value == "c" || value.starts_with("posix") {
+    if value.is_empty()
+        || value == "c"
+        || value.starts_with("c.")
+        || value.starts_with("c_")
+        || value.starts_with("posix")
+    {
         return Lang::Es;
     }
     if value.starts_with("es") {
@@ -592,6 +597,9 @@ mod tests {
         assert_eq!(detect(var("en_US.UTF-8")), Lang::En);
         assert_eq!(detect(var("fr_FR.UTF-8")), Lang::En);
         assert_eq!(detect(var("C")), Lang::Es);
+        assert_eq!(detect(var("C.UTF-8")), Lang::Es);
+        assert_eq!(detect(var("c.utf8")), Lang::Es);
+        assert_eq!(detect(var("POSIX")), Lang::Es);
         assert_eq!(detect(|_| Err(std::env::VarError::NotPresent)), Lang::Es);
     }
 
