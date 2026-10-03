@@ -634,13 +634,38 @@ fn pack_maxrects(
         if let Some(page) = pages.last_mut() {
             placed = try_place(page, item, w, h, opts, false)?;
         }
-        if placed.is_none() {
-            let mut page = PageState::new(pages.len(), cw, ch, bp);
-            placed = try_place(&mut page, item, w, h, opts, false)
-                .map_err(|e| TpError::Pack(format!("{e} (página {})", page.index)))?;
-            pages.push(page);
-        }
-        pages.last_mut().unwrap().placements.push(placed.unwrap());
+        // Página nueva: si el sprite tampoco cabe ahí, es un error de
+        // configuración (el snap a la rejilla se come el interior cuando
+        // `border_padding` no es múltiplo de `align_grid`), no un panic en
+        // `placed.unwrap()`. La rama de Guillotine ya lo trataba así.
+        let placed = match placed {
+            Some(p) => p,
+            None => {
+                let mut page = PageState::new(pages.len(), cw, ch, bp);
+                let p = try_place(&mut page, item, w, h, opts, false)
+                    .map_err(|e| TpError::Pack(format!("{e} (página {})", page.index)))?
+                    .ok_or_else(|| {
+                        let align = opts.align_grid.max(0);
+                        let grid = if align > 1 {
+                            format!(", con rejilla de {align} px")
+                        } else {
+                            String::new()
+                        };
+                        TpError::Pack(format!(
+                            "El sprite '{}' ({}x{}) no cabe en un atlas de {cw}x{ch} \
+                             (padding {pad} + borde {bp}{grid})",
+                            item.id, item.width, item.height,
+                        ))
+                    })?;
+                pages.push(page);
+                p
+            }
+        };
+        pages
+            .last_mut()
+            .expect("la página acaba de crearse o de recibir la colocación")
+            .placements
+            .push(placed);
     }
     Ok(pages)
 }
@@ -1510,6 +1535,24 @@ mod tests {
         // Borde tan grande que no queda área interior.
         let impossible = PackerOptions::new(PackingStrategy::Bssf, false, 8, 0, 4, false);
         assert!(pack(&[item("a", 1, 1)], &impossible).is_err());
+    }
+
+    /// El snap a la rejilla puede comerse el interior de una página recién
+    /// creada (borde 1, rejilla 8: el origen sube de 1 a 8 y el sprite ya no
+    /// cabe). Eso es un error de configuración, no un `unwrap()` en la ruta
+    /// de página nueva.
+    #[test]
+    fn maxrects_errors_when_the_snap_leaves_no_room_on_a_fresh_page() {
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, 32, 0, 1, false);
+        opts.align_grid = 8;
+        let err = pack(&[item("a", 30, 30)], &opts).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains('a'), "cita al sprite: {msg}");
+        assert!(msg.contains("no cabe"), "explica el fallo: {msg}");
+        // Con la rejilla desactivada el mismo sprite sí cabe en 32 con borde 1.
+        let mut plain = PackerOptions::new(PackingStrategy::Bssf, false, 32, 0, 1, false);
+        plain.align_grid = 0;
+        assert_eq!(pack(&[item("a", 30, 30)], &plain).unwrap().pages.len(), 1);
     }
 
     #[test]
