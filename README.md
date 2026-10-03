@@ -151,6 +151,10 @@ tar -xzf tp-cli-linux-x64.tar.gz && ./tp-cli --help
 La app de escritorio en Linux necesita las librerías GTK3 del sistema
 (`libgtk-3` en Debian/Ubuntu); los binarios no las empaquetan.
 
+Los binarios de Linux se compilan en Ubuntu 22.04, así que exigen **glibc ≥
+2.35** (Ubuntu 22.04+, Debian 12+, Fedora 36+, Mint 21+). En sistemas más
+antiguos, compila desde fuente: `cargo install --path crates/tp-cli`.
+
 ## Compilar y ejecutar
 
 Requiere Rust ≥ 1.93 y un compilador C/C++ solo si se habilita ASTC.

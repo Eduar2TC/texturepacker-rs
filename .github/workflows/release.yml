@@ -21,10 +21,13 @@ jobs:
         include:
           - target: x86_64-unknown-linux-gnu
             friendly: linux-x64
-            os: ubuntu-24.04
+            # 22.04 (glibc 2.35), no 24.04 (2.39): el piso de glibc de los
+            # binarios publicados es el del runner. En 24.04 no arrancaban
+            # en Ubuntu 22.04 ni en Debian 12 (GLIBC_2.3x not found).
+            os: ubuntu-22.04
           - target: aarch64-unknown-linux-gnu
             friendly: linux-arm64
-            os: ubuntu-24.04
+            os: ubuntu-22.04
           - target: x86_64-pc-windows-msvc
             friendly: windows-x64
             os: windows-latest
@@ -95,7 +98,7 @@ jobs:
       # La app solo se compila donde tiene soporte nativo de GTK3 / rfd
       # (Linux x64 nativo con GTK3, Windows y macOS).
       - name: Compilar tp-app (${{ matrix.target }})
-        if: matrix.os == 'ubuntu-24.04' && matrix.target == 'x86_64-unknown-linux-gnu' || matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
+        if: matrix.os == 'ubuntu-22.04' && matrix.target == 'x86_64-unknown-linux-gnu' || matrix.os == 'windows-latest' || matrix.os == 'macos-latest'
         run: cargo build --release --locked -p tp-app --target ${{ matrix.target }}
 
       - name: Preparar artefactos (Linux)
