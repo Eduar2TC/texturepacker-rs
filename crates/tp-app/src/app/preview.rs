@@ -507,15 +507,10 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     );
                 }
             }
-            let painter = ui.painter();
-            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
-            painter.image(
-                tex.id(),
-                rect,
-                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                egui::Color32::WHITE,
-            );
-
+            // Nada más de fondo aquí: un segundo `rect_filled` + `image` con
+            // el mismo rect taparía el resalte y las fantasmas de arriba
+            // (el pintado ordenado de egui gana el último). El fondo y la
+            // textura ya se pintaron antes del arrastre, en el bloque inicial.
             let to_screen = |x: i32, y: i32| {
                 egui::pos2(rect.min.x + x as f32 * zoom, rect.min.y + y as f32 * zoom)
             };
