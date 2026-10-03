@@ -682,6 +682,24 @@ fn align_to_grid_snaps_every_corner_without_stretching() {
                 s.id, got, want
             );
         }
+        // Alinear mueve los sprites: los marcos asignados de cada página
+        // tienen que seguir siendo disjuntos (regresión del corte guillotine
+        // con origen recortado a la rejilla).
+        for (i, a) in out.result.sprites.iter().enumerate() {
+            for b in out.result.sprites.iter().skip(i + 1) {
+                if a.atlas_page_index != b.atlas_page_index {
+                    continue;
+                }
+                assert!(
+                    !a.allocated_frame.intersects(&b.allocated_frame),
+                    "[{name}] {} solapa a {} ({:?} vs {:?})",
+                    a.id,
+                    b.id,
+                    a.allocated_frame,
+                    b.allocated_frame
+                );
+            }
+        }
     }
 }
 

@@ -697,15 +697,54 @@ fn pack_guillotine(
     Ok(pages)
 }
 
-/// Guillotine cut: only the chosen free rectangle is split, into two children
+/// Guillotine cut: only the chosen free rectangle is split into children
 /// that tile it exactly (so the free list stays a disjoint partition and no
-/// space is wasted by the split itself). The cut runs along the axis that
-/// keeps the larger child, which is what preserves usable rectangles for the
-/// next sprites. `placed` must sit at the top-left corner of `free[ri]`,
-/// which is where [`try_place`] always puts it.
+/// space is wasted by the split itself).
+///
+/// With *Align to grid* the frame origin is snapped up inside the free
+/// rectangle, so `placed` does **not** necessarily sit at its top-left
+/// corner. The split is therefore computed from the *snapped* origin: the
+/// four children below cover `fr` exactly whatever the offset, which is what
+/// keeps the partition disjoint (a cut from `fr`'s corner would leave the
+/// offset strip unassigned *and* hand out space already taken by the sprite).
+///
+/// When the origin is the corner itself (no alignment, or already aligned
+/// children) the classic guillotine cut applies: two children, along the
+/// axis that keeps the larger one — that is what preserves usable rectangles
+/// for the next sprites.
 fn split_guillotine(free: &mut Vec<Rect>, ri: usize, placed: Rect) {
     let fr = free[ri];
     free.remove(ri);
+
+    let ox = (placed.x - fr.x).clamp(0, fr.width);
+    let oy = (placed.y - fr.y).clamp(0, fr.height);
+    let w = placed.width.max(0).min(fr.width - ox);
+    let h = placed.height.max(0).min(fr.height - oy);
+
+    let push = |free: &mut Vec<Rect>, r: Rect| {
+        if r.width > 0 && r.height > 0 {
+            free.push(r);
+        }
+    };
+
+    // El sprite arranca dentro del rectángulo: la región sobrante es en
+    // forma de L y se trocea en cuatro bandas que tilinguean `fr` sin
+    // solapes — izquierda y derecha a altura completa, más la superior y la
+    // inferior justo del ancho del sprite. Con `ox == oy == 0` tres de ellas
+    // quedan vacías y sobra la pareja del corte clásico.
+    if ox > 0 || oy > 0 {
+        push(free, Rect::new(fr.x, fr.y, ox, fr.height));
+        push(
+            free,
+            Rect::new(fr.x + ox + w, fr.y, fr.width - ox - w, fr.height),
+        );
+        push(free, Rect::new(fr.x + ox, fr.y, w, oy));
+        push(
+            free,
+            Rect::new(fr.x + ox, fr.y + oy + h, w, fr.height - oy - h),
+        );
+        return;
+    }
 
     // El sprite ocupa la esquina superior izquierda del rectángulo, así que
     // los dos hijos que tilingean el resto son siempre el «derecha»
@@ -715,8 +754,6 @@ fn split_guillotine(free: &mut Vec<Rect>, ri: usize, placed: Rect) {
     //     de debajo solo la columna del sprite;
     //   · horizontal (corte a lo alto): lo de debajo gana todo el ancho y la
     //     derecha solo la fila del sprite.
-    let w = placed.width.max(0);
-    let h = placed.height.max(0);
     let right = (fr.width - w).max(0);
     let bottom = (fr.height - h).max(0);
 
@@ -724,11 +761,6 @@ fn split_guillotine(free: &mut Vec<Rect>, ri: usize, placed: Rect) {
     // usable para los próximos sprites).
     let vertical = (w * bottom).max(right * fr.height) >= (fr.width * bottom).max(right * h);
 
-    let push = |free: &mut Vec<Rect>, r: Rect| {
-        if r.width > 0 && r.height > 0 {
-            free.push(r);
-        }
-    };
     if vertical {
         push(free, Rect::new(fr.x, fr.y + h, w, bottom));
         push(free, Rect::new(fr.x + w, fr.y, right, fr.height));
@@ -899,12 +931,18 @@ fn pack_manual(
 
     // Pasada 2: sprites sin posición manual → flujo Basic (filas).
     // Con rejilla (snap_flow), origen, avance e inicios de fila se imantan
-    // a múltiplos del paso; sin ella, flujo Basic exacto.
+    // a múltiplos del paso; sin ella, flujo Basic exacto. El imán siempre
+    // sube (nunca redondea a la baja): redondear hacia atrás metería el
+    // sprite en el hueco que acaba de dejar el anterior, y el origen de fila
+    // tendría que empezar por debajo del borde inferior real de la fila.
     let snapv = |v: i32| match flow {
-        Some(g) => g.snap(v),
+        Some(g) => ceil_to(v, g.step.max(1)),
         None => v,
     };
-    let (mut x, mut y, mut row_h) = (bp, flow_y, 0);
+    // `row_bottom` es el borde inferior real de la fila en curso (el origen
+    // de cada sprite sube a la rejilla, así que la fila no termina en
+    // `y + max(alto)` sino en `max(sy + alto)`).
+    let (mut x, mut y, mut row_bottom) = (bp, snapv(flow_y), snapv(flow_y));
     for item in &sorted {
         if pos(item).is_some() {
             continue;
@@ -920,9 +958,9 @@ fn pack_manual(
         }
         let (mut sx, mut sy) = snap_pos(snapv(x), snapv(y), align);
         if sx + w > bp + iw {
-            y = snapv(y) + snapv(row_h);
-            row_h = 0;
             x = bp;
+            y = snapv(row_bottom);
+            row_bottom = y;
             (sx, sy) = snap_pos(snapv(x), snapv(y), align);
         }
         if sy + h > bp + ih {
@@ -930,8 +968,8 @@ fn pack_manual(
             pages.push(PageState::new(page_idx, cw, ch, bp));
             x = bp;
             y = snapv(bp);
+            row_bottom = y;
             (sx, sy) = snap_pos(snapv(x), snapv(y), align);
-            row_h = 0;
         }
         if sx + w > bp + iw || sy + h > bp + ih {
             return Err(TpError::Pack(format!(
@@ -950,7 +988,7 @@ fn pack_manual(
             page: page_idx,
         });
         x = sx + w;
-        row_h = row_h.max(h);
+        row_bottom = row_bottom.max(sy + h);
     }
     Ok(pages)
 }
@@ -1014,7 +1052,11 @@ fn pack_basic(
     let align = opts.align_grid.max(0);
     let mut pages: Vec<PageState> = vec![PageState::new(0, cw, ch, bp)];
     let mut page_idx = 0usize;
-    let (mut x, mut y, mut row_h) = (bp, bp, 0);
+    // `row_bottom` es el borde inferior real de la fila en curso: como el
+    // origen de cada sprite puede subir a la rejilla, la fila no termina en
+    // `y + max(alto)` sino en `max(sy + alto)` — usar lo primero hacía que la
+    // fila siguiente empezara dentro de la anterior.
+    let (mut x, mut y, mut row_bottom) = (bp, bp, bp);
 
     for item in &sorted {
         let w = item.width + 2 * pad;
@@ -1030,9 +1072,10 @@ fn pack_basic(
         // si al subir el origen no cabe, pasa de fila y, si tampoco, de hoja.
         let (mut sx, mut sy) = snap_pos(x, y, align);
         if sx + w > bp + iw {
+            // La nueva fila empieza justo donde acababa la anterior
+            // (`row_bottom` ya contiene ese valor).
             x = bp;
-            y += row_h;
-            row_h = 0;
+            y = row_bottom;
             (sx, sy) = snap_pos(x, y, align);
         }
         if sy + h > bp + ih {
@@ -1040,7 +1083,7 @@ fn pack_basic(
             pages.push(PageState::new(page_idx, cw, ch, bp));
             x = bp;
             y = bp;
-            row_h = 0;
+            row_bottom = bp;
             (sx, sy) = snap_pos(x, y, align);
         }
         if sx + w > bp + iw || sy + h > bp + ih {
@@ -1060,7 +1103,7 @@ fn pack_basic(
             page: page_idx,
         });
         x = sx + w;
-        row_h = row_h.max(h);
+        row_bottom = row_bottom.max(sy + h);
     }
     Ok(pages)
 }
@@ -1853,6 +1896,46 @@ mod tests {
                     "sin margen inferior/derecho: {:?}",
                     s.frame
                 );
+            }
+        }
+    }
+
+    /// *Align to grid* mueve el origen del sprite dentro del rectángulo
+    /// libre, así que el corte tiene que calcularse desde el origen ya
+    /// recortado: si no, la franja que sobra queda sin cubrir y el siguiente
+    /// sprite se coloca encima del anterior.
+    #[test]
+    fn guillotine_align_grid_keeps_placements_disjoint() {
+        for (w, h, align) in [(5, 5, 4), (7, 3, 8), (11, 9, 4), (3, 7, 16)] {
+            let items = vec![
+                item("a", w, h),
+                item("b", w, h),
+                item("c", w, h),
+                item("d", w, h),
+            ];
+            let mut opts = guillotine_opts(PackingStrategy::Bssf, 32);
+            opts.align_grid = align;
+            opts.padding = 0;
+            opts.border_padding = 0;
+            let out = pack(&items, &opts).unwrap_or_else(|e| panic!("[{w}x{h} align {align}] {e}"));
+            assert_valid(&out);
+            for p in &out.pages {
+                for s in &p.placements {
+                    assert_eq!(
+                        s.frame.x % align,
+                        0,
+                        "[{w}x{h} align {align}] {} x={} fuera de rejilla",
+                        s.id,
+                        s.frame.x
+                    );
+                    assert_eq!(
+                        s.frame.y % align,
+                        0,
+                        "[{w}x{h} align {align}] {} y={} fuera de rejilla",
+                        s.id,
+                        s.frame.y
+                    );
+                }
             }
         }
     }
