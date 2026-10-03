@@ -141,12 +141,20 @@ jobs:
           $wxs = $wxs.Replace('@VERSION@', $version)
           $wxs = $wxs.Replace('@EXE_APP@', "$PWD\target\${{ matrix.target }}\release\tp-app.exe")
           $wxs = $wxs.Replace('@EXE_CLI@', "$PWD\target\${{ matrix.target }}\release\tp-cli.exe")
-          # Sin icon.ico ni licencia.rtf en el repo: se recortan del manifiesto
-          # (instalador con UI básica y sin página de licencia).
-          $wxs = $wxs -replace '<Property Id="ARPPRODUCTICON"[^>]*/>', ''
-          $wxs = $wxs -replace '<Icon [^>]*/>', ''
-          $wxs = $wxs -replace '\s*Icon="AppIcon"', ''
-          $wxs = $wxs -replace '<WixVariable [^>]*/>', ''
+          # icon.ico sí está en el repo (rastreado) y licencia.rtf no: se
+          # recorta del manifiesto solo lo que falte, para que el instalador
+          # conserve el icono en «Añadir o quitar programas» y en el acceso
+          # directo del menú Inicio.
+          $hasIcon = Test-Path packaging\windows\icon.ico
+          $hasLicense = Test-Path packaging\windows\licencia.rtf
+          if (-not $hasIcon) {
+            $wxs = $wxs -replace '<Property Id="ARPPRODUCTICON"[^>]*/>', ''
+            $wxs = $wxs -replace '<Icon [^>]*/>', ''
+            $wxs = $wxs -replace '\s*Icon="AppIcon"', ''
+          }
+          if (-not $hasLicense) {
+            $wxs = $wxs -replace '<WixVariable [^>]*/>', ''
+          }
           Set-Content -Path "$env:RUNNER_TEMP\texturepacker-rs.wxs" -Value $wxs -Encoding UTF8
 
           & "$wixBin\candle.exe" -arch x64 -out "$env:RUNNER_TEMP\tp.wixobj" "$env:RUNNER_TEMP\texturepacker-rs.wxs"
