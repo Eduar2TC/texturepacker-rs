@@ -8,6 +8,20 @@
 # Publicaciones de prueba hechas desde la raíz del repo
 /atlas.json
 /atlas.png
+/atlas@*.png
+
+# Artefactos que suelta el workflow de release si se ejecuta en local
+/dist/
+/tp-cli-*.tar.gz
+/tp-cli-*.zip
+/tp-app-*.tar.gz
+/tp-app-*.zip
+/tp-app-*.dmg
+/*.msi
+/TexturePacker-RS.app/
+
+# Estado local del agente (como .freebuff, que ya vive en .git/info/exclude)
+.opencode/
 
 # Plantilla local de mensajes de commit (configurada vía commit.template)
 .gitmessage
