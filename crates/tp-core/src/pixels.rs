@@ -26,20 +26,27 @@ pub struct TrimmedSprite<'a> {
     pub height: i32,
 }
 
-/// Blit a trimmed sprite into an atlas page at its frame, applying extrusion
-/// and rotation.
+/// A sprite staged for [`blit_prepared`]: the extruded source buffer plus the
+/// destination origin and rotation it has to be written with.
+#[derive(Debug, Clone)]
+pub struct PreparedBlit {
+    /// Extruded sprite: `(tw + 2e) x (th + 2e)` RGBA8, border-clamped.
+    buf: Vec<u8>,
+    ew: i32,
+    eh: i32,
+    /// Destination of the extruded region (frame origin + padding − `e`).
+    ox: i32,
+    oy: i32,
+    rotated: bool,
+}
+
+/// Phase 1 of [`blit_sprite`]: extrude the sprite's own pixels (and remember
+/// where they go).
 ///
-/// `page` is the RGBA8 canvas. The visible region of `layout.frame` (inset by
-/// `layout.padding`) receives the sprite. Extrusion extends the border pixels
-/// by `layout.extrude` pixels into the padding (clamped so it never leaves
-/// the frame).
-pub fn blit_sprite(
-    page: &mut [u8],
-    page_w: i32,
-    page_h: i32,
-    layout: BlitLayout,
-    sprite: TrimmedSprite<'_>,
-) {
+/// It only touches the sprite's data — no page involved — so callers packing
+/// several sprites into one page can run it without holding the page lock
+/// that [`blit_prepared`] requires.
+pub fn prepare_blit(layout: BlitLayout, sprite: TrimmedSprite<'_>) -> PreparedBlit {
     let Rect {
         x: frame_x,
         y: frame_y,
@@ -53,23 +60,38 @@ pub fn blit_sprite(
     // Build the extruded buffer: (tw + 2e) x (th + 2e), border-clamped.
     let ew = trim_w + 2 * e;
     let eh = trim_h + 2 * e;
-    let mut ext = vec![0u8; (ew * eh * 4) as usize];
+    let mut buf = vec![0u8; (ew * eh * 4) as usize];
     for ey in 0..eh {
         let sy = (ey - e).clamp(0, trim_h - 1);
         for ex in 0..ew {
             let sx = (ex - e).clamp(0, trim_w - 1);
             let src = ((sy * trim_w + sx) * 4) as usize;
             let dst = ((ey * ew + ex) * 4) as usize;
-            ext[dst..dst + 4].copy_from_slice(&trimmed[src..src + 4]);
+            buf[dst..dst + 4].copy_from_slice(&trimmed[src..src + 4]);
         }
     }
 
     // The extruded region sits in the frame at (vx - e, vy - e).
     let vx = frame_x + layout.padding;
     let vy = frame_y + layout.padding;
-    let ox = vx - e;
-    let oy = vy - e;
+    PreparedBlit {
+        buf,
+        ew,
+        eh,
+        ox: vx - e,
+        oy: vy - e,
+        rotated,
+    }
+}
 
+/// Phase 2 of [`blit_sprite`]: copy a [`prepare_blit`]ed sprite into `page`.
+///
+/// This is the only phase that touches the canvas, so it is the only one that
+/// needs exclusive access to it — frames are disjoint by construction, which
+/// is what makes the copy safe to serialise while phase 1 runs in parallel.
+pub fn blit_prepared(page: &mut [u8], page_w: i32, page_h: i32, prep: &PreparedBlit) {
+    let (ew, eh, ox, oy, rotated) = (prep.ew, prep.eh, prep.ox, prep.oy, prep.rotated);
+    let ext = &prep.buf;
     for ey in 0..eh {
         for ex in 0..ew {
             let src = ((ey * ew + ex) * 4) as usize;
@@ -86,6 +108,28 @@ pub fn blit_sprite(
             page[dst..dst + 4].copy_from_slice(&ext[src..src + 4]);
         }
     }
+}
+
+/// Blit a trimmed sprite into an atlas page at its frame, applying extrusion
+/// and rotation.
+///
+/// `page` is the RGBA8 canvas. The visible region of `layout.frame` (inset by
+/// `layout.padding`) receives the sprite. Extrusion extends the border pixels
+/// by `layout.extrude` pixels into the padding (clamped so it never leaves
+/// the frame).
+///
+/// Convenience wrapper over [`prepare_blit`] + [`blit_prepared`]; packing code
+/// that already holds a lock on `page` should split the two phases instead, so
+/// the lock covers only the copy.
+pub fn blit_sprite(
+    page: &mut [u8],
+    page_w: i32,
+    page_h: i32,
+    layout: BlitLayout,
+    sprite: TrimmedSprite<'_>,
+) {
+    let prep = prepare_blit(layout, sprite);
+    blit_prepared(page, page_w, page_h, &prep);
 }
 
 /// Quantize the whole page according to `depth`, optionally dithering.

@@ -533,11 +533,16 @@ fn execute(
     // PASO 8: blit sprites into page buffers (parallel)
     // ------------------------------------------------------------------
     let t = Instant::now();
-    let page_pixels: Vec<Mutex<Vec<u8>>> =
-        pages.iter().map(|p| Mutex::new(p.pixels.clone())).collect();
+    // Los buffers viajan de `pages` a los candados y vuelven al final: así
+    // el candado nunca lleva un clon del lienzo (de 64 MB en un atlas
+    // 4096²), que antes se pagaba dos veces, al entrar y al salir.
+    let page_pixels: Vec<Mutex<Vec<u8>>> = pages
+        .iter_mut()
+        .map(|p| Mutex::new(std::mem::take(&mut p.pixels)))
+        .collect();
     let page_normals: Vec<Mutex<Vec<u8>>> = pages
-        .iter()
-        .map(|p| Mutex::new(p.normal_pixels.clone().unwrap_or_default()))
+        .iter_mut()
+        .map(|p| Mutex::new(p.normal_pixels.take().unwrap_or_default()))
         .collect();
 
     let extrude = config.extrude.max(0);
@@ -553,37 +558,32 @@ fn execute(
             return;
         }
         let page = &pages[pi];
-        let mut px = page_pixels[pi].lock().unwrap();
-        pixels::blit_sprite(
-            &mut px,
-            page.width,
-            page.height,
-            pixels::BlitLayout {
-                frame: fr,
-                padding: pad,
-                extrude,
-                rotated: rotated[i],
-            },
+        let layout = pixels::BlitLayout {
+            frame: fr,
+            padding: pad,
+            extrude,
+            rotated: rotated[i],
+        };
+        // Extruir y rotar (mitad del trabajo del blit, y con la asignación
+        // del buffer de por medio) corre sin candado: es trabajo sobre los
+        // datos del propio sprite. El candado solo cubre la copia al lienzo,
+        // que es lo único que comparte estado — los marcos son disjuntos.
+        let prepped = pixels::prepare_blit(
+            layout,
             pixels::TrimmedSprite {
                 pixels: &s.pixels,
                 width: s.trimmed_bounds.width,
                 height: s.trimmed_bounds.height,
             },
         );
-        drop(px);
+        {
+            let mut px = page_pixels[pi].lock().unwrap();
+            pixels::blit_prepared(&mut px, page.width, page.height, &prepped);
+        }
 
         if let Some((nw, nh, npix)) = &normal_images[i] {
-            let mut np = page_normals[pi].lock().unwrap();
-            blit_normal(
-                &mut np,
-                page.width,
-                page.height,
-                pixels::BlitLayout {
-                    frame: fr,
-                    padding: pad,
-                    extrude,
-                    rotated: rotated[i],
-                },
+            let prep = prepare_blit_normal(
+                layout,
                 pixels::TrimmedSprite {
                     pixels: npix,
                     width: *nw,
@@ -591,13 +591,22 @@ fn execute(
                 },
                 s,
             );
+            if let Some(prep) = prep {
+                let mut np = page_normals[pi].lock().unwrap();
+                pixels::blit_prepared(&mut np, page.width, page.height, &prep);
+            }
         }
     });
 
-    for (i, page) in pages.iter_mut().enumerate() {
-        page.pixels = page_pixels[i].lock().unwrap().clone();
-        if page.normal_pixels.is_some() {
-            page.normal_pixels = Some(page_normals[i].lock().unwrap().clone());
+    // Devolver los buffers a sus páginas consumiendo los candados: sin el
+    // clon de antes al salir.
+    for (page, (pix, norm)) in pages
+        .iter_mut()
+        .zip(page_pixels.into_iter().zip(page_normals))
+    {
+        page.pixels = pix.into_inner().unwrap();
+        if has_normals {
+            page.normal_pixels = Some(norm.into_inner().unwrap());
         }
     }
     stage_times.push(("blit".into(), t.elapsed().as_millis() as u64));
@@ -782,149 +791,181 @@ fn execute(
         let mut variant_page_infos: Vec<PageInfo> = Vec::new();
         let mut variant_image_files: Vec<String> = Vec::new();
 
-        for page in &pages {
-            let (sw, sh) = if is_base {
-                (page.width as usize, page.height as usize)
-            } else {
-                (
-                    ((page.width as f32) * es).round().max(1.0) as usize,
-                    ((page.height as f32) * es).round().max(1.0) as usize,
-                )
-            };
+        // Codificar y escribir las hojas en paralelo: el encode (PNG, DXT o
+        // ETC2) es lo caro de la publicación y cada página tiene su fichero,
+        // así que no comparten nada. Lo único que se serializa es la
+        // recolección de nombres, que se empuja en orden de página para que
+        // `output_files` salga idéntico a como salía con el bucle secuencial.
+        let exported: Vec<PageExport> = pages
+            .par_iter()
+            .map(|page| -> Result<PageExport> {
+                let (sw, sh) = if is_base {
+                    (page.width as usize, page.height as usize)
+                } else {
+                    (
+                        ((page.width as f32) * es).round().max(1.0) as usize,
+                        ((page.height as f32) * es).round().max(1.0) as usize,
+                    )
+                };
 
-            let file_name = page_file_name(config, page.index, &variant_name);
-            let mut normal_name = None;
-            if write_to_disk {
-                let bytes = {
-                    let (mut scaled, _w, _h) = if is_base {
-                        (page.pixels.clone(), sw, sh)
-                    } else {
-                        export::scale_rgba(
+                let file_name = page_file_name(config, page.index, &variant_name);
+                let mut normal_name = None;
+                let mut written: Vec<String> = Vec::new();
+                if write_to_disk {
+                    // Sin escala ni giro el codificador lee el lienzo tal
+                    // cual: ni se copia el búfer de la página (64 MB en un
+                    // atlas 4096²) ni se pone mutable para nada.
+                    let (rgba, w, h): (std::borrow::Cow<'_, [u8]>, usize, usize) = if !is_base {
+                        let (mut scaled, w, h) = export::scale_rgba(
                             &page.pixels,
                             page.width as usize,
                             page.height as usize,
                             es,
                             config.scale_mode,
-                        )
-                    };
-                    if flip_active {
-                        export::flip_vertical_rgba(&mut scaled, _w, _h);
-                    }
-                    export::apply_dpi(
-                        export::encode_to_bytes(&scaled, _w, _h, &enc_opts)?,
-                        config.gpu_format,
-                        config.dpi,
-                    )
-                };
-
-                // Cache busting: el data format lleva `?v=<hash>` de este
-                // mismo fichero, así que cambia cuando cambia la hoja.
-                let cache_version = if config.cache_busting {
-                    crate::hash::hash_bytes_short(&bytes)
-                } else {
-                    String::new()
-                };
-                let (final_name, final_bytes) = match &config.encryption_key {
-                    Some(key) => (
-                        format!("{file_name}.tpenc"),
-                        export::encrypt_bytes(&bytes, key)?,
-                    ),
-                    None => (file_name, bytes),
-                };
-
-                write_file(
-                    &output_dir.join(&final_name),
-                    &final_bytes,
-                    config.force_publish,
-                )?;
-                output_files.push(final_name.clone());
-
-                // Normal-map page.
-                if let Some(npix) = &page.normal_pixels {
-                    let nfile = normal_page_file_name(config, page.index, &variant_name);
-                    let (mut nscaled, nw2, nh2) = if is_base {
-                        (npix.clone(), sw, sh)
+                        );
+                        if flip_active {
+                            export::flip_vertical_rgba(&mut scaled, w, h);
+                        }
+                        (std::borrow::Cow::Owned(scaled), w, h)
+                    } else if flip_active {
+                        let mut scaled = page.pixels.clone();
+                        export::flip_vertical_rgba(&mut scaled, sw, sh);
+                        (std::borrow::Cow::Owned(scaled), sw, sh)
                     } else {
-                        export::scale_rgba(
-                            npix,
-                            page.width as usize,
-                            page.height as usize,
-                            es,
-                            config.scale_mode,
-                        )
+                        (std::borrow::Cow::Borrowed(page.pixels.as_slice()), sw, sh)
                     };
-                    if flip_active {
-                        export::flip_vertical_rgba(&mut nscaled, nw2, nh2);
-                    }
-                    let nbytes = export::apply_dpi(
-                        export::encode_to_bytes(&nscaled, nw2, nh2, &enc_opts)?,
+                    let bytes = export::apply_dpi(
+                        export::encode_to_bytes(&rgba, w, h, &enc_opts)?,
                         config.gpu_format,
                         config.dpi,
                     );
-                    let (nfinal_name, nfinal_bytes) = match &config.encryption_key {
-                        Some(key) => (
-                            format!("{nfile}.tpenc"),
-                            export::encrypt_bytes(&nbytes, key)?,
-                        ),
-                        None => (nfile, nbytes),
+
+                    // Cache busting: el data format lleva `?v=<hash>` de este
+                    // mismo fichero, así que cambia cuando cambia la hoja.
+                    let cache_version = if config.cache_busting {
+                        crate::hash::hash_bytes_short(&bytes)
+                    } else {
+                        String::new()
                     };
+                    let (final_name, final_bytes) = match &config.encryption_key {
+                        Some(key) => (
+                            format!("{file_name}.tpenc"),
+                            export::encrypt_bytes(&bytes, key)?,
+                        ),
+                        None => (file_name, bytes),
+                    };
+
                     write_file(
-                        &output_dir.join(&nfinal_name),
-                        &nfinal_bytes,
+                        &output_dir.join(&final_name),
+                        &final_bytes,
                         config.force_publish,
                     )?;
-                    output_files.push(nfinal_name.clone());
-                    normal_name = Some(nfinal_name);
-                }
+                    written.push(final_name.clone());
 
-                variant_image_files.push(final_name.clone());
-                variant_page_infos.push(PageInfo {
-                    index: page.index,
-                    width: sw as i32,
-                    height: sh as i32,
-                    file_name: final_name,
-                    format: config.gpu_format.as_str().to_string(),
-                    has_normals: page.has_normals,
-                    normal_file_name: normal_name,
-                    encrypted: config.encryption_key.is_some(),
-                    fill_ratio: page.fill_ratio,
-                    cache_version,
-                });
-            } else {
-                // Vista previa: sin codificar ni escribir, pero con los
-                // mismos nombres que escribiría la publicación (incluido el
-                // `.tpenc` y la hoja de normales), para que la pestaña
-                // «Archivos» liste lo que de verdad se va a generar.
-                let encrypt = |n: String| match &config.encryption_key {
-                    Some(_) => format!("{n}.tpenc"),
-                    None => n,
-                };
-                let final_name = encrypt(file_name.clone());
-                let normal_file = page
-                    .normal_pixels
-                    .as_ref()
-                    .map(|_| normal_page_file_name(config, page.index, &variant_name))
-                    .map(encrypt);
-                output_files.push(final_name.clone());
-                if let Some(n) = &normal_file {
-                    output_files.push(n.clone());
+                    // Normal-map page.
+                    if let Some(npix) = &page.normal_pixels {
+                        let nfile = normal_page_file_name(config, page.index, &variant_name);
+                        let (nrgba, nw2, nh2): (std::borrow::Cow<'_, [u8]>, usize, usize) =
+                            if !is_base {
+                                let (mut scaled, nw2, nh2) = export::scale_rgba(
+                                    npix,
+                                    page.width as usize,
+                                    page.height as usize,
+                                    es,
+                                    config.scale_mode,
+                                );
+                                if flip_active {
+                                    export::flip_vertical_rgba(&mut scaled, nw2, nh2);
+                                }
+                                (std::borrow::Cow::Owned(scaled), nw2, nh2)
+                            } else if flip_active {
+                                let mut scaled = npix.clone();
+                                export::flip_vertical_rgba(&mut scaled, sw, sh);
+                                (std::borrow::Cow::Owned(scaled), sw, sh)
+                            } else {
+                                (std::borrow::Cow::Borrowed(npix.as_slice()), sw, sh)
+                            };
+                        let nbytes = export::apply_dpi(
+                            export::encode_to_bytes(&nrgba, nw2, nh2, &enc_opts)?,
+                            config.gpu_format,
+                            config.dpi,
+                        );
+                        let (nfinal_name, nfinal_bytes) = match &config.encryption_key {
+                            Some(key) => (
+                                format!("{nfile}.tpenc"),
+                                export::encrypt_bytes(&nbytes, key)?,
+                            ),
+                            None => (nfile, nbytes),
+                        };
+                        write_file(
+                            &output_dir.join(&nfinal_name),
+                            &nfinal_bytes,
+                            config.force_publish,
+                        )?;
+                        written.push(nfinal_name.clone());
+                        normal_name = Some(nfinal_name);
+                    }
+
+                    Ok(PageExport {
+                        image_file: final_name.clone(),
+                        info: PageInfo {
+                            index: page.index,
+                            width: sw as i32,
+                            height: sh as i32,
+                            file_name: final_name,
+                            format: config.gpu_format.as_str().to_string(),
+                            has_normals: page.has_normals,
+                            normal_file_name: normal_name,
+                            encrypted: config.encryption_key.is_some(),
+                            fill_ratio: page.fill_ratio,
+                            cache_version,
+                        },
+                        written,
+                    })
+                } else {
+                    // Vista previa: sin codificar ni escribir, pero con los
+                    // mismos nombres que escribiría la publicación (incluido el
+                    // `.tpenc` y la hoja de normales), para que la pestaña
+                    // «Archivos» liste lo que de verdad se va a generar.
+                    let encrypt = |n: String| match &config.encryption_key {
+                        Some(_) => format!("{n}.tpenc"),
+                        None => n,
+                    };
+                    let final_name = encrypt(file_name.clone());
+                    let normal_file = page
+                        .normal_pixels
+                        .as_ref()
+                        .map(|_| normal_page_file_name(config, page.index, &variant_name))
+                        .map(encrypt);
+                    written.push(final_name.clone());
+                    if let Some(n) = &normal_file {
+                        written.push(n.clone());
+                    }
+                    Ok(PageExport {
+                        image_file: final_name,
+                        info: PageInfo {
+                            index: page.index,
+                            width: sw as i32,
+                            height: sh as i32,
+                            file_name,
+                            format: config.gpu_format.as_str().to_string(),
+                            has_normals: page.has_normals,
+                            normal_file_name: normal_file,
+                            encrypted: config.encryption_key.is_some(),
+                            fill_ratio: page.fill_ratio,
+                            // Sin codificar no hay hash posible; la vista previa
+                            // solo lista nombres, que no cambian con el hash.
+                            cache_version: String::new(),
+                        },
+                        written,
+                    })
                 }
-                variant_image_files.push(final_name);
-                variant_page_infos.push(PageInfo {
-                    index: page.index,
-                    width: sw as i32,
-                    height: sh as i32,
-                    file_name,
-                    format: config.gpu_format.as_str().to_string(),
-                    has_normals: page.has_normals,
-                    normal_file_name: normal_file,
-                    encrypted: config.encryption_key.is_some(),
-                    fill_ratio: page.fill_ratio,
-                    // Sin codificar no hay hash posible; la vista previa
-                    // solo lista nombres, que no cambian con el hash.
-                    cache_version: String::new(),
-                });
-            }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        for out in exported {
+            output_files.extend(out.written);
+            variant_image_files.push(out.image_file);
+            variant_page_infos.push(out.info);
         }
 
         // Metadata via template engine. Con un placeholder de página en el
@@ -1241,6 +1282,15 @@ fn debug_shapes(sprites: &[SpriteAsset], page_index: usize) -> Vec<export::Debug
 /// `PageInfo` of every page at `scale`, with the file names this run really
 /// writes (`.tpenc` included when encryption is on; names only while
 /// previewing).
+/// What a single page contributes to a variant's export: the names it added to
+/// `output_files`, its data-file entry and its image name. Emitted in page
+/// order so the parallel export keeps the sequential ordering.
+struct PageExport {
+    written: Vec<String>,
+    image_file: String,
+    info: PageInfo,
+}
+
 fn page_infos_at(config: &ProjectConfig, pages: &[AtlasPage], scale: f32) -> Vec<PageInfo> {
     let variant = variant_suffix_for(config, scale);
     pages
@@ -1399,19 +1449,22 @@ fn run_groups(
 
 /// Sample the normal-map pixels that correspond to the diffuse's trimmed
 /// bounds, then blit them into the frame with the same rotation/extrude.
-fn blit_normal(
-    page: &mut [u8],
-    page_w: i32,
-    page_h: i32,
+/// Phase 1 of the normal-map blit: fit the map to the sprite's trimmed box and
+/// stage it for [`pixels::blit_prepared`].
+///
+/// Returns `None` for sprites with no trimmed area. Like the colour blit, all
+/// the fitting work happens here, outside the page lock, so the lock is held
+/// only for the copy.
+fn prepare_blit_normal(
     layout: pixels::BlitLayout,
     normal: pixels::TrimmedSprite<'_>,
     sprite: &IngestedSprite,
-) {
+) -> Option<pixels::PreparedBlit> {
     let (nw, nh) = (normal.width, normal.height);
     let normal = normal.pixels;
     let (tw, th) = (sprite.trimmed_bounds.width, sprite.trimmed_bounds.height);
     if tw <= 0 || th <= 0 {
-        return;
+        return None;
     }
     // If the normal map has the original sprite's dimensions, copy the same
     // sub-rect; otherwise scale the whole map to the original size first.
@@ -1449,17 +1502,14 @@ fn blit_normal(
         out
     };
 
-    pixels::blit_sprite(
-        page,
-        page_w,
-        page_h,
+    Some(pixels::prepare_blit(
         layout,
         pixels::TrimmedSprite {
             pixels: &trimmed,
             width: tw,
             height: th,
         },
-    );
+    ))
 }
 
 /// True when the base file name contains a multipack placeholder:
