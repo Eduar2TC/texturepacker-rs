@@ -293,11 +293,54 @@ fn execute(
     let alias_count = aliases.iter().filter(|(a, _)| *a).count();
     stage_times.push(("aliasing".into(), t.elapsed().as_millis() as u64));
 
-    let id_to_index: HashMap<&str, usize> = sprites
+    // Un id duplicado por dos ficheros CON CONTENIDO DISTINTO corrompería la
+    // salida en silencio: hay dos colocaciones con el mismo id, el `HashMap`
+    // se quedaría con una, el otro sprite recibiría `frame = None` y
+    // publicaría un `Rect(0,0,0,0)` en los datos.
+    //
+    // Los ids repetidos SÍ son legítimos cuando los repetidos son alias
+    // (`solid.tga` y `solid.qoi` con los mismos píxeles): solo se empaqueta
+    // uno y los demás reutilizan su marco, así que no hay dos colocaciones.
+    let mut packed_ids: HashMap<&str, usize> = HashMap::new();
+    for (i, s) in sprites.iter().enumerate() {
+        if aliases[i].0 {
+            continue;
+        }
+        *packed_ids.entry(s.id.as_str()).or_default() += 1;
+    }
+    let mut duplicated: Vec<&str> = packed_ids
         .iter()
-        .enumerate()
-        .map(|(i, s)| (s.id.as_str(), i))
+        .filter(|(_, count)| **count > 1)
+        .map(|(id, _)| *id)
         .collect();
+    if !duplicated.is_empty() {
+        duplicated.sort_unstable();
+        const SHOWN: usize = 8;
+        let head: Vec<&str> = duplicated.iter().take(SHOWN).copied().collect();
+        let rest = duplicated.len() - head.len();
+        let more = if rest > 0 {
+            format!(" y {rest} más")
+        } else {
+            String::new()
+        };
+        return Err(crate::error::TpError::Pack(format!(
+            "{} id(s) de sprite duplicado(s): {}{more}. Dos ficheros distintos con \
+             contenido diferente generan el mismo nombre en el atlas; renómbralos, \
+             separa las carpetas o activa «prepend folder name» para desambiguarlos.",
+            duplicated.len(),
+            head.join(", "),
+        )));
+    }
+
+    // Índice por id de los que llevan colocación: los alias se excluyen para
+    // que un alias que comparta id con su propio objetivo no se quede con el
+    // marco del sprite real (los objetivos de alias son siempre no-alias).
+    let mut id_to_index: HashMap<&str, usize> = HashMap::with_capacity(sprites.len());
+    for (i, s) in sprites.iter().enumerate() {
+        if !aliases[i].0 {
+            id_to_index.entry(s.id.as_str()).or_insert(i);
+        }
+    }
 
     // ------------------------------------------------------------------
     // PASO 4 (optional): polygon engine (contour -> RDP -> earcut)

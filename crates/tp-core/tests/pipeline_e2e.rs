@@ -427,6 +427,45 @@ fn oversized_sprites_error_cleanly() {
     }
 }
 
+/// Dos rutas distintas que derivan el mismo id (un `cell.png` en la raíz y
+/// otro `cell.png` suelto en una carpeta extra, sin «prepend folder name»)
+/// no pueden empaquetarse: el segundo se quedaría sin frame y se publicaría
+/// un `Rect(0,0,0,0)` en los datos.
+#[test]
+fn duplicated_sprite_ids_fail_instead_of_corrupting_the_sheet() {
+    let fx = Fixture::new("dupids");
+    let input = make_input_dir(&fx.dir, "in");
+    let extra = make_input_dir(&fx.dir, "extra");
+    write_png(&input.join("cell.png"), 8, 8, [200, 10, 10, 255]);
+    write_png(&extra.join("cell.png"), 8, 8, [10, 200, 10, 255]);
+
+    let cfg = ProjectConfig {
+        input_directory: input,
+        extra_inputs: vec![extra],
+        output_directory: fx.dir.join("out"),
+        prepend_folder_name: false,
+        ..ProjectConfig::default()
+    };
+    match pipeline::run(&cfg) {
+        Err(err) => {
+            let msg = err.to_string();
+            assert!(msg.contains("cell"), "nombra el id en conflicto: {msg}");
+            assert!(msg.contains("duplicado"), "explica el motivo: {msg}");
+        }
+        Ok(_) => panic!("dos ficheros con el mismo id deberían fallar"),
+    }
+
+    // Con «prepend folder name» la carpeta extra desambigua y todo va bien.
+    let ok = ProjectConfig {
+        input_directory: cfg.input_directory.clone(),
+        extra_inputs: cfg.extra_inputs.clone(),
+        output_directory: fx.dir.join("out_ok"),
+        prepend_folder_name: true,
+        ..ProjectConfig::default()
+    };
+    pipeline::run(&ok).expect("con la carpeta anteponida los ids son únicos");
+}
+
 #[test]
 fn lote5_border_divisor_names_and_transparency() {
     use tp_core::config::AlphaHandling;
