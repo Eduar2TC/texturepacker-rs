@@ -90,8 +90,10 @@ jobs:
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cargo test -p tp-core -p tp-cli --locked
 
-      # Binario CLI sin dependencias de sistema y con estrellas para reducir
-      # el tamaño (lto thin del workspace + strip por binario).
+      # Binario CLI: no necesita GTK3 (eso solo lo lleva tp-app), pero sí la
+      # glibc del sistema — el piso de glibc es el del runner de arriba. El
+      # tamaño lo reducen `lto = "thin"` y `strip = "symbols"` del perfil
+      # release (Cargo.toml), ambos aplicados aquí al compilar.
       - name: Compilar tp-cli (${{ matrix.target }})
         run: cargo build --release --locked -p tp-cli --target ${{ matrix.target }}
 

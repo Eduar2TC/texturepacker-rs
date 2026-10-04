@@ -42,6 +42,11 @@ roxmltree = "0.21"
 [profile.release]
 lto = "thin"
 opt-level = 3
+# Quita las tablas de símbolos de los binarios publicados. En release no hay
+# debuginfo, pero la simbología pesa: medido en tp-cli, 16,2 → 13,3 MB (-18 %).
+# En MSVC la información de depuración vive en el .pdb aparte, que no se
+# distribuye, así que ahí no cambia nada.
+strip = "symbols"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
