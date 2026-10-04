@@ -516,8 +516,9 @@ pub(crate) fn apply_output_paths(
     cfg: &mut ProjectConfig,
     values: &[(String, String)],
 ) -> CmdResult<(Option<PathBuf>, Option<String>)> {
-    let val =
-        |k: &str| -> Option<String> { values.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone()) };
+    let val = |k: &str| -> Option<String> {
+        values.iter().rfind(|(a, _)| a == k).map(|(_, v)| v.clone())
+    };
     let dir_of = |path: &Path| path.parent().map(Path::to_path_buf).unwrap_or_default();
 
     let Some(sheet) = val("sheet") else {
@@ -741,7 +742,7 @@ pub(crate) fn apply_phase_c_options(
     cfg: &mut ProjectConfig,
     values: &[(String, String)],
 ) -> CmdResult<()> {
-    let val = |k: &str| values.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+    let val = |k: &str| values.iter().rfind(|(a, _)| a == k).map(|(_, v)| v.clone());
     if let Some(v) = val("max-width") {
         cfg.max_width = parse_atlas_limit(&v, "--max-width")?;
     }
@@ -817,7 +818,7 @@ pub(crate) fn apply_parity_layout_options(
     cfg: &mut ProjectConfig,
     values: &[(String, String)],
 ) -> CmdResult<()> {
-    let val = |k: &str| values.iter().find(|(a, _)| a == k).map(|(_, v)| v.clone());
+    let val = |k: &str| values.iter().rfind(|(a, _)| a == k).map(|(_, v)| v.clone());
     if let Some(v) = val("common-divisor-x") {
         cfg.common_divisor_x = parse_divisor(&v, "--common-divisor-x")?;
     }
@@ -832,6 +833,30 @@ pub(crate) fn apply_parity_layout_options(
     Ok(())
 }
 
+/// De una pareja de toggles opuestos gana el que aparezca **último** en la
+/// línea de comandos. Antes se resolvían por orden de código, así que
+/// `--enable-rotation --no-rotation` y su inversa daban exactamente lo
+/// mismo: el resultado dependía de cómo estuviera escrito el CLI, no de lo
+/// que hubiera pedido el usuario (M22). `positivo` enciende el campo,
+/// `negativo` lo apaga; `None` si no aparece ninguno, y entonces manda el
+/// preset de `--format` que se aplicó antes de llegar aquí.
+fn manda_toggles(flags: &[String], positivo: &[&str], negativo: &[&str]) -> Option<bool> {
+    let ultima_positiva = positivo
+        .iter()
+        .filter_map(|p| flags.iter().rposition(|f| f.as_str() == *p))
+        .max();
+    let ultima_negativa = negativo
+        .iter()
+        .filter_map(|n| flags.iter().rposition(|f| f.as_str() == *n))
+        .max();
+    match (ultima_positiva, ultima_negativa) {
+        (Some(p), Some(n)) => Some(p > n),
+        (Some(_), None) => Some(true),
+        (None, Some(_)) => Some(false),
+        (None, None) => None,
+    }
+}
+
 /// Opciones de pack sin valor, agrupadas para poderlas testear y para fijar
 /// la precedencia de los toggles nuevos respecto a los presets de `--format`
 /// (que ya se han aplicado al llegar aquí).
@@ -843,11 +868,12 @@ pub(crate) fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
     if has("shape-debug") {
         cfg.shape_debug = true;
     }
-    if has("enable-rotation") {
-        cfg.allow_rotation = true;
-    }
-    if has("no-rotation") {
-        cfg.allow_rotation = false;
+    if let Some(activo) = manda_toggles(
+        flags,
+        &["enable-rotation"],
+        &["no-rotation", "disable-rotation"],
+    ) {
+        cfg.allow_rotation = activo;
     }
     if has("no-trim") {
         cfg.enable_trim = false;
@@ -858,20 +884,14 @@ pub(crate) fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
     if has("no-aliasing") || has("disable-auto-alias") {
         cfg.enable_aliasing = false;
     }
-    if has("pack-normalmaps") {
-        cfg.enable_normal_maps = true;
-    }
-    if has("no-normals") {
-        cfg.enable_normal_maps = false;
+    if let Some(activo) = manda_toggles(flags, &["pack-normalmaps"], &["no-normals"]) {
+        cfg.enable_normal_maps = activo;
     }
     if has("normalmap-detect") {
         cfg.normal_map_auto_detect = true;
     }
-    if has("trim-sprite-names") {
-        cfg.trim_sprite_names = true;
-    }
-    if has("keep-extension") {
-        cfg.trim_sprite_names = false;
+    if let Some(activo) = manda_toggles(flags, &["trim-sprite-names"], &["keep-extension"]) {
+        cfg.trim_sprite_names = activo;
     }
     if has("prepend-folder-name") {
         cfg.prepend_folder_name = true;
@@ -892,21 +912,14 @@ pub(crate) fn apply_flag_options(cfg: &mut ProjectConfig, flags: &[String]) {
     if has("no-auto-animations") {
         cfg.enable_auto_detect_animations = false;
     }
-    if has("no-multipack") {
-        cfg.multipack = false;
-    }
     if has("auto-folders") {
         cfg.auto_folder_groups = true;
     }
-    if has("multipack") {
-        cfg.multipack = true;
+    if let Some(activo) = manda_toggles(flags, &["multipack"], &["no-multipack"]) {
+        cfg.multipack = activo;
     }
     if has("flip-y") || has("flip-vertical") || has("flip-pvr") {
         cfg.flip_vertical = true;
-    }
-    if has("disable-rotation") {
-        // Alias de `--no-rotation`.
-        cfg.allow_rotation = false;
     }
     if has("enable-cache-busting") {
         // Alias de `--cache-busting`.
@@ -1062,6 +1075,68 @@ mod tests {
         // A solas, que es como se escribe `tp-cli pack -h`.
         let (_, _, flags) = parse_args(&args(&["-h"]));
         assert_eq!(flags, vec!["help".to_string()]);
+    }
+
+    /// M22: con la opción de valor repetida gana la última aparición, no la
+    /// primera.
+    #[test]
+    fn con_un_valor_repetido_gana_la_ultima_aparicion() {
+        let (_, values, _) = parse_args(&args(&[
+            "--max-width",
+            "64",
+            "--dpi",
+            "72",
+            "--max-width",
+            "128",
+        ]));
+        let mut cfg = ProjectConfig::default();
+        apply_phase_c_options(&mut cfg, &values).expect("opciones");
+        assert_eq!(cfg.max_width, 128, "se quedó con el primer --max-width");
+        assert_eq!(cfg.dpi, Some(72));
+    }
+
+    /// M22: los toggles opuestos se resolvían por orden de código, así que
+    /// `--enable-rotation --no-rotation` y su inversa daban lo mismo. Ahora
+    /// manda el que va último en la línea de comandos.
+    #[test]
+    fn los_toggles_opuestos_gana_el_que_va_ultimo() {
+        // rotación
+        let (_, _, flags) = parse_args(&args(&["--enable-rotation", "--no-rotation"]));
+        let mut cfg = ProjectConfig::default();
+        apply_flag_options(&mut cfg, &flags);
+        assert!(!cfg.allow_rotation, "no-rotation va el último");
+        let (_, _, flags) = parse_args(&args(&["--no-rotation", "--enable-rotation"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(cfg.allow_rotation, "enable-rotation va el último");
+        // El alias `--disable-rotation` cuenta igual que `--no-rotation`.
+        let (_, _, flags) = parse_args(&args(&["--disable-rotation", "--enable-rotation"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(cfg.allow_rotation, "el alias también respeta el orden");
+
+        // multipack
+        let (_, _, flags) = parse_args(&args(&["--multipack", "--no-multipack"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(!cfg.multipack);
+        let (_, _, flags) = parse_args(&args(&["--no-multipack", "--multipack"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(cfg.multipack);
+
+        // nombres de sprite y normal maps
+        let (_, _, flags) = parse_args(&args(&["--keep-extension", "--trim-sprite-names"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(cfg.trim_sprite_names);
+        let (_, _, flags) = parse_args(&args(&["--pack-normalmaps", "--no-normals"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(!cfg.enable_normal_maps);
+
+        // Sin ningún toggle, el preset de `--format` se conserva.
+        let mut cfg = ProjectConfig {
+            allow_rotation: true,
+            ..ProjectConfig::default()
+        };
+        let (_, _, flags) = parse_args(&args(&["--force-squared"]));
+        apply_flag_options(&mut cfg, &flags);
+        assert!(cfg.allow_rotation, "sin toggles no se toca el preset");
     }
 
     #[test]

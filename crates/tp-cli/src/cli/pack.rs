@@ -141,7 +141,7 @@ pub(crate) fn cmd_pack(args: &[String]) -> CmdResult<()> {
 /// Imprime la lista de ids de data formats y, si se pidió, los `<id>.hbs` de
 /// --custom-exporters-directory.
 fn print_exporter_list(values: &[(String, String)]) {
-    let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+    let val = |k: &str| values.iter().rfind(|(v, _)| v == k).map(|(_, v)| v.clone());
     print!("{}", exporter_list_text());
     // Los `<id>.hbs` de --custom-exporters-directory también son formatos.
     if let Some(dir) = val("custom-exporters-directory") {
@@ -174,7 +174,7 @@ fn build_pack_config(
     flags: &[String],
     quiet: bool,
 ) -> CmdResult<PackSetup> {
-    let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+    let val = |k: &str| values.iter().rfind(|(v, _)| v == k).map(|(_, v)| v.clone());
 
     let mut cfg = ProjectConfig::default();
 
@@ -500,7 +500,7 @@ fn run_no_pack_actions(
     values: &[(String, String)],
     quiet: bool,
 ) -> CmdResult<bool> {
-    let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.clone());
+    let val = |k: &str| values.iter().rfind(|(v, _)| v == k).map(|(_, v)| v.clone());
     // `--convert-texture` convierte una imagen y termina, sin empaquetar.
     if let Some(v) = val("convert-texture") {
         let msg = convert_texture(cfg, Path::new(&v))?;
@@ -631,6 +631,19 @@ mod tests {
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// M22: `--input a --input b` se quedaba con `a` (first-wins silencioso).
+    /// Los lookups de valor leen ahora la última aparición, como en
+    /// cualquier otro CLI.
+    #[test]
+    fn con_input_o_output_repetido_gana_la_ultima() {
+        let (_, values, _) = parse_args(&args(&[
+            "--input", "a", "--output", "b", "--input", "c", "--output", "d",
+        ]));
+        let setup = build_pack_config(&[], &values, &[], true).expect("config");
+        assert_eq!(setup.cfg.input_directory, PathBuf::from("c"));
+        assert_eq!(setup.cfg.output_directory, PathBuf::from("d"));
     }
 
     #[test]

@@ -16,7 +16,7 @@ pub(crate) fn cmd_decrypt(args: &[String]) {
     let Some(file) = positionals.first().map(PathBuf::from) else {
         fail("decrypt necesita un archivo .tpenc".into());
     };
-    let Some(key) = values.iter().find(|(v, _)| v == "key").map(|(_, v)| v) else {
+    let Some(key) = values.iter().rfind(|(v, _)| v == "key").map(|(_, v)| v) else {
         fail("decrypt necesita --key CLAVE".into());
     };
     let out_path = values
@@ -32,7 +32,12 @@ pub(crate) fn cmd_decrypt(args: &[String]) {
         .unwrap_or_else(|e| fail(format!("No se pudo leer {}: {e}", file.display())));
     let plain = tp_core::export::decrypt_bytes(&data, key)
         .unwrap_or_else(|e| fail(format!("Descifrado fallido: {e}")));
-    let val = |k: &str| values.iter().find(|(v, _)| v == k).map(|(_, v)| v.as_str());
+    let val = |k: &str| {
+        values
+            .iter()
+            .rfind(|(v, _)| v == k)
+            .map(|(_, v)| v.as_str())
+    };
 
     // Vista previa: con `--pixel-format` se re-aplica la conversión del atlas
     // (BGRA8888 y demás) para que la imagen se vea con los colores correctos.
