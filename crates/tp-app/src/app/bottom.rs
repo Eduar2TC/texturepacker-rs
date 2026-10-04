@@ -260,9 +260,12 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
                 }
             }
             for tri in mesh.indices.chunks_exact(3) {
-                let a = mesh.vertices[tri[0] as usize];
-                let b = mesh.vertices[tri[1] as usize];
-                let c = mesh.vertices[tri[2] as usize];
+                // Una triangulación malformada no debe tumbar el callback
+                // de pintado: el triángulo cuyo índice se sale se ignora
+                // (M15).
+                let Some((a, b, c)) = mesh.triangle_vertices(tri) else {
+                    continue;
+                };
                 let pa = egui::pos2(rect.min.x + a.x * scale, rect.min.y + a.y * scale);
                 let pb = egui::pos2(rect.min.x + b.x * scale, rect.min.y + b.y * scale);
                 let pc = egui::pos2(rect.min.x + c.x * scale, rect.min.y + c.y * scale);

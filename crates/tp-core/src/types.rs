@@ -69,6 +69,34 @@ pub struct TriangleMesh {
     pub uvs: Vec<Point2D>,
 }
 
+/// Tres puntos de un triángulo **sin paniquear** nunca: un índice fuera de
+/// rango o un chunk más corto de tres devuelve `None` y el llamador descarta
+/// el triángulo en lugar de caerse dentro de un callback de pintado (M15).
+fn tres_de<'a>(
+    puntos: &'a [Point2D],
+    tri: &[u32],
+) -> Option<(&'a Point2D, &'a Point2D, &'a Point2D)> {
+    let i0 = *tri.first()? as usize;
+    let i1 = *tri.get(1)? as usize;
+    let i2 = *tri.get(2)? as usize;
+    Some((puntos.get(i0)?, puntos.get(i1)?, puntos.get(i2)?))
+}
+
+impl TriangleMesh {
+    /// Los tres vértices de `tri` (un chunk de `indices`), o `None` si la
+    /// malla no llega hasta ellos.
+    pub fn triangle_vertices(&self, tri: &[u32]) -> Option<(&Point2D, &Point2D, &Point2D)> {
+        tres_de(&self.vertices, tri)
+    }
+
+    /// Igual que [`Self::triangle_vertices`] pero sobre las UV: comparten
+    /// orden con los vértices, así que una malla coherente da los mismos
+    /// tres índices válidos.
+    pub fn triangle_uvs(&self, tri: &[u32]) -> Option<(&Point2D, &Point2D, &Point2D)> {
+        tres_de(&self.uvs, tri)
+    }
+}
+
 /// A polygon contour: ordered list of 2D points (closed; last point != first).
 /// `is_hole` marks inner contours of a sprite silhouette.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -194,4 +222,44 @@ pub struct PageInfo {
     /// Hash corto del fichero de imagen para el cache busting del data
     /// format (`?v=<hash>`); vacío cuando la opción está apagada.
     pub cache_version: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn malla() -> TriangleMesh {
+        TriangleMesh {
+            vertices: vec![
+                Point2D::new(0.0, 0.0),
+                Point2D::new(1.0, 0.0),
+                Point2D::new(0.0, 1.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 9],
+            uvs: vec![
+                Point2D::new(0.0, 0.0),
+                Point2D::new(1.0, 0.0),
+                Point2D::new(0.0, 1.0),
+            ],
+        }
+    }
+
+    /// M15: la UI pinta mallas dentro de un callback de repintado; una
+    /// malla malformada tenía que descartarse, no tumbar la ventana.
+    #[test]
+    fn un_indice_fuera_de_rango_no_devuelve_el_triangulo() {
+        let m = malla();
+        assert!(m.triangle_vertices(&[0, 1, 2]).is_some());
+        assert!(m.triangle_uvs(&[0, 1, 2]).is_some());
+        // El segundo triángulo de la malla apunta a un vértice inexistente.
+        assert!(m.triangle_vertices(&[0, 2, 9]).is_none());
+        assert!(m.triangle_uvs(&[0, 2, 9]).is_none());
+    }
+
+    #[test]
+    fn un_triangulo_mal_formado_tampoco_explota() {
+        let m = malla();
+        assert!(m.triangle_vertices(&[]).is_none());
+        assert!(m.triangle_vertices(&[0, 1]).is_none());
+    }
 }

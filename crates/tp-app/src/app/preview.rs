@@ -1081,9 +1081,14 @@ fn draw_mesh(
     };
     let stroke = egui::Stroke::new(0.6_f32, egui::Color32::from_rgb(140, 140, 140));
     for tri in mesh.indices.chunks_exact(3) {
-        let a = to_screen(mesh.uvs[tri[0] as usize].x, mesh.uvs[tri[0] as usize].y);
-        let b = to_screen(mesh.uvs[tri[1] as usize].x, mesh.uvs[tri[1] as usize].y);
-        let c = to_screen(mesh.uvs[tri[2] as usize].x, mesh.uvs[tri[2] as usize].y);
+        // Índices fuera de rango: se salta el triángulo en vez de caerse
+        // dentro del callback de pintado (M15).
+        let Some((va, vb, vc)) = mesh.triangle_uvs(tri) else {
+            continue;
+        };
+        let a = to_screen(va.x, va.y);
+        let b = to_screen(vb.x, vb.y);
+        let c = to_screen(vc.x, vc.y);
         painter.line_segment([a, b], stroke);
         painter.line_segment([b, c], stroke);
         painter.line_segment([c, a], stroke);
