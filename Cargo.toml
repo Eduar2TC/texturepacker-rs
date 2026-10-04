@@ -42,11 +42,23 @@ roxmltree = "0.21"
 [profile.release]
 lto = "thin"
 opt-level = 3
+# Un solo codegen unit: el enlazador ve el workspace entero y suele salir
+# más rápido y más pequeño. Cuesta algo más de build, que sólo se paga al
+# publicar.
+codegen-units = 1
 # Quita las tablas de símbolos de los binarios publicados. En release no hay
 # debuginfo, pero la simbología pesa: medido en tp-cli, 16,2 → 13,3 MB (-18 %).
 # En MSVC la información de depuración vive en el .pdb aparte, que no se
 # distribuye, así que ahí no cambia nada.
 strip = "symbols"
+
+# En dev NO se optimizan las dependencias, y es una decisión medida, no una
+# omisión: con `[profile.dev.package."*"] opt-level = 2` la suite subió de
+# 9,6 s a 13,2 s (y el e2e de PNG de 3,05 s a 4,18 s) además de costar
+# ~30 min de rebuild en frío. El perfil dev mantiene debug-assertions y
+# overflow-checks, y con ellas el código optimizado sale peor. Los crates
+# del workspace se quedan en opt-level 0 para que la compilación
+# incremental siga siendo instantánea.
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
