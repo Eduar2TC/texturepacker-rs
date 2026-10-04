@@ -1,22 +1,26 @@
-//! Codificadores DXT1 (BC1) y DXT5 (BC3) propios, con la cuantización
-//! `--dxt-mode` (`DXT_LINEAR` / `DXT_PERCEPTUAL`).
+//! Codificadores DXT1 (BC1), DXT3 (BC2) y DXT5 (BC3) propios, con la
+//! cuantización `--dxt-mode` (`DXT_LINEAR` / `DXT_PERCEPTUAL`).
 //!
-//! Cada bloque de 4×4 se comprime en 8 bytes (DXT1) o 16 bytes (DXT5: 8 de
-//! alfa + 8 de color). El ajuste de extremos combina tres candidatos
-//! iniciales (caja envolvente por canal, eje dominante desde la media y eje
-//! principal por potencia sobre la matriz de covarianza) con pasadas de
-//! mínimos cuadrados contra la paleta ya cuantizada; el error que se
-//! minimiza está ponderado por luminancia en modo perceptual y es uniforme
-//! en modo lineal.
+//! Cada bloque de 4×4 se comprime en 8 bytes (DXT1) o 16 bytes (DXT3 y
+//! DXT5: 8 de alfa + 8 de color). El ajuste de extremos combina tres
+//! candidatos iniciales (caja envolvente por canal, eje dominante desde la
+//! media y eje principal por potencia sobre la matriz de covarianza) con
+//! pasadas de mínimos cuadrados contra la paleta ya cuantizada; el error
+//! que se minimiza está ponderado por luminancia en modo perceptual y es
+//! uniforme en modo lineal.
 //!
 //! Reglas del formato que respeta el codificador:
 //!
 //! - DXT1 con `c0 > c1` (sin signo) usa los 4 colores interpolados; con
 //!   `c0 <= c1` el cuarto color es transparente y se usa para los píxeles
 //!   con alfa < 128.
-//! - DXT5 guarda el color siempre en modo de 4 colores y el alfa en su
-//!   propio bloque (8 valores interpolados si `a0 > a1`; 6 valores más 0 y
-//!   255 si no).
+//! - DXT3 y DXT5 guardan el color siempre en modo de 4 colores y difieren
+//!   en el alfa: DXT3 lo da explícito, un nibble de 4 bits por píxel y sin
+//!   interpolar (el decodificador reconstruye `n * 17`, así que el error
+//!   máximo es 8 y el alfa binario 0/255 sale exacto); DXT5 lo interpola
+//!   con su propio bloque (8 valores si `a0 > a1`; 6 valores más 0 y 255
+//!   si no), que es mejor para degradados y peor para el alfa duro de
+//!   pixel-art.
 //!
 //! Los bloques incompletos del borde se rellenan con clamp de borde, como
 //! hacen el resto de codificadores de hardware de este módulo.
@@ -448,6 +452,26 @@ fn block_bytes(q0: u16, q1: u16, indices: &[u8; 16]) -> [u8; 8] {
     out
 }
 
+/// Bloque de alfa DXT3/BC2 (8 bytes): 16 nibbles de 4 bits, uno por
+/// píxel en orden de fila, sin interpolar. El decodificador reconstruye
+/// `n * 17`, así que el error máximo por píxel es 8 (la mitad del paso
+/// 17) y el alfa binario 0/255 cae exacto en los extremos: no hay forma
+/// de que un degradado inventado por la interpolación se coma el corte
+/// duro de un sprite con alfa de 1 bit.
+fn encode_alpha_dxt3_block(alpha: &[u8; 16]) -> [u8; 8] {
+    let mut out = [0u8; 8];
+    for (i, a) in alpha.iter().enumerate() {
+        // Redondeo a la rejilla 0..15: (a*15 + 127)/255 == round(a*15/255).
+        let n = (((*a as u32 * 15 + 127) / 255) & 0x0F) as u8;
+        if i % 2 == 0 {
+            out[i / 2] = n; // píxel par → nibble bajo
+        } else {
+            out[i / 2] |= n << 4; // píxel impar → nibble alto
+        }
+    }
+    out
+}
+
 /// Bloque de alfa BC3 (8 bytes) con el mínimo error de los dos modos.
 fn encode_alpha_block(alpha: &[u8; 16]) -> [u8; 8] {
     let min = *alpha.iter().min().unwrap();
@@ -511,6 +535,33 @@ fn encode_alpha_block(alpha: &[u8; 16]) -> [u8; 8] {
     best.map(|b| b.0).unwrap_or([0u8; 8])
 }
 
+/// Los 16 píxeles del bloque que empieza en `(x0*4, y0*4)`, con clamp de
+/// borde en los bloques incompletos del final.
+fn block_pixels(rgba: &[u8], width: usize, height: usize, x0: usize, y0: usize) -> [[u8; 4]; 16] {
+    let mut pixels = [[0u8; 4]; 16];
+    for ty in 0..4 {
+        for tx in 0..4 {
+            let x = (x0 * 4 + tx).min(width.saturating_sub(1));
+            let y = (y0 * 4 + ty).min(height.saturating_sub(1));
+            let i = (y * width + x) * 4;
+            pixels[ty * 4 + tx] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
+        }
+    }
+    pixels
+}
+
+/// Color y alfa de un bloque, ya separados para los dos tipos de bloque de
+/// alfa (DXT3 y DXT5 comparten el color).
+fn split_block(pixels: &[[u8; 4]; 16]) -> ([[u8; 3]; 16], [u8; 16]) {
+    let mut color = [[0u8; 3]; 16];
+    let mut alpha = [0u8; 16];
+    for (i, p) in pixels.iter().enumerate() {
+        color[i] = [p[0], p[1], p[2]];
+        alpha[i] = p[3];
+    }
+    (color, alpha)
+}
+
 /// Codifica una imagen RGBA8 como DXT1/BC1: 8 bytes por bloque de 4×4.
 pub fn encode_dxt1(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> Result<Vec<u8>> {
     ensure_rgba8(rgba, width, height)?;
@@ -519,16 +570,27 @@ pub fn encode_dxt1(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> R
     let mut out = Vec::with_capacity(bx * by * 8);
     for y0 in 0..by {
         for x0 in 0..bx {
-            let mut pixels = [[0u8; 4]; 16];
-            for ty in 0..4 {
-                for tx in 0..4 {
-                    let x = (x0 * 4 + tx).min(width.saturating_sub(1));
-                    let y = (y0 * 4 + ty).min(height.saturating_sub(1));
-                    let i = (y * width + x) * 4;
-                    pixels[ty * 4 + tx] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
-                }
-            }
+            let pixels = block_pixels(rgba, width, height, x0, y0);
             out.extend_from_slice(&encode_dxt1_block(&pixels, mode));
+        }
+    }
+    Ok(out)
+}
+
+/// Codifica una imagen RGBA8 como DXT3/BC2: 16 bytes por bloque de 4×4,
+/// los 8 primeros con el alfa explícito de 4 bits y los 8 últimos con el
+/// mismo bloque de color de 4 colores que DXT5.
+pub fn encode_dxt3(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> Result<Vec<u8>> {
+    ensure_rgba8(rgba, width, height)?;
+    let bx = width.div_ceil(4);
+    let by = height.div_ceil(4);
+    let mut out = Vec::with_capacity(bx * by * 16);
+    for y0 in 0..by {
+        for x0 in 0..bx {
+            let pixels = block_pixels(rgba, width, height, x0, y0);
+            let (color, alpha) = split_block(&pixels);
+            out.extend_from_slice(&encode_alpha_dxt3_block(&alpha));
+            out.extend_from_slice(&encode_color_block(&color, mode));
         }
     }
     Ok(out)
@@ -542,23 +604,8 @@ pub fn encode_dxt5(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> R
     let mut out = Vec::with_capacity(bx * by * 16);
     for y0 in 0..by {
         for x0 in 0..bx {
-            let mut pixels = [[0u8; 4]; 16];
-            for ty in 0..4 {
-                for tx in 0..4 {
-                    let x = (x0 * 4 + tx).min(width.saturating_sub(1));
-                    let y = (y0 * 4 + ty).min(height.saturating_sub(1));
-                    let i = (y * width + x) * 4;
-                    pixels[ty * 4 + tx] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
-                }
-            }
-            let mut alpha = [0u8; 16];
-            for (i, p) in pixels.iter().enumerate() {
-                alpha[i] = p[3];
-            }
-            let mut color = [[0u8; 3]; 16];
-            for (i, p) in pixels.iter().enumerate() {
-                color[i] = [p[0], p[1], p[2]];
-            }
+            let pixels = block_pixels(rgba, width, height, x0, y0);
+            let (color, alpha) = split_block(&pixels);
             out.extend_from_slice(&encode_alpha_block(&alpha));
             out.extend_from_slice(&encode_color_block(&color, mode));
         }
@@ -591,6 +638,17 @@ mod tests {
     fn decode3(data: &[u8], w: usize, h: usize) -> Vec<[u8; 4]> {
         let mut buf = vec![0u32; w * h];
         texture2ddecoder::decode_bc3(data, w, h, &mut buf).expect("decode bc3");
+        buf.iter()
+            .map(|v| {
+                let b = v.to_le_bytes();
+                [b[2], b[1], b[0], b[3]]
+            })
+            .collect()
+    }
+
+    fn decode2(data: &[u8], w: usize, h: usize) -> Vec<[u8; 4]> {
+        let mut buf = vec![0u32; w * h];
+        texture2ddecoder::decode_bc2(data, w, h, &mut buf).expect("decode bc2");
         buf.iter()
             .map(|v| {
                 let b = v.to_le_bytes();
@@ -832,6 +890,9 @@ mod tests {
         let d3 = encode_dxt5(&src, w, h, DxtMode::Perceptual).unwrap();
         assert_eq!(d3.len(), 2 * 2 * 16);
         decode3(&d3, w, h);
+        let d2 = encode_dxt3(&src, w, h, DxtMode::Linear).unwrap();
+        assert_eq!(d2.len(), 2 * 2 * 16);
+        decode2(&d2, w, h);
     }
 
     /// M11: un buffer corto reventaba con un panic en mitad de la
@@ -840,8 +901,99 @@ mod tests {
     fn buffer_corto_devuelve_error_en_vez_de_paniquear() {
         let corto = [0u8; 16]; // 4 píxeles, no los 4x4 que se piden
         assert!(encode_dxt1(&corto, 4, 4, DxtMode::Linear).is_err());
+        assert!(encode_dxt3(&corto, 4, 4, DxtMode::Linear).is_err());
         assert!(encode_dxt5(&corto, 4, 4, DxtMode::Linear).is_err());
         let justo = [0u8; 64];
         assert!(encode_dxt1(&justo, 4, 4, DxtMode::Linear).is_ok());
+    }
+
+    /// Máximo error absoluto de alfa entre la fuente y el decodificador.
+    fn max_alpha_err(src: &[u8], got: &[[u8; 4]]) -> i32 {
+        src.chunks_exact(4)
+            .zip(got)
+            .map(|(p, g)| (p[3] as i32 - g[3] as i32).abs())
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// M12: BC2 guarda el alfa como nibbles explícitos: los extremos
+    /// (0/255) salen exactos y ningún píxel se aleja más de un paso de
+    /// 4 bits del original.
+    #[test]
+    fn dxt3_alpha_explicito_no_interpola() {
+        let (w, h) = (8, 8);
+        let mut src = Vec::with_capacity(w * h * 4);
+        // Valores donde truncar (`>> 4`) y redondear a 0..15 no dan lo
+        // mismo (15, 31 y 240): el redondeo es el cuantificador óptimo y
+        // truncar se llevaría 15 a 0, error 15 en vez de 2.
+        const ALFAS: [u8; 8] = [0, 15, 31, 64, 128, 200, 240, 255];
+        for y in 0..h {
+            for x in 0..w {
+                let a = ALFAS[(x + y) % ALFAS.len()];
+                src.extend_from_slice(&[(x * 16) as u8, (y * 16) as u8, 128, a]);
+            }
+        }
+        let data = encode_dxt3(&src, w, h, DxtMode::Linear).unwrap();
+        assert_eq!(
+            data.len(),
+            (w / 4) * (h / 4) * 16,
+            "BC2 son 16 bytes por bloque"
+        );
+        let got = decode2(&data, w, h);
+        for (i, p) in src.chunks_exact(4).enumerate() {
+            if p[3] == 0 || p[3] == 255 {
+                assert_eq!(got[i][3], p[3], "píxel {i}: el extremo sale exacto");
+            }
+        }
+        assert!(
+            max_alpha_err(&src, &got) <= 8,
+            "un nibble reconstruido como n*17: el error máximo es 8"
+        );
+    }
+
+    /// M12: el motivo de tener BC2. Con alfa de cortes duros la tabla de
+    /// 8 valores de BC3 no puede acercarse a un nivel intermedio como
+    /// 128, mientras que el nibble de BC2 sí.
+    #[test]
+    fn dxt3_supera_a_dxt5_en_alfa_con_cortes_duros() {
+        let (w, h) = (4, 4);
+        let mut src = Vec::with_capacity(w * h * 4);
+        for i in 0..w * h {
+            let a = match i % 3 {
+                0 => 0,
+                1 => 128,
+                _ => 255,
+            };
+            src.extend_from_slice(&[200, 60, 30, a]);
+        }
+        let got3 = decode2(&encode_dxt3(&src, w, h, DxtMode::Linear).unwrap(), w, h);
+        let got5 = decode3(&encode_dxt5(&src, w, h, DxtMode::Linear).unwrap(), w, h);
+        let e3 = max_alpha_err(&src, &got3);
+        let e5 = max_alpha_err(&src, &got5);
+        assert!(e3 <= 8, "BC2 solo falla un paso de 4 bits: {e3}");
+        assert!(e5 > e3, "BC3 interpola y se queda más lejos: {e5} > {e3}");
+    }
+
+    /// M12: BC2 y BC3 llevan los mismos 8 bytes de color, porque los dos
+    /// usan la paleta de 4 colores; solo cambia el bloque de alfa.
+    #[test]
+    fn dxt3_comparte_el_bloque_de_color_con_dxt5() {
+        let src = gradient(8, 8);
+        let d3 = encode_dxt3(&src, 8, 8, DxtMode::Perceptual).unwrap();
+        let d5 = encode_dxt5(&src, 8, 8, DxtMode::Perceptual).unwrap();
+        assert_eq!(d3.len(), d5.len());
+        for (i, (b3, b5)) in d3.chunks_exact(16).zip(d5.chunks_exact(16)).enumerate() {
+            assert_eq!(&b3[8..], &b5[8..], "bloque {i}: el color debe ser idéntico");
+        }
+    }
+
+    #[test]
+    fn dxt3_decodes_close_to_the_source() {
+        let (w, h) = (16, 16);
+        let src = gradient(w, h);
+        let data = encode_dxt3(&src, w, h, DxtMode::Linear).unwrap();
+        let got = decode2(&data, w, h);
+        let mean = mean_err(&src, &got, 3);
+        assert!(mean < 10.0, "error medio {mean:.2}");
     }
 }

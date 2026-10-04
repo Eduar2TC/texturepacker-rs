@@ -56,7 +56,9 @@ pub fn encode_to_bytes(
         GpuFormat::Dds => match opts.pixel_format {
             // Bloques DXT: la cabecera lleva el fourcc y el payload son los
             // bloques BC1/BC3 codificados con el dxt-mode elegido.
-            PixelFormat::Dxt1 | PixelFormat::Dxt5 => encode_dds_dxt(rgba, width, height, opts),
+            PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5 => {
+                encode_dds_dxt(rgba, width, height, opts)
+            }
             _ => {
                 let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
                 encode_dds(&data, width, height, color)

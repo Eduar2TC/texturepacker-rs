@@ -83,7 +83,7 @@ pub struct ProjectConfig {
     /// (≈128, la calidad por defecto de Basis).
     #[serde(default = "default_basis_quality")]
     pub basis_quality: u8,
-    /// Cuantización DXT1/DXT5 (`--dxt-mode`).
+    /// Cuantización DXT1/DXT3/DXT5 (`--dxt-mode`).
     #[serde(default)]
     pub dxt_mode: DxtMode,
     /// Cache busting del data format (`--cache-busting`): añade `?v=<hash>`

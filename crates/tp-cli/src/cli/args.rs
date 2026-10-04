@@ -1003,6 +1003,7 @@ pub(crate) fn parse_pixel_format(v: &str) -> CmdResult<PixelFormat> {
         "etc2" | "etc2rgba" => PixelFormat::Etc2Rgba,
         "etc2rgb" => PixelFormat::Etc2Rgb,
         "dxt1" => PixelFormat::Dxt1,
+        "dxt3" => PixelFormat::Dxt3,
         "dxt5" => PixelFormat::Dxt5,
         "astc4x4" => PixelFormat::Astc4x4,
         "astc5x4" => PixelFormat::Astc5x4,
@@ -1187,6 +1188,10 @@ mod tests {
             PixelFormat::Etc2Rgb
         ));
         assert!(matches!(
+            parse_pixel_format("dxt3").unwrap(),
+            PixelFormat::Dxt3
+        ));
+        assert!(matches!(
             parse_pixel_format("dxt5").unwrap(),
             PixelFormat::Dxt5
         ));
@@ -1216,6 +1221,14 @@ mod tests {
         cfg.gpu_format = GpuFormat::Png;
         let err = check_export_flags(&cfg).unwrap_err();
         assert!(err.contains("DXT1") && err.contains("PNG"), "{err}");
+
+        // DXT3 es un bloque DXT: va en DDS y solo en DDS.
+        cfg.pixel_format = PixelFormat::Dxt3;
+        cfg.gpu_format = GpuFormat::Dds;
+        assert!(check_export_flags(&cfg).is_ok());
+        cfg.gpu_format = GpuFormat::Png;
+        let err = check_export_flags(&cfg).unwrap_err();
+        assert!(err.contains("DXT3") && err.contains("PNG"), "{err}");
 
         // Un pixel format de software vale con cualquier formato de textura.
         cfg.pixel_format = PixelFormat::Rgba8888;

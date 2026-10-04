@@ -250,6 +250,11 @@ pub enum PixelFormat {
     /// S3TC/BC1: 4 bits/píxel con 1 bit de alfa.
     #[serde(rename = "DXT1")]
     Dxt1,
+    /// S3TC/BC2: 8 bits/píxel con alfa explícito de 4 bits (sin
+    /// interpolar): el alfa duro de pixel-art sale exacto y no se
+    /// deforma con la interpolación de BC3.
+    #[serde(rename = "DXT3")]
+    Dxt3,
     /// S3TC/BC3: 8 bits/píxel con alfa interpolado.
     #[serde(rename = "DXT5")]
     Dxt5,
@@ -318,6 +323,7 @@ impl PixelFormat {
             PixelFormat::Etc2Rgb => "ETC2_RGB",
             PixelFormat::Etc2Rgba => "ETC2_RGBA",
             PixelFormat::Dxt1 => "DXT1",
+            PixelFormat::Dxt3 => "DXT3",
             PixelFormat::Dxt5 => "DXT5",
             PixelFormat::Astc4x4 => "ASTC_4x4",
             PixelFormat::Astc5x4 => "ASTC_5x4",
@@ -392,7 +398,7 @@ impl PixelFormat {
             ),
             PixelFormat::Etc1Rgb => matches!(format, GpuFormat::Etc1 | GpuFormat::Etc1Ktx),
             PixelFormat::Etc2Rgb | PixelFormat::Etc2Rgba => format == GpuFormat::Etc2Rgba,
-            PixelFormat::Dxt1 | PixelFormat::Dxt5 => format == GpuFormat::Dds,
+            PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5 => format == GpuFormat::Dds,
             f if f.astc_block().is_some() => format == GpuFormat::Astc4x4,
             _ => false,
         }

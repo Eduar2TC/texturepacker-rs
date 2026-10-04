@@ -918,7 +918,7 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
             if app.config.gpu_format == GpuFormat::Dds
                 && matches!(
                     app.config.pixel_format,
-                    PixelFormat::Dxt1 | PixelFormat::Dxt5
+                    PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5
                 )
             {
                 enum_combo(
@@ -1662,6 +1662,7 @@ const GPU_PIXEL_FORMATS: &[(PixelFormat, &str)] = &[
     (PixelFormat::Etc2Rgb, "ETC2_RGB"),
     (PixelFormat::Etc2Rgba, "ETC2_RGBA"),
     (PixelFormat::Dxt1, "DXT1"),
+    (PixelFormat::Dxt3, "DXT3"),
     (PixelFormat::Dxt5, "DXT5"),
     (PixelFormat::Astc4x4, "ASTC_4x4"),
     (PixelFormat::Astc5x4, "ASTC_5x4"),

@@ -83,8 +83,8 @@ pub(super) fn encode_dds(
     Ok(out)
 }
 
-/// DDS con bloques DXT (fourcc `DXT1`/`DXT5`): cabecera legacy de 128 bytes
-/// con `DDSD_LINEARSIZE` y el payload ya comprimido por [`dxt`].
+/// DDS con bloques DXT (fourcc `DXT1`/`DXT3`/`DXT5`): cabecera legacy de
+/// 128 bytes con `DDSD_LINEARSIZE` y el payload ya comprimido por [`dxt`].
 pub(super) fn encode_dds_dxt(
     rgba: &[u8],
     width: usize,
@@ -95,6 +95,10 @@ pub(super) fn encode_dds_dxt(
         PixelFormat::Dxt1 => (
             *b"DXT1",
             dxt::encode_dxt1(rgba, width, height, opts.dxt_mode)?,
+        ),
+        PixelFormat::Dxt3 => (
+            *b"DXT3",
+            dxt::encode_dxt3(rgba, width, height, opts.dxt_mode)?,
         ),
         PixelFormat::Dxt5 => (
             *b"DXT5",
@@ -211,6 +215,14 @@ mod tests {
         let mut buf5 = vec![0u32; 64];
         texture2ddecoder::decode_bc3(&dds5[128..], 8, 8, &mut buf5).expect("bc3");
         assert!(mean_channel_error(&rgba, &buf5) < 48.0);
+
+        o.pixel_format = PixelFormat::Dxt3;
+        let dds3 = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(&dds3[84..88], b"DXT3");
+        assert_eq!(dds3.len(), 128 + 4 * 16, "BC2 son 16 bytes por bloque");
+        let mut buf3 = vec![0u32; 64];
+        texture2ddecoder::decode_bc2(&dds3[128..], 8, 8, &mut buf3).expect("bc2");
+        assert!(mean_channel_error(&rgba, &buf3) < 48.0);
     }
 
     #[test]
