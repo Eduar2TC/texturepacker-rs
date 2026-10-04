@@ -341,6 +341,10 @@ fn finalize(pages: Vec<PageState>, opts: &PackerOptions, cw: i32, ch: i32) -> Pa
                 auto_w = opts.fixed_width <= 0;
                 auto_h = opts.fixed_height <= 0;
             }
+            // Content size before alignment: the clamp below may not go
+            // under it, or the blit would crop sprites in silence.
+            let raw_w = w;
+            let raw_h = h;
             if auto_w {
                 w = align_dimension(w, opts, true);
             }
@@ -350,11 +354,16 @@ fn finalize(pages: Vec<PageState>, opts: &PackerOptions, cw: i32, ch: i32) -> Pa
             // Never exceed the configured maximum (constraints round up).
             let max_w = opts.max_width.max(cw);
             let max_h = opts.max_height.max(ch);
+            // Rounding the maximum down can land *under* the content when
+            // the alignment above has just rounded it up (16383 → 16384 →
+            // 16380): keeping the raw size gives up the constraint but
+            // saves the pixels. A texture a few px wide is preferable to a
+            // silently amputated atlas.
             if w > max_w && opts.fixed_width <= 0 {
-                w = down_align(max_w, opts, true);
+                w = down_align(max_w, opts, true).max(raw_w);
             }
             if h > max_h && opts.fixed_height <= 0 {
-                h = down_align(max_h, opts, false);
+                h = down_align(max_h, opts, false).max(raw_h);
             }
             PackPage {
                 index: p.index,
@@ -1633,6 +1642,44 @@ mod tests {
         assert_eq!(out.pages[0].width % 4, 0);
         assert_eq!(out.pages[0].height % 4, 0);
         assert!(out.pages[0].width <= 8 && out.pages[0].height <= 8);
+    }
+
+    /// M4: ninguna página puede quedar más estrecha que lo que lleva
+    /// dentro. El contenido que llena el lienzo sube a la siguiente cuota
+    /// de la restricción (1001 → 1004 en `MultipleOf4`, 1500 → 2048 en
+    /// `POT`), esa cuota ya no cabe en el máximo configurado, y el
+    /// redondeo hacia abajo caía por debajo del contenido (1000, 1024):
+    /// los píxeles de más se perdían en el blit sin que nadie lo dijera.
+    #[test]
+    fn ninguna_pagina_queda_mas_estrecha_que_sus_placements() {
+        for (constraint, max) in [
+            (SizeConstraint::MultipleOf4, 1001),
+            (SizeConstraint::Pot, 1500),
+            (SizeConstraint::WordAligned, 1001),
+            (SizeConstraint::AnySize, 1001), // caso de control
+        ] {
+            let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, max, 0, 0, false);
+            opts.size_constraints = constraint;
+            opts.word_align_mod = 4;
+            let out = pack(&[item("a", max, max)], &opts).unwrap();
+            assert_eq!(out.pages.len(), 1, "{constraint:?}");
+            for p in &out.pages[0].placements {
+                assert!(
+                    p.frame.x + p.frame.width <= out.pages[0].width,
+                    "{constraint:?}: frame {:?} más ancho que la página {}",
+                    p.frame,
+                    out.pages[0].width
+                );
+                assert!(
+                    p.frame.y + p.frame.height <= out.pages[0].height,
+                    "{constraint:?}: frame {:?} más alto que la página {}",
+                    p.frame,
+                    out.pages[0].height
+                );
+            }
+            assert!(out.pages[0].width <= max, "{constraint:?}");
+            assert!(out.pages[0].height <= max, "{constraint:?}");
+        }
     }
 
     #[test]
