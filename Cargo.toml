@@ -89,5 +89,7 @@ chunks_exact_to_as_chunks = { level = "allow", priority = 1 }
 # Para eliminarlo: borrar `third_party/winit`, este bloque y `workspace.exclude`
 # cuando eframe publique sobre winit 0.31 (rust-lang/winit#4571, con DnD en
 # Wayland, ya está fusionada en master).
+#
+# Procedencia, alcance y plan de retirada: `third_party/PATCHES.md`.
 [patch.crates-io]
 winit = { path = "third_party/winit" }
