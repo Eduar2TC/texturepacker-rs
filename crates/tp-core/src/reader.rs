@@ -188,8 +188,22 @@ fn decode_xpm(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
             "XPM con geometría no soportada: {width}x{height}, {cpp} chars/pixel"
         ));
     }
+    // Tope implícito del propio fichero: cada fila aporta al menos
+    // `width` bytes, de modo que una geometría mayor que el fichero es un
+    // header corrupto. Sin comprobarlo aquí se reservaba
+    // `width * height * 4` bytes antes de descubrir que faltan filas: con
+    // un header de 10^9 por lado, decenas de petabytes que abortaban el
+    // proceso en lugar de devolver un error.
+    if width.checked_mul(height).is_none_or(|px| px > bytes.len()) {
+        return Err(format!(
+            "XPM: geometría {width}x{height} no cabe en el fichero ({} bytes)",
+            bytes.len()
+        ));
+    }
 
-    let mut palette: Vec<(String, [u8; 4])> = Vec::with_capacity(colors);
+    // `colors` también viene del header: sin tope, un número enorme
+    // reservaría cientos de GB antes de fallar al leer la paleta.
+    let mut palette: Vec<(String, [u8; 4])> = Vec::with_capacity(colors.min(bytes.len()));
     for _ in 0..colors {
         let entry = fields
             .next()
@@ -466,7 +480,28 @@ fn decode_astc(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
     if width == 0 || height == 0 {
         return Err("ASTC con ancho o alto 0".to_string());
     }
+    if block_x == 0 || block_y == 0 {
+        return Err(format!("ASTC con bloque de tamaño {block_x}x{block_y}"));
+    }
     let payload = &bytes[16..];
+    // El payload son 16 bytes por bloque, así que una geometría que no
+    // cabría en estos bytes es un header corrupto. Se comprueba antes de
+    // reservar: los ejes del header son de 24 bits (hasta 16 777 215), y
+    // `vec![0u32; width * height]` llegaba a petabytes.
+    let Some(necesarios) = width
+        .div_ceil(block_x)
+        .checked_mul(height.div_ceil(block_y))
+        .and_then(|bloques| bloques.checked_mul(16))
+    else {
+        return Err(format!("ASTC: geometría {width}x{height} demasiado grande"));
+    };
+    if necesarios > payload.len() {
+        return Err(format!(
+            "ASTC: {width}x{height} necesita {necesarios} bytes de payload y el \
+             fichero tiene {}",
+            payload.len()
+        ));
+    }
     let mut pixels = vec![0u32; width * height];
     texture2ddecoder::decode_astc(payload, width, height, block_x, block_y, &mut pixels)
         .map_err(|e| format!("ASTC: {e}"))?;
@@ -1436,6 +1471,38 @@ static char * test[] = {
     }
 
     #[test]
+    fn xpm_rejects_geometry_bigger_than_the_file() {
+        // Header corrupto: 10^9 por lado. Antes de mirar las filas se
+        // reservaban width*height*4 bytes (≈40 PB) y el proceso abortaba
+        // en vez de devolver un error.
+        let text = r#"
+"1000000000 1000000000 1 1",
+"  c #000000",
+" "
+"#;
+        let path = temp("xpm_huge.xpm", text.as_bytes());
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("no cabe en el fichero"), "{err}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn xpm_does_not_reserve_an_absurd_palette() {
+        // Geometría válida (4x4 cabe en el fichero) pero 4 000 000 000
+        // colores en la paleta: el `with_capacity` reservaría cientos de
+        // GB antes de descubrir que la paleta está truncada, que es el
+        // error que sí se devuelve.
+        let text = r#"
+"4 4 4000000000 1",
+"  c #000000"
+"#;
+        let path = temp("xpm_huge_palette.xpm", text.as_bytes());
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("paleta truncada"), "{err}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn pnm_files_are_read_through_image() {
         // P6 binario: 2x1, rojo y azul.
         let mut bytes = b"P6\n2 1\n255\n".to_vec();
@@ -1624,6 +1691,38 @@ static char * test[] = {
         // Cabecera incorrecta.
         let path = temp("astc_bad.astc", b"NOPE");
         assert!(load_image_rgba(&path).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn astc_rejects_geometry_the_payload_cannot_hold() {
+        // Ejes de 24 bits (16 777 215 por lado) y payload vacío: el
+        // `vec![0u32; width * height]` de antes llegaba a ~1 PB. Los
+        // 16 bytes por bloque que exige el formato no caben aquí.
+        let mut bytes = vec![0x13, 0xAB, 0xA1, 0x5C];
+        bytes.extend_from_slice(&[4, 4, 1]); // bloque
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0x0F]); // ancho = 16 777 215
+        bytes.extend_from_slice(&[0xFF, 0xFF, 0x0F]); // alto = 16 777 215
+        bytes.extend_from_slice(&1u32.to_le_bytes()[..3]); // z
+        let path = temp("astc_huge.astc", &bytes);
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("payload"), "{err}");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn astc_rejects_zero_sized_blocks() {
+        // Bloque 0x0: además de no ser un formato ASTC válido, partía la
+        // comprobación del payload con una división por cero.
+        let mut bytes = vec![0x13, 0xAB, 0xA1, 0x5C];
+        bytes.extend_from_slice(&[0, 0, 1]); // bloque 0x0
+        bytes.extend_from_slice(&8u32.to_le_bytes()[..3]);
+        bytes.extend_from_slice(&8u32.to_le_bytes()[..3]);
+        bytes.extend_from_slice(&1u32.to_le_bytes()[..3]);
+        bytes.extend_from_slice(&[0u8; 4 * 16]);
+        let path = temp("astc_zero_block.astc", &bytes);
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("bloque de tamaño 0x0"), "{err}");
         let _ = std::fs::remove_file(path);
     }
 
