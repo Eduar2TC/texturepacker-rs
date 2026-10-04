@@ -12,7 +12,6 @@
 //!   sprites can be packed tighter than their bounding boxes.
 
 use crate::error::{Result, TpError};
-use std::time::{Duration, Instant};
 
 use crate::config::{
     BasicSortBy, PackMode, PackingAlgorithm, PackingStrategy, SizeConstraint, SortOrder,
@@ -454,17 +453,126 @@ fn prev_pot(v: i32) -> i32 {
     p.max(1)
 }
 
-/// Time budget shared by the size-search passes.
-struct TimeBudget {
-    start: Instant,
-    budget: Duration,
+/// Presupuesto de trabajo de la búsqueda de tamaño.
+///
+/// El presupuesto **no es de reloj**: se mide en unidades de trabajo
+/// (candidatos examinados en `try_place` y celdas del footprint
+/// escaneadas en `overlaps`), que son la misma magnitud en todas las
+/// máquinas. Con el reloj de antes (400 ms en `Good`, 3 s en `Best`) la
+/// búsqueda comprobaba más tamaños cuanto más rápida fuera la CPU, así
+/// que la misma entrada daba atlas de distinto tamaño según dónde se
+/// empaquetara — mientras el resto del packer es cuidadosamente
+/// determinista (sorts estables, tiebreak por orden de entrada).
+///
+/// La magnitud de trabajo además reparte el presupuesto en función del
+/// coste real: un empaquetado de rectángulos sale barato y la búsqueda
+/// llega a converger, mientras que uno de polígonos escanea celdas y
+/// consume el presupuesto en pocas comprobaciones, como hacía el reloj.
+struct WorkBudget {
+    left: std::cell::Cell<u64>,
 }
 
-impl TimeBudget {
+impl WorkBudget {
+    fn new(unidades: u64) -> Self {
+        Self {
+            left: std::cell::Cell::new(unidades),
+        }
+    }
+
     fn expired(&self) -> bool {
-        self.start.elapsed() > self.budget
+        self.left.get() == 0
+    }
+
+    /// Descuenta el trabajo que costó la última comprobación. Nunca se
+    /// pasa de cero: si una sola comprobación ya se come el presupuesto,
+    /// la siguiente comprobación ve el saldo agotado y se corta.
+    fn gastar(&self, unidades: u64) {
+        #[cfg(test)]
+        COBRO.with(|c| c.set(c.get().saturating_add(unidades)));
+        self.left.set(self.left.get().saturating_sub(unidades));
     }
 }
+
+thread_local! {
+    /// Trabajo consumido por el empaquetado en curso **en este hilo**: la
+    /// búsqueda lo pone a cero antes de cada comprobación y lee lo que
+    /// gastó. Thread-local y no global para que paquetes simultáneos (la
+    /// app empaqueta en un hilo de fondo, los tests corren en paralelo)
+    /// no se mezclen y rompan el determinismo.
+    static TRABAJO: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Apunta trabajo consumido al contador del hilo.
+fn gastar_trabajo(unidades: u64) {
+    TRABAJO.with(|t| t.set(t.get().saturating_add(unidades)));
+}
+
+/// Trabajo consumido desde la última [`reiniciar_trabajo`].
+fn trabajo_consumido() -> u64 {
+    TRABAJO.with(|t| t.get())
+}
+
+/// Pone el contador a cero: se llama antes de cada comprobación de la
+/// búsqueda de tamaño.
+fn reiniciar_trabajo() {
+    TRABAJO.with(|t| t.set(0))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Trabajo cobrado por la búsqueda de tamaño desde la última
+    /// [`reiniciar_cobro`]. Es la comprobación de que el presupuesto de M3
+    /// se gasta en trabajo: con un presupuesto de reloj nadie llama a
+    /// [`WorkBudget::gastar`] y esto se queda a cero, que es el bug.
+    static COBRO: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Apunta el cobro de la búsqueda al contador de prueba de este hilo.
+#[cfg(test)]
+fn reiniciar_cobro() {
+    COBRO.with(|c| c.set(0))
+}
+
+/// Trabajo que la búsqueda cobró desde la última [`reiniciar_cobro`].
+#[cfg(test)]
+fn cobrado() -> u64 {
+    COBRO.with(|c| c.get())
+}
+
+/// Unidades de trabajo que `Good` (una pasada de búsqueda) puede gastar.
+///
+/// La unidad cuenta trabajo real de la búsqueda —candidatos examinados en
+/// `try_place`, celdas del footprint en `overlaps`, rectángulos libres en
+/// `split_rects`/`prune_contained`— y no reloj, para que la misma entrada
+/// dé el mismo atlas en todas las máquinas. Medida en esta máquina, la
+/// tasa queda entre 12 k y 28 k unidades/ms según la entrada (dentro de un
+/// factor ~2,3), así que un presupuesto en unidades acota también el
+/// tiempo. Conviene recordar que el reloj de antes tampoco cortaba a los
+/// 400 ms: solo se comprobaba entre evaluaciones, y una evaluación de
+/// atlas pesado llega a costar 400 ms por sí sola, de ahí que "400 ms de
+/// reloj" fueran en la práctica 3 s de paquete.
+///
+/// El valor se fijo contra ese reloj, con tres corridas por celda:
+///
+/// | entrada | reloj de 400 ms | 13 M (elegido) | 10 M (descartado) |
+/// |---|---|---|---|
+/// | 600 sprites 64×64 | 1088×3487 en 3,1 s | 1088×3487 en 3,6–4,3 s | 2091×2094 en 1,8 s (+16 % de área) |
+/// | 60 polígonos 256×192 | 1064×3008 en 1,4 s | 936×4072 en 2,7 s | 1064×3008 en 1,6 s |
+///
+/// 13 M es el mínimo que reproduce el atlas de antes en rectángulos, el
+/// caso por defecto. En polígonos el recorte de contenido no es monótono
+/// con el presupuesto (lienzo más estrecho, pila más alta), así que ahí la
+/// comparación no admite preferencia clara y manda el caso de rectángulos.
+/// Entradas ligeras (21,5 k unidades para 10 sprites) convergen con
+/// cualquiera de estos valores, igual que convergían con el reloj.
+const GOOD_WORK_UNITS: u64 = 13_000_000;
+/// Unidades de trabajo de `Best` (cuatro pasadas hasta estabilizar).
+///
+/// El reloj de antes era de 3 s; en la misma entrada de rectángulos la
+/// primera pasada llegaba a 3,4 s ≈ 50 M unidades, así que este valor
+/// reproduce `Best` de antes y sigue siendo ~3,8× `Good`, que es lo que
+/// separa los dos modos.
+const BEST_WORK_UNITS: u64 = 50_000_000;
 
 /// Binary-search the smallest single-page canvas. Returns
 /// `None` when the search could not improve the current result.
@@ -474,15 +582,12 @@ fn search_min(
     cw: i32,
     ch: i32,
 ) -> Result<Option<PackOutput>> {
-    let budget = match opts.pack_mode {
+    let unidades = match opts.pack_mode {
         PackMode::Fast => return Ok(None),
-        PackMode::Good => Duration::from_millis(400),
-        PackMode::Best => Duration::from_millis(3_000),
+        PackMode::Good => GOOD_WORK_UNITS,
+        PackMode::Best => BEST_WORK_UNITS,
     };
-    let tb = TimeBudget {
-        start: Instant::now(),
-        budget,
-    };
+    let tb = WorkBudget::new(unidades);
     let bp = opts.border_padding.max(0);
     let pad = opts.padding.max(0);
 
@@ -493,6 +598,9 @@ fn search_min(
         lb_h = lb_h.max(it.height + 2 * pad + 2 * bp);
     }
 
+    // Cada comprobación se apunta al presupuesto por lo que costó de
+    // verdad, no por lo que tardó: el resultado es el mismo en todas las
+    // máquinas y el gasto, acotado.
     let fits = |w: i32, h: i32| -> bool {
         if w < lb_w || h < lb_h || w > cw || h > ch {
             return false;
@@ -500,31 +608,10 @@ fn search_min(
         if opts.force_squared && w != h {
             return false;
         }
-        match place_all(items, opts, w, h) {
-            Ok(pages) => {
-                if pages.len() != 1 {
-                    return false;
-                }
-                // Manual: el lienzo solo sirve si ninguna posición fijada
-                // por el usuario quedó recortada al encogerlo.
-                if opts.algorithm == PackingAlgorithm::Manual {
-                    let (iw, ih) = (w - 2 * bp, h - 2 * bp);
-                    for it in items {
-                        if let Some((px, py)) = opts.manual_positions.get(&it.id).copied() {
-                            let fw = it.width + 2 * pad;
-                            let fh = it.height + 2 * pad;
-                            let fx = px.max(0).min(iw - fw);
-                            let fy = py.max(0).min(ih - fh);
-                            if bp + fx != px || bp + fy != py {
-                                return false;
-                            }
-                        }
-                    }
-                }
-                true
-            }
-            Err(_) => false,
-        }
+        reiniciar_trabajo();
+        let cabe = cabe_en_una_hoja(items, opts, w, h, bp, pad);
+        tb.gastar(trabajo_consumido());
+        cabe
     };
 
     let mut cur = (cw, ch);
@@ -553,13 +640,53 @@ fn search_min(
     place_and_size(items, opts, cur.0, cur.1).map(Some)
 }
 
+/// ¿Cabe todo el conjunto en **una** hoja de `w x h` sin recortar
+/// posiciones fijadas por el usuario? Es lo que comprueba cada paso de la
+/// búsqueda de tamaño; se separa de `search_min` para que el presupuesto
+/// de trabajo se pueda cobrar alrededor entero de la comprobación,
+/// incluidos los cortes por la mitad.
+fn cabe_en_una_hoja(
+    items: &[PackItem],
+    opts: &PackerOptions,
+    w: i32,
+    h: i32,
+    bp: i32,
+    pad: i32,
+) -> bool {
+    match place_all(items, opts, w, h) {
+        Ok(pages) => {
+            if pages.len() != 1 {
+                return false;
+            }
+            // Manual: el lienzo solo sirve si ninguna posición fijada
+            // por el usuario quedó recortada al encogerlo.
+            if opts.algorithm == PackingAlgorithm::Manual {
+                let (iw, ih) = (w - 2 * bp, h - 2 * bp);
+                for it in items {
+                    if let Some((px, py)) = opts.manual_positions.get(&it.id).copied() {
+                        let fw = it.width + 2 * pad;
+                        let fh = it.height + 2 * pad;
+                        let fx = px.max(0).min(iw - fw);
+                        let fy = py.max(0).min(ih - fh);
+                        if bp + fx != px || bp + fy != py {
+                            return false;
+                        }
+                    }
+                }
+            }
+            true
+        }
+        Err(_) => false,
+    }
+}
+
 /// Binary search one axis for the smallest value that still fits on one page.
 fn search_axis(
     cur: i32,
     other: i32,
     lb: i32,
     opts: &PackerOptions,
-    tb: &TimeBudget,
+    tb: &WorkBudget,
     width_axis: bool,
     fits: &dyn Fn(i32, i32) -> bool,
 ) -> i32 {
@@ -1162,6 +1289,10 @@ fn try_place(
             if rotated && (!opts.allow_rotation || w == h) {
                 continue;
             }
+            // Un candidato = una comprobación de solape + una puntuación:
+            // es la unidad con la que la búsqueda de tamaño paga su
+            // presupuesto (M3).
+            gastar_trabajo(1);
             let (pw, ph) = if rotated { (h, w) } else { (w, h) };
             let (sx, sy) = snap_pos(fr.x, fr.y, align);
             if sx - fr.x + pw <= fr.width && sy - fr.y + ph <= fr.height {
@@ -1270,6 +1401,9 @@ fn score_placement(fr: &Rect, w: i32, h: i32, opts: &PackerOptions, page: &PageS
 /// Contact length of a candidate rect with placed frames and the page border
 /// (contact point heuristic).
 fn contact_score(x: i32, y: i32, w: i32, h: i32, page: &PageState) -> i64 {
+    // Recorre todos los ya colocados: es el coste real de puntuar un
+    // candidato con esta estrategia y entra en el presupuesto (M3).
+    gastar_trabajo(page.placed.len() as u64);
     let (x0, y0, x1, y1) = (x, y, x + w, y + h);
     let mut score: i64 = 0;
     for p in &page.placed {
@@ -1310,6 +1444,9 @@ fn contact_score(x: i32, y: i32, w: i32, h: i32, page: &PageState) -> i64 {
 /// Split every free rect that intersects `placed` (MaxRects split + prune).
 fn split_rects(free: &mut Vec<Rect>, placed: Rect) {
     let mut new_rects = Vec::new();
+    // Un examen por rectángulo libre: es parte del coste real de una
+    // colocación y, por tanto, de lo que la búsqueda de tamaño gasta (M3).
+    let trabajo = free.len() as u64;
     for fr in free.iter() {
         if !fr.intersects(&placed) {
             new_rects.push(*fr);
@@ -1339,16 +1476,23 @@ fn split_rects(free: &mut Vec<Rect>, placed: Rect) {
         }
     }
     *free = new_rects;
+    gastar_trabajo(trabajo);
 }
 
 /// Remove free rects fully contained in another free rect (MaxRects prune).
 fn prune_contained(free: &mut Vec<Rect>) {
+    // O(free²) comparaciones, con un `remove` de O(free) por borrado: es el
+    // término dominante de una colocación en atlas grandes, así que entra en
+    // el presupuesto de trabajo de la búsqueda de tamaño (M3).
+    let mut trabajo = 0u64;
     let mut i = 0;
     while i < free.len() {
         let mut removed = false;
         for (j, other) in free.iter().enumerate() {
+            trabajo += 1;
             if i != j && other.contains(&free[i]) && other.area() > free[i].area() {
                 free.remove(i);
+                trabajo += free.len() as u64;
                 removed = true;
                 break;
             }
@@ -1357,6 +1501,7 @@ fn prune_contained(free: &mut Vec<Rect>) {
             i += 1;
         }
     }
+    gastar_trabajo(trabajo);
 }
 
 // ---------------------------------------------------------------------------
@@ -1400,8 +1545,15 @@ fn overlaps(occupied: &[bool], footprint: &[bool], pw: i32, ph: i32, frame: Rect
     let fw = frame.width;
     let fh = frame.height;
     debug_assert_eq!(footprint.len(), (fw * fh) as usize);
-    for y in 0..fh {
+    // Las celdas recorridas se apuntan una sola vez al final: es lo que
+    // hace caro a un candidato de polígono (una comprobación puede
+    // barrer decenas de miles de celdas) y lo que reparte el presupuesto
+    // de la búsqueda de tamaño entre comprobaciones caras y baratas (M3).
+    let mut visitadas = 0u64;
+    let mut solapa = false;
+    'barrido: for y in 0..fh {
         for x in 0..fw {
+            visitadas += 1;
             let fi = (y * fw + x) as usize;
             if !footprint[fi] {
                 continue;
@@ -1409,14 +1561,17 @@ fn overlaps(occupied: &[bool], footprint: &[bool], pw: i32, ph: i32, frame: Rect
             let ax = frame.x + x;
             let ay = frame.y + y;
             if ax < 0 || ay < 0 || ax >= pw || ay >= ph {
-                return true;
+                solapa = true;
+                break 'barrido;
             }
             if occupied[(ay * pw + ax) as usize] {
-                return true;
+                solapa = true;
+                break 'barrido;
             }
         }
     }
-    false
+    gastar_trabajo(visitadas);
+    solapa
 }
 
 fn mark_rect(occupied: &mut [bool], pw: i32, ph: i32, r: Rect) {
@@ -2145,6 +2300,136 @@ mod tests {
                     "los hijos deben ser disjuntos"
                 );
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod presupuesto_m3_tests {
+    use super::*;
+
+    /// Huella de un empaquetado: tamaño de cada hoja y dónde cae cada
+    /// sprite. Dos corridas iguales deben dar la misma huella.
+    fn firma(out: &PackOutput) -> String {
+        let mut s = String::new();
+        for p in &out.pages {
+            s.push_str(&format!("{}x{}:", p.width, p.height));
+            for pl in &p.placements {
+                s.push_str(&format!(
+                    " {}@{},{}{}",
+                    pl.id,
+                    pl.frame.x,
+                    pl.frame.y,
+                    if pl.rotated { "r" } else { "" }
+                ));
+            }
+            s.push('\n');
+        }
+        s
+    }
+
+    /// Rectángulos deterministas para alimentar la búsqueda.
+    fn rects(n: i32, w: i32, h: i32) -> Vec<PackItem> {
+        (0..n)
+            .map(|i| PackItem {
+                id: format!("s{i}"),
+                width: w + i % 7,
+                height: h + i % 5,
+                mesh: None,
+            })
+            .collect()
+    }
+
+    /// M3: el presupuesto se gasta en **trabajo**. Cada comprobación de la
+    /// búsqueda cobra lo que le costó, así que la misma entrada cobra
+    /// exactamente lo mismo corrida tras corrida y en cualquier máquina.
+    ///
+    /// Con un presupuesto de reloj (el bug) nadie llama a
+    /// `WorkBudget::gastar`: el contador se queda a cero y este test falla
+    /// siempre, sin depender de la carga de la máquina ni del azar.
+    #[test]
+    fn el_presupuesto_se_gasta_en_trabajo() {
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, true, 4096, 4, 4, false);
+        opts.pack_mode = PackMode::Good;
+
+        // Entrada ligera: converge antes de agotar el presupuesto, pero
+        // sigue cobrando lo que cuesta cada paso.
+        let ligeros = rects(10, 32, 32);
+        reiniciar_cobro();
+        assert!(pack(&ligeros, &opts).is_ok());
+        let gasto1 = cobrado();
+        reiniciar_cobro();
+        assert!(pack(&ligeros, &opts).is_ok());
+        let gasto2 = cobrado();
+        assert!(
+            gasto1 > 0,
+            "la búsqueda no cobró nada por comprobar tamaños: {gasto1}"
+        );
+        assert!(
+            gasto1 < GOOD_WORK_UNITS,
+            "una entrada que converge no debe gastar todo el presupuesto: {gasto1}"
+        );
+        assert_eq!(
+            gasto1, gasto2,
+            "la misma entrada debe costar siempre el mismo trabajo"
+        );
+
+        // Entrada pesada (17,2 M de trabajo convergido): no llega a
+        // estabilizarse y se corta porque se agota el presupuesto.
+        let pesados = rects(200, 64, 64);
+        reiniciar_cobro();
+        assert!(pack(&pesados, &opts).is_ok());
+        let gasto_pesado = cobrado();
+        assert!(
+            gasto_pesado >= GOOD_WORK_UNITS,
+            "esta entrada no converge: debe cortarse por presupuesto ({gasto_pesado})"
+        );
+    }
+
+    /// M3: la búsqueda de tamaño se corta por **trabajo**, no por reloj, así
+    /// que la misma entrada da el mismo atlas corrida tras corrida y en
+    /// cualquier máquina.
+    ///
+    /// Antes el presupuesto era de reloj (400 ms en `Good`, 3 s en `Best`):
+    /// la búsqueda comprobaba tantos tamaños como le diera la CPU y se
+    /// cortaba a mitad según la carga. Medido antes de este cambio, una
+    /// misma binaria con esta misma entrada daba **dos atlas distintos en
+    /// cinco corridas** (los dos resultados que este test atrapa).
+    #[test]
+    fn la_busqueda_de_tamano_es_determinista() {
+        // Entrada cara bastante cara para que el presupuesto se note: la
+        // búsqueda convergida cuesta más del doble de lo que `Good` gasta.
+        let mesh = TriangleMesh {
+            vertices: vec![
+                Point2D::new(0.0, 0.0),
+                Point2D::new(64.0, 0.0),
+                Point2D::new(64.0, 72.0),
+                Point2D::new(160.0, 72.0),
+                Point2D::new(160.0, 120.0),
+                Point2D::new(0.0, 120.0),
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5],
+            uvs: vec![],
+        };
+        let items: Vec<PackItem> = (0..40)
+            .map(|i| PackItem {
+                id: format!("p{i}"),
+                width: 160,
+                height: 120,
+                mesh: Some(mesh.clone()),
+            })
+            .collect();
+        let mut opts = PackerOptions::new(PackingStrategy::Bssf, true, 4096, 4, 4, true);
+        opts.pack_mode = PackMode::Good;
+
+        let base = firma(&pack(&items, &opts).unwrap());
+        assert!(!base.is_empty(), "la prueba empaqueta de verdad");
+        for corrida in 1..=4 {
+            let otra = firma(&pack(&items, &opts).unwrap());
+            assert_eq!(
+                otra, base,
+                "corrida {corrida}: el atlas debe salir idéntico, no al azar del reloj"
+            );
         }
     }
 }
