@@ -775,16 +775,24 @@ fn pack_maxrects(
     let mut pages: Vec<PageState> = Vec::new();
     for (item_idx, w, h) in sorted {
         let item = &items[item_idx];
-        let mut placed: Option<Placement> = None;
-        if let Some(page) = pages.last_mut() {
-            placed = try_place(page, item, w, h, opts, false)?;
+        // Todas las páginas, de la última a la primera: si el sprite no
+        // cabe en la activa, un hueco de una hoja anterior puede seguir
+        // sirviendo. Antes solo se probaba la última y ese hueco se
+        // abandonaba, abriendo una hoja de más. El caso habitual (cabe en
+        // la última) paga exactamente lo mismo que antes.
+        let mut colocada: Option<(usize, Placement)> = None;
+        for (n, page) in pages.iter_mut().enumerate().rev() {
+            if let Some(p) = try_place(page, item, w, h, opts, false)? {
+                colocada = Some((n, p));
+                break;
+            }
         }
-        // Página nueva: si el sprite tampoco cabe ahí, es un error de
-        // configuración (el snap a la rejilla se come el interior cuando
-        // `border_padding` no es múltiplo de `align_grid`), no un panic en
-        // `placed.unwrap()`. La rama de Guillotine ya lo trataba así.
-        let placed = match placed {
-            Some(p) => p,
+        // Si ninguna página lo admite, es un error de configuración (el
+        // snap a la rejilla se come el interior cuando `border_padding` no
+        // es múltiplo de `align_grid`), no un panic en `placed.unwrap()`.
+        // La rama de Guillotine ya lo trataba así.
+        let (destino, placed) = match colocada {
+            Some(c) => c,
             None => {
                 let mut page = PageState::new(pages.len(), cw, ch, bp);
                 let p = try_place(&mut page, item, w, h, opts, false)
@@ -803,14 +811,10 @@ fn pack_maxrects(
                         ))
                     })?;
                 pages.push(page);
-                p
+                (pages.len() - 1, p)
             }
         };
-        pages
-            .last_mut()
-            .expect("la página acaba de crearse o de recibir la colocación")
-            .placements
-            .push(placed);
+        pages[destino].placements.push(placed);
     }
     Ok(pages)
 }
@@ -844,12 +848,18 @@ fn pack_guillotine(
     let mut pages: Vec<PageState> = Vec::new();
     for (item_idx, w, h) in sorted {
         let item = &items[item_idx];
-        let mut placed = None;
-        if let Some(page) = pages.last_mut() {
-            placed = try_place(page, item, w, h, opts, true)?;
+        // Igual que en MaxRects: se prueban todas las páginas, de la
+        // última a la primera, para no abandonar un hueco de una hoja
+        // anterior. `try_place` no muta la página cuando devuelve `None`.
+        let mut colocada: Option<(usize, Placement)> = None;
+        for (n, page) in pages.iter_mut().enumerate().rev() {
+            if let Some(p) = try_place(page, item, w, h, opts, true)? {
+                colocada = Some((n, p));
+                break;
+            }
         }
-        let placed = match placed {
-            Some(p) => p,
+        let (destino, placed) = match colocada {
+            Some(c) => c,
             None => {
                 let mut page = PageState::new(pages.len(), cw, ch, bp);
                 let p = try_place(&mut page, item, w, h, opts, true)?.ok_or_else(|| {
@@ -860,10 +870,10 @@ fn pack_guillotine(
                     ))
                 })?;
                 pages.push(page);
-                p
+                (pages.len() - 1, p)
             }
         };
-        pages.last_mut().unwrap().placements.push(placed);
+        pages[destino].placements.push(placed);
     }
     Ok(pages)
 }
@@ -1675,6 +1685,44 @@ mod tests {
         let opts = PackerOptions::new(PackingStrategy::Bssf, true, 32, 0, 0, false);
         let err = pack(&[item("huge", 64, 64)], &opts).unwrap_err();
         assert!(err.to_string().contains("huge"));
+    }
+
+    /// Un sprite que no cabe en la hoja activa se prueba antes en las
+    /// anteriores: un hueco que sigue ahí no debe pagarse con otra hoja.
+    /// Antes solo se probaba la última (`pages.last_mut()`) y esa hoja
+    /// quedaba intacta mientras se abría otra de más.
+    #[test]
+    fn las_hojas_anteriores_se_reutilizan_antes_de_abrir_otra() {
+        // tramo: 10x6 deja (0,6,10,4) en la hoja 0; tallo 5x10 no cabe en
+        // ese hueco y abre la hoja 1, donde deja (5,0,5,10); la tira 6x4
+        // no cabe en la hoja 1 (solo hay 5 de ancho) pero sí en el hueco
+        // que la hoja 0 conserva desde el principio.
+        let items = [
+            item("grande", 10, 6),
+            item("tallo", 5, 10),
+            item("tira", 6, 4),
+        ];
+        for algorithm in [PackingAlgorithm::MaxRects, PackingAlgorithm::Guillotine] {
+            let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, 10, 0, 0, false);
+            opts.algorithm = algorithm;
+            opts.fixed_width = 10;
+            opts.fixed_height = 10;
+            opts.pack_mode = PackMode::Fast;
+            let out = pack(&items, &opts).unwrap_or_else(|e| panic!("{algorithm:?}: {e}"));
+            assert_eq!(
+                out.pages.len(),
+                2,
+                "{algorithm:?}: la tira cabía en la hoja 0"
+            );
+            let hoja_de = |id: &str| {
+                out.pages
+                    .iter()
+                    .position(|p| p.placements.iter().any(|pl| pl.id == id))
+            };
+            assert_eq!(hoja_de("grande"), Some(0), "{algorithm:?}");
+            assert_eq!(hoja_de("tallo"), Some(1), "{algorithm:?}");
+            assert_eq!(hoja_de("tira"), Some(0), "{algorithm:?}");
+        }
     }
 
     /// El orden por área hacía `(w * h) as i64`, que multiplica en `i32`
