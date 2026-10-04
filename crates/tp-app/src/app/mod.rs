@@ -166,6 +166,12 @@ pub struct App {
     /// La configuración cambió por UI: el próximo `request_preview` no
     /// necesita comparar snapshots (ahorra re-escanear el disco por frame).
     pending_force: bool,
+    /// Huella (`Debug`) de `config` vista por el último sondeo de
+    /// `poll_changes`. Si un control muta la config sin avisar con
+    /// `on_config_changed`, la huella no cuadra y el propio sondeo notifica
+    /// en el frame siguiente: ningún widget del panel de Ajustes puede
+    /// cablearse mal a medias. `None` = aún sin muestrear (primer frame).
+    config_fingerprint: Option<String>,
     /// Filesystem watcher (autowatch): edits on disk refresh the preview.
     watcher: Option<notify::RecommendedWatcher>,
     /// Clonable handle to wake the UI from the watcher thread.

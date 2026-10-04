@@ -353,6 +353,10 @@ impl App {
     /// without waiting for the passive snapshot poll (ni re-escanear el
     /// disco: el propio widget ya avisó de que cambió). `request_preview`
     /// coalesces los arrastres de sliders (un cambio por frame).
+    ///
+    /// Los controles de Ajustes no están obligados a llamarla: el sondeo de
+    /// [`Self::poll_changes`] detecta por huella cualquier `config` mutado
+    /// sin avisar. Avisar sigue siendo mejor (notifica en el mismo frame).
     pub fn on_config_changed(&mut self) {
         self.pending_force = true;
         self.commit_paths();
@@ -362,6 +366,20 @@ impl App {
     /// Per-frame detection of passive edits: directory fields, variants,
     /// config changes and on-disk sprite edits refresh the preview.
     pub(super) fn poll_changes(&mut self, ctx: &egui::Context) {
+        // Red de seguridad para el panel de Ajustes: si un control muta
+        // `config` sin avisar con `on_config_changed`, la huella del último
+        // sondeo no cuadra y se notifica aquí (frame siguiente). Coste: una
+        // serialización de `config` por frame.
+        let actual = format!("{:?}", self.config);
+        if self.config_fingerprint.as_ref() != Some(&actual) {
+            if self.config_fingerprint.is_some() {
+                // `commit_paths` (dentro de la notificación) repone la huella.
+                self.on_config_changed();
+            } else {
+                // Primer frame: solo tomar muestra, sin notificar.
+                self.config_fingerprint = Some(actual);
+            }
+        }
         if self.input_dir_text.trim() != self.config.input_directory.display().to_string()
             || self.output_dir_text.trim() != self.config.output_directory.display().to_string()
         {
@@ -378,8 +396,9 @@ impl App {
             self.after_workspace_change();
         }
         // El snapshot (mtimes incluidos) se recalcula como mucho cada
-        // SNAPSHOT_POLL_MS: los cambios de ajustes llegan por on_config_changed,
-        // así que este sondeo solo vigila los ficheros en disco (autowatch).
+        // SNAPSHOT_POLL_MS: los cambios de ajustes llegan por
+        // `on_config_changed` o por la huella de `config` de arriba, así que
+        // este sondeo solo vigila los ficheros en disco (autowatch).
         if self.last_snapshot_poll.elapsed() >= std::time::Duration::from_millis(SNAPSHOT_POLL_MS) {
             self.last_snapshot_poll = std::time::Instant::now();
             self.preview_stale = self.snapshot_changed();
@@ -421,6 +440,9 @@ impl App {
                     .iter()
                     .any(|s| (s - o.scale).abs() < 1e-6)
             });
+            // Escribe en `config`: repón la huella para que el sondeo por
+            // frame no vuelva a notificar este mismo cambio.
+            self.refresh_config_fingerprint();
             true
         }
     }
@@ -647,6 +669,40 @@ mod on_demand_tests {
         assert!(
             preview_updates(&app) > before,
             "el preview debe reempaquetar tras cambiar un ajuste"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Un control que muta `config` **sin avisar** debe seguir llegando al
+    /// preview: es la garantía que da `config_fingerprint` y la razón por la
+    /// que el panel de Ajustes ya no repite `on_config_changed` en cada
+    /// widget. El aviso sale en el propio frame siguiente.
+    #[test]
+    fn preview_refreshes_when_a_setting_changes_without_notifying() {
+        let (mut app, ctx, tmp) = demo("settings-silent");
+        let boot = pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(app.result().is_some(), "preview de arranque: {boot:?}");
+        let before = preview_updates(&app);
+
+        let seq = app.change_seq;
+        app.config.padding += 4;
+        app.run_frame(&ctx, crate::testing::idle_input());
+        assert!(
+            app.change_seq > seq,
+            "el sondeo por frame debe notificar el cambio silencioso (seq {seq} -> {})",
+            app.change_seq
+        );
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(
+            !out.stuck,
+            "la app dejó de pedir repaints tras un cambio sin avisar \
+             (frames={}, idle={})",
+            out.frames, out.idle_frames
+        );
+        assert!(
+            preview_updates(&app) > before,
+            "el preview debe reempaquetar aunque el control no haya avisado"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

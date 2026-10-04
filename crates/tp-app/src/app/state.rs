@@ -84,6 +84,9 @@ impl App {
             pending_seq: None,
             packed_snapshot: None,
             pending_force: false,
+            // `None` = sin muestrear: el primer frame de `poll_changes` toma
+            // la huella sin notificar (ver `App::config_fingerprint`).
+            config_fingerprint: None,
             watcher: None,
             egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),
@@ -290,5 +293,15 @@ impl App {
     pub(super) fn commit_paths(&mut self) {
         self.config.input_directory = PathBuf::from(self.input_dir_text.trim());
         self.config.output_directory = PathBuf::from(self.output_dir_text.trim());
+        // Escribe en `config`: repon la huella para que el sondeo por frame
+        // no vuelva a notificar este mismo cambio (ver `config_fingerprint`).
+        self.refresh_config_fingerprint();
+    }
+
+    /// Deja `config_fingerprint` reflejando el estado actual. Toda función
+    /// que escriba en `config` sin pasar por `on_config_changed` debe
+    /// llamarla al terminar (`commit_paths`, `parse_variants`).
+    pub(super) fn refresh_config_fingerprint(&mut self) {
+        self.config_fingerprint = Some(format!("{:?}", self.config));
     }
 }
