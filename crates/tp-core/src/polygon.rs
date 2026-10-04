@@ -146,7 +146,7 @@ pub fn rotate_90_cw(p: Point2D, height: f32) -> Point2D {
 /// Used by the polygon-aware packer for overlap testing.
 pub fn rasterize_polygon(vertices: &[Point2D], w: usize, h: usize) -> Vec<bool> {
     let mut grid = vec![false; w * h];
-    if vertices.len() < 3 {
+    if w == 0 || h == 0 || vertices.len() < 3 {
         return grid;
     }
     // Scanline fill: for each row, compute x intersections with polygon edges.
@@ -161,10 +161,19 @@ pub fn rasterize_polygon(vertices: &[Point2D], w: usize, h: usize) -> Vec<bool> 
                 xs.push(a.x + t * (b.x - a.x));
             }
         }
-        xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        // `total_cmp`, no `partial_cmp().unwrap()`: una malla con NaN en
+        // las coordenadas (fichero corrupto) revienta el sort.
+        xs.sort_by(|a, b| a.total_cmp(b));
         for pair in xs.chunks_exact(2) {
-            let x0 = pair[0].ceil().max(0.0) as usize;
-            let x1 = pair[1].floor().min(w as f32 - 1.0) as usize;
+            let (x0, x1) = (pair[0].ceil(), pair[1].floor());
+            // Span NaN o entero fuera del lienzo (izquierda o derecha): no
+            // pinta nada. Antes solo se recortaba la derecha, así que un
+            // span a la izquierda acababa pintando el píxel 0.
+            if !x0.is_finite() || !x1.is_finite() || x1 < 0.0 || x0 > w as f32 - 1.0 {
+                continue;
+            }
+            let x0 = x0.max(0.0) as usize;
+            let x1 = x1.min(w as f32 - 1.0) as usize;
             for x in x0..=x1 {
                 grid[y * w + x] = true;
             }
@@ -679,6 +688,37 @@ mod tests {
         assert_eq!(poly.mesh.indices.len() % 3, 0);
         let n = poly.mesh.vertices.len() as u32;
         assert!(poly.mesh.indices.iter().all(|&i| i < n));
+    }
+
+    /// A corrupt mesh can carry NaN coordinates: the scanline sort used to
+    /// `unwrap()` a `partial_cmp` that returns `None` for them.
+    #[test]
+    fn rasterize_survives_nan_vertices() {
+        let verts = [
+            Point2D::new(0.0, 0.0),
+            Point2D::new(f32::NAN, 4.0),
+            Point2D::new(8.0, 8.0),
+        ];
+        let mask = rasterize_polygon(&verts, 8, 8);
+        assert_eq!(mask.len(), 64);
+    }
+
+    /// A span entirely left of the canvas paints nothing: the old clamp
+    /// only trimmed the right side, so `ceil().max(0)` and
+    /// `floor().min(w-1)` both landed on pixel 0 and painted it.
+    #[test]
+    fn rasterize_skips_spans_outside_the_left_edge() {
+        let verts = [
+            Point2D::new(-10.0, 0.0),
+            Point2D::new(-5.0, 0.0),
+            Point2D::new(-5.0, 8.0),
+            Point2D::new(-10.0, 8.0),
+        ];
+        let mask = rasterize_polygon(&verts, 8, 8);
+        assert!(
+            !mask.iter().any(|&b| b),
+            "painted pixels from a polygon that is entirely off-canvas"
+        );
     }
 
     #[test]
