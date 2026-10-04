@@ -27,6 +27,9 @@
 //! Quality is search-based but not exhaustive; good enough for game assets.
 //! For higher quality use the `gpu-formats` feature (ASTC via ARM's astcenc).
 
+use crate::error::Result;
+use crate::pixels::ensure_rgba8;
+
 /// ETC1 modifier table: pairs (small, large) — index selects magnitude, sign
 /// bit selects +/-.
 const ETC1_MODIFIER_TABLE: [[i16; 2]; 8] = [
@@ -117,7 +120,8 @@ fn effort(quality: u8) -> Effort {
 /// Returns a `Vec<u8>` of 16 bytes per 4x4 block. Non-multiple-of-4
 /// dimensions are handled by edge clamping (padding with the border pixel).
 /// `quality` (0-100) selects the search effort.
-pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize, quality: u8) -> Result<Vec<u8>> {
+    ensure_rgba8(rgba, width, height)?;
     let blocks_x = width.div_ceil(4);
     let blocks_y = height.div_ceil(4);
     let mut out = Vec::with_capacity(blocks_x * blocks_y * 16);
@@ -142,7 +146,7 @@ pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize, quality: u8) 
             out.extend_from_slice(&block);
         }
     }
-    out
+    Ok(out)
 }
 
 /// Encode an RGBA8 image (width x height, row-major) into ETC1 RGB blocks.
@@ -150,7 +154,8 @@ pub fn encode_etc2_rgba8(rgba: &[u8], width: usize, height: usize, quality: u8) 
 /// (individual + differential), so the result decodes as ETC1 everywhere.
 /// Alpha is ignored; edge clamping works like [`encode_etc2_rgba8`].
 /// `quality` (0-100) selects the search effort.
-pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize, quality: u8) -> Result<Vec<u8>> {
+    ensure_rgba8(rgba, width, height)?;
     let blocks_x = width.div_ceil(4);
     let blocks_y = height.div_ceil(4);
     let mut out = Vec::with_capacity(blocks_x * blocks_y * 8);
@@ -177,13 +182,19 @@ pub fn encode_etc1_rgb(rgba: &[u8], width: usize, height: usize, quality: u8) ->
             out.extend_from_slice(&encode_etc1_block(&rgb, quality));
         }
     }
-    out
+    Ok(out)
 }
 
 /// Encode an RGBA8 image into ETC2 RGB blocks (8 bytes per 4x4 block, alpha
 /// dropped). Uses the full ETC2 mode set, so it is *not* ETC1-decodable; use
 /// [`encode_etc1_rgb`] for `.pkm`/ETC1 KTX.
-pub fn encode_etc2_rgb_blocks(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
+pub fn encode_etc2_rgb_blocks(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    ensure_rgba8(rgba, width, height)?;
     let blocks_x = width.div_ceil(4);
     let blocks_y = height.div_ceil(4);
     let mut out = Vec::with_capacity(blocks_x * blocks_y * 8);
@@ -204,7 +215,7 @@ pub fn encode_etc2_rgb_blocks(rgba: &[u8], width: usize, height: usize, quality:
             out.extend_from_slice(&encode_etc2_rgb(&rgb, quality));
         }
     }
-    out
+    Ok(out)
 }
 
 /// One 4x4 block through the ETC1 mode set only (no T/H/planar, which are
@@ -2253,5 +2264,17 @@ mod tests {
                 "differential decoder mismatch at pixel {i}"
             );
         }
+    }
+
+    /// M11: mismo contrato que PVRTC: con el buffer corto se devuelve
+    /// `Err` en vez de reventar dentro del códec.
+    #[test]
+    fn buffer_corto_devuelve_error_en_vez_de_paniquear() {
+        let corto = [0u8; 16];
+        assert!(encode_etc2_rgba8(&corto, 4, 4, 70).is_err());
+        assert!(encode_etc1_rgb(&corto, 4, 4, 70).is_err());
+        assert!(encode_etc2_rgb_blocks(&corto, 4, 4, 70).is_err());
+        let justo = [0u8; 64];
+        assert!(encode_etc2_rgba8(&justo, 4, 4, 70).is_ok());
     }
 }

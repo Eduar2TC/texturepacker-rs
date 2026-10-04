@@ -42,12 +42,12 @@ pub fn encode_to_bytes(
         // calidad).
         GpuFormat::Astc4x4 => encode_astc(rgba, width, height, opts),
         GpuFormat::Basis => encode_basis(rgba, width, height, opts),
-        GpuFormat::Etc2Rgba => Ok(encode_etc2_ktx(rgba, width, height, opts)),
+        GpuFormat::Etc2Rgba => encode_etc2_ktx(rgba, width, height, opts),
         GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height, opts),
         GpuFormat::Pvr3Gz => encode_pvrtc_pvr(rgba, width, height, opts).map(gzip_bytes),
         GpuFormat::Pvr3Ccz => encode_pvrtc_pvr(rgba, width, height, opts).map(ccz_bytes),
-        GpuFormat::Etc1 => Ok(encode_etc1_pkm(rgba, width, height, opts.etc1_quality)),
-        GpuFormat::Etc1Ktx => Ok(encode_etc1_ktx(rgba, width, height, opts.etc1_quality)),
+        GpuFormat::Etc1 => encode_etc1_pkm(rgba, width, height, opts.etc1_quality),
+        GpuFormat::Etc1Ktx => encode_etc1_ktx(rgba, width, height, opts.etc1_quality),
         // Formatos de software: pasan por la conversión de pixel format.
         GpuFormat::Bmp | GpuFormat::Tga | GpuFormat::Tiff => {
             let (data, color) = apply_pixel_format(rgba, opts.pixel_format);

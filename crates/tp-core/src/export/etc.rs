@@ -1,6 +1,7 @@
 use super::ktx::ktx1_container;
 use super::options::EncodeOptions;
 use crate::config::PixelFormat;
+use crate::error::Result;
 use crate::etc2;
 
 /// ETC2 in a KTX container. `ETC2_RGBA` (8 bytes de alfa EAC + 8 de ETC2) o
@@ -10,22 +11,27 @@ pub(super) fn encode_etc2_ktx(
     width: usize,
     height: usize,
     opts: &EncodeOptions,
-) -> Vec<u8> {
+) -> Result<Vec<u8>> {
     let q = opts.etc2_quality;
     if opts.pixel_format == PixelFormat::Etc2Rgb {
-        let blocks = etc2::encode_etc2_rgb_blocks(rgba, width, height, q);
+        let blocks = etc2::encode_etc2_rgb_blocks(rgba, width, height, q)?;
         // GL_COMPRESSED_RGB8_ETC2 sobre GL_RGB.
-        ktx1_container(0, 0, 0x9274, 0x1907, width, height, &blocks)
+        Ok(ktx1_container(0, 0, 0x9274, 0x1907, width, height, &blocks))
     } else {
-        let blocks = etc2::encode_etc2_rgba8(rgba, width, height, q);
+        let blocks = etc2::encode_etc2_rgba8(rgba, width, height, q)?;
         // GL_COMPRESSED_RGBA8_ETC2_EAC sobre GL_RGBA.
-        ktx1_container(0, 0, 0x9278, 0x1908, width, height, &blocks)
+        Ok(ktx1_container(0, 0, 0x9278, 0x1908, width, height, &blocks))
     }
 }
 
 /// ETC1 RGB in a PKM container (`.pkm`), the format PowerVR/GLES tools expect.
-pub(super) fn encode_etc1_pkm(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
-    let blocks = etc2::encode_etc1_rgb(rgba, width, height, quality);
+pub(super) fn encode_etc1_pkm(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    let blocks = etc2::encode_etc1_rgb(rgba, width, height, quality)?;
     let ext_w = width.next_multiple_of(4);
     let ext_h = height.next_multiple_of(4);
     let mut out = Vec::with_capacity(16 + blocks.len());
@@ -36,14 +42,19 @@ pub(super) fn encode_etc1_pkm(rgba: &[u8], width: usize, height: usize, quality:
     out.extend_from_slice(&(width as u16).to_be_bytes());
     out.extend_from_slice(&(height as u16).to_be_bytes());
     out.extend_from_slice(&blocks);
-    out
+    Ok(out)
 }
 
 /// ETC1 RGB in a KTX container (`.ktx`).
-pub(super) fn encode_etc1_ktx(rgba: &[u8], width: usize, height: usize, quality: u8) -> Vec<u8> {
-    let blocks = etc2::encode_etc1_rgb(rgba, width, height, quality);
+pub(super) fn encode_etc1_ktx(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    let blocks = etc2::encode_etc1_rgb(rgba, width, height, quality)?;
     // GL_ETC1_RGB8_OES sobre GL_RGB.
-    ktx1_container(0, 0, 0x8D60, 0x1907, width, height, &blocks)
+    Ok(ktx1_container(0, 0, 0x8D60, 0x1907, width, height, &blocks))
 }
 
 #[cfg(test)]
@@ -57,7 +68,8 @@ mod tests {
 
     #[test]
     fn etc2_ktx_header() {
-        let bytes = encode_etc2_ktx(&vec![0u8; 8 * 8 * 4], 8, 8, &EncodeOptions::default());
+        let bytes =
+            encode_etc2_ktx(&vec![0u8; 8 * 8 * 4], 8, 8, &EncodeOptions::default()).unwrap();
         assert_eq!(&bytes[..12], b"\xABKTX 11\xBB\r\n\x1A\n");
         // internal format at offset 28 (12 magic + 4*4 header fields)
         let internal = u32::from_le_bytes(bytes[28..32].try_into().unwrap());
@@ -105,7 +117,7 @@ mod tests {
             let v = ((i as u16 * 16) % 256) as u8;
             px.copy_from_slice(&[v, 255 - v, ((u16::from(v) * 3) % 256) as u8, 255]);
         }
-        let blocks = crate::etc2::encode_etc1_rgb(&rgba, 4, 4, 70);
+        let blocks = crate::etc2::encode_etc1_rgb(&rgba, 4, 4, 70).unwrap();
         assert_eq!(blocks.len(), 8);
         // Ningún bloque puede salirse del conjunto de modos ETC1: con el bit
         // de diferencial activo, base + delta debe caber en 5 bits (si no,
@@ -138,11 +150,11 @@ mod tests {
         let mut o = opts(GpuFormat::Etc2Rgba);
 
         o.pixel_format = PixelFormat::Etc2Rgba;
-        let rgba_ktx = encode_etc2_ktx(&rgba, 8, 8, &o);
+        let rgba_ktx = encode_etc2_ktx(&rgba, 8, 8, &o).unwrap();
         assert_eq!(ktx_internal_format(&rgba_ktx), 0x9278); // RGBA8_ETC2_EAC
 
         o.pixel_format = PixelFormat::Etc2Rgb;
-        let rgb_ktx = encode_etc2_ktx(&rgba, 8, 8, &o);
+        let rgb_ktx = encode_etc2_ktx(&rgba, 8, 8, &o).unwrap();
         assert_eq!(ktx_internal_format(&rgb_ktx), 0x9274); // RGB8_ETC2
                                                            // 4 bloques de 8x8: RGBA lleva la mitad de datos que RGB no.
         assert_eq!(rgba_ktx.len(), rgb_ktx.len() + 4 * 8);

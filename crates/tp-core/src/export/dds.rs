@@ -94,11 +94,11 @@ pub(super) fn encode_dds_dxt(
     let (fourcc, blocks) = match opts.pixel_format {
         PixelFormat::Dxt1 => (
             *b"DXT1",
-            dxt::encode_dxt1(rgba, width, height, opts.dxt_mode),
+            dxt::encode_dxt1(rgba, width, height, opts.dxt_mode)?,
         ),
         PixelFormat::Dxt5 => (
             *b"DXT5",
-            dxt::encode_dxt5(rgba, width, height, opts.dxt_mode),
+            dxt::encode_dxt5(rgba, width, height, opts.dxt_mode)?,
         ),
         other => {
             return Err(TpError::Other(format!(

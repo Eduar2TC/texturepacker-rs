@@ -22,6 +22,8 @@
 //! hacen el resto de codificadores de hardware de este módulo.
 
 use crate::config::DxtMode;
+use crate::error::Result;
+use crate::pixels::ensure_rgba8;
 
 /// Ponderación BT.709 usada en `DxtMode::Perceptual`.
 const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
@@ -510,7 +512,8 @@ fn encode_alpha_block(alpha: &[u8; 16]) -> [u8; 8] {
 }
 
 /// Codifica una imagen RGBA8 como DXT1/BC1: 8 bytes por bloque de 4×4.
-pub fn encode_dxt1(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> Vec<u8> {
+pub fn encode_dxt1(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> Result<Vec<u8>> {
+    ensure_rgba8(rgba, width, height)?;
     let bx = width.div_ceil(4);
     let by = height.div_ceil(4);
     let mut out = Vec::with_capacity(bx * by * 8);
@@ -528,11 +531,12 @@ pub fn encode_dxt1(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> V
             out.extend_from_slice(&encode_dxt1_block(&pixels, mode));
         }
     }
-    out
+    Ok(out)
 }
 
 /// Codifica una imagen RGBA8 como DXT5/BC3: 16 bytes por bloque de 4×4.
-pub fn encode_dxt5(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> Vec<u8> {
+pub fn encode_dxt5(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> Result<Vec<u8>> {
+    ensure_rgba8(rgba, width, height)?;
     let bx = width.div_ceil(4);
     let by = height.div_ceil(4);
     let mut out = Vec::with_capacity(bx * by * 16);
@@ -559,7 +563,7 @@ pub fn encode_dxt5(rgba: &[u8], width: usize, height: usize, mode: DxtMode) -> V
             out.extend_from_slice(&encode_color_block(&color, mode));
         }
     }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -665,7 +669,7 @@ mod tests {
     /// Error cuadrático medio (con la métrica del modo) de nuestro encoder.
     fn our_reference(src: &[u8], w: usize, h: usize, mode: DxtMode) -> f64 {
         let wts = weights(mode);
-        let got = decode1(&encode_dxt1(src, w, h, mode), w, h, false);
+        let got = decode1(&encode_dxt1(src, w, h, mode).unwrap(), w, h, false);
         let mut err = 0.0f64;
         for (i, p) in src.chunks_exact(4).enumerate() {
             err += dist2([p[0], p[1], p[2]], [got[i][0], got[i][1], got[i][2]], wts) as f64;
@@ -678,7 +682,7 @@ mod tests {
         let (w, h) = (16, 16);
         let src = gradient(w, h);
         for mode in [DxtMode::Linear, DxtMode::Perceptual] {
-            let data = encode_dxt1(&src, w, h, mode);
+            let data = encode_dxt1(&src, w, h, mode).unwrap();
             assert_eq!(data.len(), (w / 4) * (h / 4) * 8);
             let got = decode1(&data, w, h, false);
             let mean = mean_err(&src, &got, 3);
@@ -701,7 +705,7 @@ mod tests {
             }
         }
         for mode in [DxtMode::Linear, DxtMode::Perceptual] {
-            let data = encode_dxt1(&src, w, h, mode);
+            let data = encode_dxt1(&src, w, h, mode).unwrap();
             let got = decode1(&data, w, h, false);
             let mean = mean_err(&src, &got, 3);
             assert!(mean < 3.0, "{mode:?}: error medio {mean:.2}");
@@ -736,7 +740,7 @@ mod tests {
                 src.extend_from_slice(&[v, v, 255 - v, (y * 255 / (h - 1)) as u8]);
             }
         }
-        let data = encode_dxt5(&src, w, h, DxtMode::Linear);
+        let data = encode_dxt5(&src, w, h, DxtMode::Linear).unwrap();
         assert_eq!(data.len(), (w / 4) * (h / 4) * 16);
         let got = decode3(&data, w, h);
         let color_mean = mean_err(&src, &got, 3);
@@ -760,7 +764,7 @@ mod tests {
                 px.copy_from_slice(&[0, 0, 0, 0]);
             }
         }
-        let data = encode_dxt1(&src, w, h, DxtMode::Linear);
+        let data = encode_dxt1(&src, w, h, DxtMode::Linear).unwrap();
         let got = decode1(&data, w, h, true);
         for (i, p) in src.chunks_exact(4).enumerate() {
             if p[3] == 0 {
@@ -780,7 +784,7 @@ mod tests {
     #[test]
     fn dxt1_rejects_degenerate_transparent_blocks() {
         let src = vec![0u8; 4 * 4 * 4];
-        let data = encode_dxt1(&src, 4, 4, DxtMode::Linear);
+        let data = encode_dxt1(&src, 4, 4, DxtMode::Linear).unwrap();
         let got = decode1(&data, 4, 4, true);
         assert!(
             got.iter().all(|p| p[3] == 0),
@@ -811,7 +815,7 @@ mod tests {
             }
         }
         for mode in [DxtMode::Linear, DxtMode::Perceptual] {
-            let data = encode_dxt1(&src, w, h, mode);
+            let data = encode_dxt1(&src, w, h, mode).unwrap();
             let got = decode1(&data, w, h, false);
             let mean = mean_err(&src, &got, 3);
             assert!(mean < 14.0, "{mode:?}: error medio {mean:.2}");
@@ -822,11 +826,22 @@ mod tests {
     fn non_multiple_of_four_dimensions_are_clamped() {
         let (w, h) = (6, 5);
         let src = gradient(w, h);
-        let d1 = encode_dxt1(&src, w, h, DxtMode::Linear);
+        let d1 = encode_dxt1(&src, w, h, DxtMode::Linear).unwrap();
         assert_eq!(d1.len(), 2 * 2 * 8);
         decode1(&d1, w, h, false);
-        let d3 = encode_dxt5(&src, w, h, DxtMode::Perceptual);
+        let d3 = encode_dxt5(&src, w, h, DxtMode::Perceptual).unwrap();
         assert_eq!(d3.len(), 2 * 2 * 16);
         decode3(&d3, w, h);
+    }
+
+    /// M11: un buffer corto reventaba con un panic en mitad de la
+    /// codificación; ahora devuelve `Err`, como hacía PVRTC.
+    #[test]
+    fn buffer_corto_devuelve_error_en_vez_de_paniquear() {
+        let corto = [0u8; 16]; // 4 píxeles, no los 4x4 que se piden
+        assert!(encode_dxt1(&corto, 4, 4, DxtMode::Linear).is_err());
+        assert!(encode_dxt5(&corto, 4, 4, DxtMode::Linear).is_err());
+        let justo = [0u8; 64];
+        assert!(encode_dxt1(&justo, 4, 4, DxtMode::Linear).is_ok());
     }
 }

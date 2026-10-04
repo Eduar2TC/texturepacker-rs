@@ -1496,7 +1496,7 @@ static char * test[] = {
             let v = [255u8, 0, 128, 64][(y / 4) * 2 + x / 4];
             px.copy_from_slice(&[v, v, v, 255]);
         }
-        let payload = crate::etc2::encode_etc2_rgb_blocks(&source, 8, 8, 70);
+        let payload = crate::etc2::encode_etc2_rgb_blocks(&source, 8, 8, 70).unwrap();
 
         let mut ktx = Vec::new();
         ktx.extend_from_slice(&KTX1_IDENTIFIER);

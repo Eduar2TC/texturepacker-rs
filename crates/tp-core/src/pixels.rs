@@ -6,7 +6,23 @@
 //!   (Floyd–Steinberg / Atkinson)
 
 use crate::config::{AlphaHandling, ColorDepth, DitheringAlgorithm};
+use crate::error::Result;
 use crate::types::Rect;
+
+/// Comprueba que un buffer RGBA8 cubre `width x height` píxeles. Los
+/// códec lo llaman antes de indexar: con un buffer corto, la alternativa
+/// es un panic dentro del código de codificación. Mismo contrato que ya
+/// tenía PVRTC (M11).
+pub fn ensure_rgba8(rgba: &[u8], width: usize, height: usize) -> Result<()> {
+    let esperados = width.saturating_mul(height).saturating_mul(4);
+    if rgba.len() < esperados {
+        return Err(crate::error::TpError::Other(format!(
+            "buffer RGBA8 corto para {width}x{height}: {esperados} bytes esperados, {} recibidos",
+            rgba.len()
+        )));
+    }
+    Ok(())
+}
 
 /// Layout of one sprite inside the atlas page: visible frame (inset by
 /// `padding`), extrusion and 90° CW rotation.
