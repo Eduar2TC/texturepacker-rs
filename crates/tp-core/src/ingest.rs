@@ -437,10 +437,16 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
     // Matching indexes: by id base (suffix, or the last `_`/`-` group of the
     // name) and by bare file name (normales kept in another folder). A name
     // shared by two normal maps is dropped so the fallback never guesses.
+    // El orden de un HashSet cambia en cada corrida: recorrido así, dos
+    // normales con la misma base o con el mismo nombre dejaban la primera
+    // que saliera al azar y el emparejamiento variaba sin cambiar la
+    // entrada (M9). Se recorre en orden de ruta.
+    let mut normales: Vec<&PathBuf> = normal_set.iter().collect();
+    normales.sort_unstable();
     let mut normal_by_base: HashMap<String, PathBuf> = HashMap::new();
     let mut normal_by_name: HashMap<String, PathBuf> = HashMap::new();
     let mut duplicated_names: HashSet<String> = HashSet::new();
-    for p in &normal_set {
+    for p in normales.iter().copied() {
         let rel = sprite_rel_path(p, options);
         normal_by_base
             .entry(normal_pair_key(&rel, &options.normal_map_suffix))
@@ -566,7 +572,9 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
 
     if options.enable_normal_maps {
         // Warn about normal maps without a matching diffuse.
-        for path in normal_set.iter() {
+        // También en orden de ruta: si no, el orden de los avisos cambia
+        // entre corridas de la misma entrada.
+        for path in normales.iter().copied() {
             if !used_normals.contains(path) {
                 result.warnings.push(format!(
                     "Mapa de normales sin difusa asociada: {}",
