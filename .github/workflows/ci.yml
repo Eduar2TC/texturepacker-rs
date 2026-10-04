@@ -2,8 +2,20 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Solo main: con todas las ramas, un PR del propio repo ejecutaba la
+    # CI dos veces (una por el push de la rama y otra por pull_request).
+    branches: [main]
   pull_request:
+
+# Un solo run por combinación de workflow y ref: un push detrás de otro
+# cancela el anterior en vez de apilar runs que solo consumen runners.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# El checkout es todo lo que hace falta: el resto de la API, fuera.
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -48,7 +60,7 @@ jobs:
         run: cargo test --workspace --locked
 
   msrv:
-    name: MSRV 1.93.0 (cargo check + tests)
+    name: MSRV 1.93.0 (cargo check)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -68,11 +80,11 @@ jobs:
         with:
           key: msrv
 
+      # Solo compilar: los tests ya corren en la matriz de stable sobre
+      # los mismos código. Aquí lo único que se garantiza es que el
+      # workspace entre y enlace con la versión mínima soportada.
       - name: cargo check --workspace --locked
         run: cargo check --workspace --all-targets --locked
-
-      - name: Tests del workspace
-        run: cargo test --workspace --locked
 
   gpu-formats:
     name: build con ASTC (gpu-formats)
