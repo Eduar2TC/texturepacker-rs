@@ -177,7 +177,7 @@ fn help_text() -> String {
          \n\
          INFORMACIÓN:\n\
          \x20 --help                Esta ayuda (alias: -h)\n\
-         \x20 --version             Versión del programa\n\
+         \x20 --version             Versión del programa (alias: -V)\n\
          \x20 --exporter-list       Ids de data formats aceptados por --format de datos\n\
          \x20 --verbose             Detalle extra de la entrada y la configuración usada\n\
          \x20 --quiet               Sólo errores (calla el resumen de empaquetado)",
@@ -193,7 +193,7 @@ pub(crate) fn usage() -> ! {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::args::{PACK_FLAGS, PACK_VALUES};
+    use crate::cli::args::{DECRYPT_FLAGS, DECRYPT_VALUES, PACK_FLAGS, PACK_VALUES, SHORT_ALIASES};
 
     /// Todas las `--opciones` que aparecen en el texto de la ayuda.
     fn help_options(text: &str) -> Vec<String> {
@@ -219,6 +219,37 @@ mod tests {
         out
     }
 
+    /// Las opciones **cortas** de un solo carácter que la ayuda promete
+    /// (`-h`, `-o`). Solo cuenta un `-` suelto tras espacio o paréntesis y
+    /// seguido de una única letra: los guiones de palabras compuestas
+    /// (`-hd`, `TexturePacker-RS`) son sufijos o nombres, no opciones.
+    fn help_short_options(text: &str) -> Vec<String> {
+        let bytes = text.as_bytes();
+        let mut out = Vec::new();
+        for i in 0..bytes.len() {
+            if bytes[i] != b'-' || bytes.get(i + 1) == Some(&b'-') {
+                continue;
+            }
+            let anterior = if i == 0 { b' ' } else { bytes[i - 1] };
+            if anterior != b' ' && anterior != b'(' {
+                continue;
+            }
+            let Some(&letra) = bytes.get(i + 1) else {
+                continue;
+            };
+            if !letra.is_ascii_alphabetic() {
+                continue;
+            }
+            if bytes.get(i + 2).is_some_and(|c| c.is_ascii_alphanumeric()) {
+                continue; // dos letras seguidas: `-hd` y compañía
+            }
+            out.push((letra as char).to_string());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
     #[test]
     fn exporter_list_and_version_are_stable() {
         let list = exporter_list_text();
@@ -238,6 +269,36 @@ mod tests {
             // registro, que es la que el parser distingue (`--orx-keyDuration`).
             let known = PACK_VALUES.contains(&opt.as_str()) || PACK_FLAGS.contains(&opt.as_str());
             assert!(known, "la ayuda documenta --{opt} y el parser no la conoce");
+        }
+    }
+
+    /// Igual que la de arriba, pero para `-h`, `-o` y demás alias cortos:
+    /// solo se extraían tokens `--x`, así que `-h` (prometido en la propia
+    /// ayuda) pasó el review rechazado dentro de los subcomandos (M18).
+    #[test]
+    fn every_short_option_in_the_help_is_known() {
+        let cortas = help_short_options(&help_text());
+        assert!(
+            !cortas.is_empty(),
+            "el barrido no ha encontrado ni -h ni -o"
+        );
+        for corta in cortas {
+            if let Some((_, largo)) = SHORT_ALIASES.iter().find(|(c, _)| *c == corta) {
+                // Un alias tiene que apuntar a una opción que exista.
+                assert!(
+                    PACK_VALUES.contains(largo) || PACK_FLAGS.contains(largo),
+                    "la ayuda promete -{corta} como alias de --{largo}, que el parser no conoce"
+                );
+                continue;
+            }
+            let known = PACK_VALUES.contains(&corta.as_str())
+                || PACK_FLAGS.contains(&corta.as_str())
+                || DECRYPT_VALUES.contains(&corta.as_str())
+                || DECRYPT_FLAGS.contains(&corta.as_str());
+            assert!(
+                known,
+                "la ayuda documenta -{corta} y el parser no la conoce"
+            );
         }
     }
 

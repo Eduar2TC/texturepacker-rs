@@ -151,6 +151,11 @@ pub(crate) const PACK_FLAGS: &[&str] = &[
 pub(crate) const DECRYPT_VALUES: &[&str] = &["key", "o", "out", "pixel-format"];
 pub(crate) const DECRYPT_FLAGS: &[&str] = &["help", "quiet", "verbose"];
 
+/// Alias cortos que la ayuda promete (`-h` y `-V`): el parser los lee como
+/// la opción larga que aliasan. Sin esta tabla, `pack -h` llegaba a
+/// [`check_unknown_options`] como «--h» y se rechazaba (M18).
+pub(crate) const SHORT_ALIASES: &[(&str, &str)] = &[("h", "help"), ("V", "version")];
+
 /// Rechaza lo que no esté en los registros: hoy la CLI ignoraba en silencio
 /// cualquier opción desconocida (un `--scale 0.5` sin registrar «funcionaba»
 /// sin efecto).
@@ -292,8 +297,20 @@ pub(crate) fn parse_args(args: &[String]) -> (Vec<String>, Vec<(String, String)>
                 }
                 _ => flags.push(v.to_string()),
             }
-        } else if let Some(v) = a.strip_prefix('-') {
+        } else if let Some(raw) = a.strip_prefix('-') {
             // single-dash option like -o
+            let v = SHORT_ALIASES
+                .iter()
+                .find(|(corto, _)| *corto == raw)
+                .map(|(_, largo)| *largo)
+                .unwrap_or(raw);
+            // Una opción sin valor no se come el token de al lado (igual que
+            // en la rama `--`): `pack -h sprites` muestra la ayuda y deja
+            // «sprites» como posicional en vez de fallar con «--h» (M18).
+            if PACK_FLAGS.contains(&v) {
+                flags.push(v.to_string());
+                continue;
+            }
             match it.peek() {
                 Some(next) if !next.starts_with('-') => {
                     let val = it.next().unwrap().clone();
@@ -1023,6 +1040,28 @@ mod tests {
             parse_pixel_format("Alpha-Intensity8").unwrap(),
             PixelFormat::AlphaIntensity8
         ));
+    }
+
+    /// M18: la ayuda promete `-h` como alias de `--help`, pero dentro de un
+    /// subcomando el token llegaba a [`check_unknown_options`] como «--h»
+    /// y se rechazaba. Ahora se lee como la opción larga que aliasa, y sin
+    /// comerse el posicional que le sigue.
+    #[test]
+    fn las_alias_cortas_se_leen_como_la_larga() {
+        for (corto, largo) in SHORT_ALIASES {
+            let token = format!("-{corto}");
+            let (positionals, values, flags) = parse_args(&args(&[&token, "sprites"]));
+            assert_eq!(flags, vec![largo.to_string()], "-{corto}");
+            assert_eq!(positionals, vec!["sprites".to_string()], "-{corto}");
+            assert!(values.is_empty(), "-{corto} no es una opción con valor");
+            assert!(
+                check_unknown_options(&values, &flags, PACK_VALUES, PACK_FLAGS).is_ok(),
+                "-{corto} sigue sin ser aceptado por el subcomando"
+            );
+        }
+        // A solas, que es como se escribe `tp-cli pack -h`.
+        let (_, _, flags) = parse_args(&args(&["-h"]));
+        assert_eq!(flags, vec!["help".to_string()]);
     }
 
     #[test]
