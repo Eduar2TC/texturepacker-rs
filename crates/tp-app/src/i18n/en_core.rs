@@ -178,8 +178,8 @@ pub(crate) static EN_CORE: &[(&str, &str)] = &[
     ("Error cifrando: {}", "Error encrypting: {}"),
     ("Archivo cifrado demasiado corto", "Encrypted file too short"),
     (
-        "No es un archivo cifrado TexturePacker-RS (falta cabecera TPENC1)",
-        "Not a TexturePacker-RS encrypted file (TPENC1 header missing)",
+        "No es un archivo cifrado TexturePacker-RS (falta cabecera TPENC1 o TPENC2)",
+        "Not a TexturePacker-RS encrypted file (TPENC1 or TPENC2 header missing)",
     ),
     ("Error descifrando (¿clave incorrecta?)", "Error decrypting (wrong key?)"),
     ("pivots.json: {}", "pivots.json: {}"),

@@ -457,11 +457,18 @@ indica a cuál pertenece.
 ## Cifrado
 
 `encryption_key` cifra los **bytes completos** de cada archivo de imagen con
-AES-256-GCM (clave derivada por SHA-256 de la frase). Formato del archivo:
+AES-256-GCM. La clave sale de Argon2id (19 MiB, 2 pasadas, hilo único: los
+parámetros que OWASP recomienda) aplicado a la frase con una **sal aleatoria
+de 16 bytes por archivo**, de modo que cada fichero tiene su propia clave y un
+diccionario offline cuesta lo que cuesta Argon2 por intento. Formato del
+archivo:
 
 ```
-"TPENC1" (6 bytes) | nonce (12 bytes) | ciphertext + tag GCM
+"TPENC2" (6 bytes) | salt (16 bytes) | nonce (12 bytes) | ciphertext + tag GCM
 ```
+
+Los archivos `TPENC1` de las versiones anteriores (clave = SHA-256 de la
+frase, sin sal) se siguen descifrando; sólo se deja de escribir ese formato.
 
 ## Limitaciones conocidas
 

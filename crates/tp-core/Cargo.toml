@@ -18,6 +18,11 @@ aes-gcm.workspace = true
 rand.workspace = true
 handlebars.workspace = true
 sha2 = "0.10"
+# KDF del cifrado de exportación (TPENC2): Argon2id, que es lo que la
+# recomendación de OWASP pide cuando se puede usar. Antes la clave era
+# un SHA-256 pelón del passphrase, sin sal ni coste, y un diccionario
+# por GPU la revolvía en minutos.
+argon2 = "0.5"
 png = "0.18"
 webp = { version = "0.3", default-features = false }
 astcenc-rs = { workspace = true, optional = true }
