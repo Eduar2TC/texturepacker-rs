@@ -12,7 +12,15 @@ use cli::{cmd_decrypt, cmd_pack, exporter_list_text, fail, usage, version_line};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.is_empty() || args[0] == "--help" || args[0] == "-h" {
+    if args.is_empty() {
+        // Sin comando no hay nada que hacer, y no es una petición de
+        // ayuda: error de uso a stderr con el código 2 de la convención
+        // Unix. Antes salía con la ayuda y exit 0, y un script que no
+        // pasara argumentos lo tomaba por un éxito.
+        eprintln!("tp-cli: falta un comando (usa tp-cli --help para ver la ayuda)");
+        std::process::exit(2);
+    }
+    if args[0] == "--help" || args[0] == "-h" {
         usage();
     }
     match args[0].as_str() {

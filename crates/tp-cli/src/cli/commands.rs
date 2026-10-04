@@ -4,15 +4,17 @@ use super::args::{
     check_unknown_options, parse_args, parse_pixel_format, DECRYPT_FLAGS, DECRYPT_VALUES,
 };
 use super::fail;
-use super::help::usage;
+use super::help::decrypt_usage;
 
 pub(crate) fn cmd_decrypt(args: &[String]) {
     let (positionals, values, flags) = parse_args(args);
+    // `--help` manda sobre cualquier otra cosa, incluso sobre opciones
+    // desconocidas: pedir ayuda no debe terminar en un error.
+    if flags.iter().any(|f| f == "help") {
+        decrypt_usage();
+    }
     check_unknown_options(&values, &flags, DECRYPT_VALUES, DECRYPT_FLAGS)
         .unwrap_or_else(|e| fail(e));
-    if flags.iter().any(|f| f == "help") {
-        usage();
-    }
     let Some(file) = positionals.first().map(PathBuf::from) else {
         fail("decrypt necesita un archivo .tpenc".into());
     };

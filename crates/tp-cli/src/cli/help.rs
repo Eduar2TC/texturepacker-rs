@@ -185,8 +185,34 @@ fn help_text() -> String {
     )
 }
 
+/// Texto de la ayuda de `decrypt`. Está separada de [`help_text`] por la
+/// misma razón: `tp-cli decrypt --help` imprimía antes la ayuda de `pack`,
+/// con un centenar de opciones que decrypt ni siquiera lee.
+fn decrypt_help_text() -> String {
+    format!(
+        "TexturePacker-RS {}\n\
+         \n\
+         USO:\n\
+         \x20 tp-cli decrypt <archivo.tpenc> --key CLAVE [-o salida.png] [--pixel-format F]\n\
+         \n\
+         OPCIONES DE DECRYPT:\n\
+         \x20 --key CLAVE           Clave con la que se cifró el .tpenc (obligatoria)\n\
+         \x20 -o, --out FICHERO     Imagen de salida (por defecto: <entrada>.dec.png)\n\
+         \x20 --pixel-format F      Formato de la imagen decodificada (png por defecto)\n\
+         \x20 --verbose             Detalle extra del proceso\n\
+         \x20 --quiet               Sólo errores\n\
+         \x20 --help, -h            Esta ayuda (la general: tp-cli --help)",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
 pub(crate) fn usage() -> ! {
     println!("{}", help_text());
+    std::process::exit(0);
+}
+
+pub(crate) fn decrypt_usage() -> ! {
+    println!("{}", decrypt_help_text());
     std::process::exit(0);
 }
 
@@ -270,6 +296,35 @@ mod tests {
             let known = PACK_VALUES.contains(&opt.as_str()) || PACK_FLAGS.contains(&opt.as_str());
             assert!(known, "la ayuda documenta --{opt} y el parser no la conoce");
         }
+    }
+
+    /// La ayuda de decrypt es propia y completa: todo lo que documenta lo
+    /// lee el parser de decrypt, y nada que acepta se queda sin documentar.
+    #[test]
+    fn decrypt_help_documents_exactly_the_decrypt_options() {
+        let texto = decrypt_help_text();
+        for opt in help_options(&texto) {
+            let known =
+                DECRYPT_VALUES.contains(&opt.as_str()) || DECRYPT_FLAGS.contains(&opt.as_str());
+            assert!(
+                known,
+                "la ayuda de decrypt documenta --{opt} y el parser no la conoce"
+            );
+        }
+        for aceptada in DECRYPT_VALUES.iter().chain(DECRYPT_FLAGS.iter()) {
+            assert!(
+                texto.contains(&format!("--{aceptada}")),
+                "decrypt acepta --{aceptada} y su ayuda no lo documenta"
+            );
+        }
+        // La general sigue documentando pack y menciona decrypt, para que
+        // -h desde decrypt siga llevando a alguna parte.
+        let general = help_text();
+        assert!(
+            general.contains("decrypt <archivo.tpenc>"),
+            "sin mención a decrypt"
+        );
+        assert!(general.contains("--max-size"));
     }
 
     /// Igual que la de arriba, pero para `-h`, `-o` y demás alias cortos:
