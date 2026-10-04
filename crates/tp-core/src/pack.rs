@@ -298,6 +298,14 @@ fn place_all(items: &[PackItem], opts: &PackerOptions, cw: i32, ch: i32) -> Resu
     }
 }
 
+/// Área de un item para ordenar de mayor a menor. Amplía **antes** de
+/// multiplicar: `(w * h) as i64` multiplica en `i32` y con un lienzo que
+/// no pase por `ProjectConfig::validate` (que lo topa a 16384) se pasa de
+/// `i32::MAX`, que en debug es un panic y en release un orden erróneo.
+fn area_orden(w: i32, h: i32) -> i64 {
+    (w as i64) * (h as i64)
+}
+
 /// Σ (content width × content height) — tiebreak to compare candidates.
 fn footprint_metric(pages: &[PageState]) -> i64 {
     pages
@@ -761,7 +769,8 @@ fn pack_maxrects(
         .enumerate()
         .map(|(i, it)| (i, it.width + 2 * pad, it.height + 2 * pad))
         .collect();
-    sorted.sort_by_key(|(_, w, h)| std::cmp::Reverse((w * h) as i64));
+    // Clave calculada en `area_orden` (i64): ver su doc por qué.
+    sorted.sort_by_key(|(_, w, h)| std::cmp::Reverse(area_orden(*w, *h)));
 
     let mut pages: Vec<PageState> = Vec::new();
     for (item_idx, w, h) in sorted {
@@ -829,7 +838,8 @@ fn pack_guillotine(
         .enumerate()
         .map(|(i, it)| (i, it.width + 2 * pad, it.height + 2 * pad))
         .collect();
-    sorted.sort_by_key(|(_, w, h)| std::cmp::Reverse((w * h) as i64));
+    // Clave calculada en `area_orden` (i64): ver su doc por qué.
+    sorted.sort_by_key(|(_, w, h)| std::cmp::Reverse(area_orden(*w, *h)));
 
     let mut pages: Vec<PageState> = Vec::new();
     for (item_idx, w, h) in sorted {
@@ -1665,6 +1675,32 @@ mod tests {
         let opts = PackerOptions::new(PackingStrategy::Bssf, true, 32, 0, 0, false);
         let err = pack(&[item("huge", 64, 64)], &opts).unwrap_err();
         assert!(err.to_string().contains("huge"));
+    }
+
+    /// El orden por área hacía `(w * h) as i64`, que multiplica en `i32`
+    /// y desborda con un lienzo que no pase por `ProjectConfig::validate`
+    /// (que topa el lienzo a 16384): panic en debug, orden erróneo en
+    /// release. 46 341² ya se pasa de `i32::MAX`.
+    #[test]
+    fn el_orden_por_area_no_desborda_en_i32() {
+        assert_eq!(
+            area_orden(46_341, 46_341),
+            2_147_488_281,
+            "en i32 envolvería a un valor negativo y ordenaría al revés"
+        );
+        assert_eq!(area_orden(50_000, 50_000), 2_500_000_000);
+        // Dos ítems, no uno: con uno la clave no se llega a evaluar.
+        let items = [item("g", 46_341, 46_341), item("s", 100, 100)];
+        for algorithm in [PackingAlgorithm::MaxRects, PackingAlgorithm::Guillotine] {
+            let mut opts = PackerOptions::new(PackingStrategy::Bssf, false, 50_000, 0, 0, false);
+            opts.algorithm = algorithm;
+            opts.fixed_width = 50_000;
+            opts.fixed_height = 50_000;
+            opts.pack_mode = PackMode::Fast;
+            let out = pack(&items, &opts).unwrap_or_else(|e| panic!("{algorithm:?}: {e}"));
+            assert_eq!(out.pages.len(), 1, "{algorithm:?}");
+            assert_eq!(out.pages[0].placements.len(), 2, "{algorithm:?}");
+        }
     }
 
     #[test]
