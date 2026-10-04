@@ -21,13 +21,18 @@ pub fn hash_bytes_short(bytes: &[u8]) -> String {
 ///
 /// The pipeline keeps one of these across all sprites so duplicates are
 /// resolved against the *first* sprite that produced the same content.
+///
+/// Los buffers **no se copian**: la tabla toma prestados los píxeles de los
+/// sprites que ya están vivos en el llamador (`resolve_aliases` solo lee),
+/// así que el aliasing sigue siendo exacto byte a byte sin duplicar el pico
+/// de memoria (M7). `'a` es la vida de esos sprites.
 #[derive(Debug, Default)]
-pub struct AliasTable {
+pub struct AliasTable<'a> {
     /// hash -> (first sprite id, checksum of buffer length, buffer)
-    entries: std::collections::HashMap<String, (String, usize, Vec<u8>)>,
+    entries: std::collections::HashMap<String, (String, usize, &'a [u8])>,
 }
 
-impl AliasTable {
+impl<'a> AliasTable<'a> {
     pub fn new() -> Self {
         Self::default()
     }
@@ -42,7 +47,7 @@ impl AliasTable {
         &mut self,
         hash: &str,
         id: &str,
-        pixels: &[u8],
+        pixels: &'a [u8],
         width: usize,
         height: usize,
     ) -> Option<String> {
@@ -50,14 +55,12 @@ impl AliasTable {
         debug_assert_eq!(pixels.len(), expected_len);
 
         if let Some((owner, len, data)) = self.entries.get(hash) {
-            if *len == expected_len && data.as_slice() == pixels {
+            if *len == expected_len && *data == pixels {
                 return Some(owner.clone());
             }
         }
-        self.entries.insert(
-            hash.to_string(),
-            (id.to_string(), expected_len, pixels.to_vec()),
-        );
+        self.entries
+            .insert(hash.to_string(), (id.to_string(), expected_len, pixels));
         None
     }
 }
@@ -68,8 +71,8 @@ mod tests {
 
     #[test]
     fn identical_buffers_are_aliases() {
-        let mut table = AliasTable::new();
         let a = vec![10u8; 4 * 4 * 4];
+        let mut table = AliasTable::new();
         let h = hash_pixels_rgba(&a);
         assert_eq!(table.lookup_or_register(&h, "a", &a, 4, 4), None);
         assert_eq!(
@@ -80,11 +83,33 @@ mod tests {
 
     #[test]
     fn different_size_same_hash_is_not_alias() {
-        let mut table = AliasTable::new();
         let a = vec![7u8; 4 * 4 * 4];
+        let b = vec![7u8; 4 * 4 * 3];
+        let mut table = AliasTable::new();
         let h = hash_pixels_rgba(&a);
         assert_eq!(table.lookup_or_register(&h, "a", &a, 4, 4), None);
-        let b = vec![7u8; 4 * 4 * 3];
         assert_eq!(table.lookup_or_register(&h, "b", &b, 4, 3), None);
+    }
+
+    /// La comparación byte a byte es la que resuelve las colisiones de la
+    /// clave: dos buffers distintos con la misma clave no son alias.
+    #[test]
+    fn una_colision_de_clave_no_vuelve_alias_a_dos_sprites() {
+        let a = vec![1u8; 4 * 4 * 4];
+        let b = vec![2u8; 4 * 4 * 4];
+        let mut table = AliasTable::new();
+        let h = hash_pixels_rgba(&a); // misma clave para las dos
+        assert_eq!(table.lookup_or_register(&h, "a", &a, 4, 4), None);
+        assert_eq!(
+            table.lookup_or_register(&h, "b", &b, 4, 4),
+            None,
+            "con la clave cuadrando, solo los píxeles deciden"
+        );
+        // En una colisión la entrada se reemplaza por el buffer nuevo, así
+        // que a partir de ahí el dueño es el segundo.
+        assert_eq!(
+            table.lookup_or_register(&h, "b", &b, 4, 4),
+            Some("b".into())
+        );
     }
 }
