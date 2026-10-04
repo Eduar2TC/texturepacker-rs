@@ -1963,169 +1963,50 @@ mod tests {
     // Cross-validation against an independent ETC2 decoder (texture2ddecoder).
     // -----------------------------------------------------------------------
 
+    /// El selector de modo no puede inventar: el bloque RGB que sale es
+    /// literalmente el de uno de los modos candidatos, y concretamente el
+    /// del error reportado más bajo, con el mismo criterio (y las mismas
+    /// puertas de `effort`) que usa `encode_etc2_rgb`. Cubre los tres
+    /// `debug_*` anteriores, que solo imprimían, y además comprueba que
+    /// ningún modo candidato se queda fuera por accidente.
     #[test]
-    fn debug_independent_mismatch() {
-        // Two-half block, individual mode: print both decoders in full.
-        let pixels = two_half_block();
-        let block = encode_block(&pixels, 70);
-        let rgb8 = &block[8..16];
-        println!("rgb8={:02x?}", rgb8);
-        let ours = decode_etc2_rgb_block(rgb8);
-        let mut theirs = [0u32; 16];
-        texture2ddecoder::decode_etc2_rgb_block(rgb8, &mut theirs);
-        for i in 0..16 {
-            let t = [
-                ((theirs[i] >> 16) & 0xFF) as u8,
-                ((theirs[i] >> 8) & 0xFF) as u8,
-                (theirs[i] & 0xFF) as u8,
-            ];
-            println!(
-                "px{i} ours={:?} theirs={:?} src={:?}",
-                ours[i], t, pixels[i]
+    fn el_bloque_elegido_es_el_del_mejor_modo() {
+        for quality in [0u8, 50, 70, 100] {
+            let pixels = gradient_block();
+            let rgb = rgb_stream(&pixels);
+            let e = effort(quality);
+
+            let mut candidatos: Vec<(&str, i64, [u8; 8])> = Vec::new();
+            let (err, block) = encode_individual(&rgb, quality);
+            candidatos.push(("individual", err, block));
+            if let Some(r) = encode_differential(&rgb) {
+                candidatos.push(("differential", r.err, r.block));
+            }
+            if e.th {
+                if let Some(r) = encode_t(&rgb, e.candidates) {
+                    candidatos.push(("t", r.err, r.block));
+                }
+                if let Some(r) = encode_h(&rgb, e.candidates) {
+                    candidatos.push(("h", r.err, r.block));
+                }
+            }
+            if e.planar {
+                if let Some(r) = encode_planar(&rgb) {
+                    candidatos.push(("planar", r.err, r.block));
+                }
+            }
+            let (nombre, mejor_err, mejor) = candidatos
+                .into_iter()
+                .min_by_key(|(_, err, _)| *err)
+                .expect("siempre hay al menos individual");
+
+            let bloque = encode_block(&pixels, quality);
+            assert_eq!(
+                &bloque[8..16],
+                &mejor[..],
+                "quality {quality}: debería elegir el modo {nombre} con err {mejor_err}"
             );
         }
-
-        // Differential test block
-        let mut colors = [[0u8; 3]; 16];
-        for (i, c) in colors.iter_mut().enumerate() {
-            *c = if i < 8 {
-                [100, 50, 200]
-            } else {
-                [120, 60, 220]
-            };
-        }
-        let rgb = rgb_stream_of(&colors);
-        let enc = encode_differential(&rgb).expect("differential");
-        println!("diff block={:02x?}", enc.block);
-        let ours = decode_etc2_rgb_block(&enc.block);
-        let mut theirs = [0u32; 16];
-        texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);
-        for i in 0..16 {
-            let t = [
-                ((theirs[i] >> 16) & 0xFF) as u8,
-                ((theirs[i] >> 8) & 0xFF) as u8,
-                (theirs[i] & 0xFF) as u8,
-            ];
-            println!(
-                "dpx{i} ours={:?} theirs={:?} src={:?}",
-                ours[i],
-                t,
-                colors[stream_to_scan(i)]
-            );
-        }
-    }
-
-    #[test]
-    fn debug_hand_built_t() {
-        let c0 = [5u8, 10, 15];
-        let c1 = [10u8, 5, 3];
-        let dist = 3usize;
-        let mut sel = [0u8; 16];
-        for (i, s) in sel.iter_mut().enumerate() {
-            *s = (i % 4) as u8;
-        }
-        let block = build_t_block(c0, c1, dist, sel);
-        println!("block={:02x?}", block);
-        println!("decoded={:?}", decode_etc2_rgb_block(&block));
-        let mut theirs = [0u32; 16];
-        texture2ddecoder::decode_etc2_rgb_block(&block, &mut theirs);
-        println!(
-            "theirs={:?}",
-            theirs
-                .iter()
-                .map(|v| [
-                    ((v >> 16) & 0xFF) as u8,
-                    ((v >> 8) & 0xFF) as u8,
-                    (v & 0xFF) as u8
-                ])
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn debug_t_h_bytes() {
-        // T test palette
-        let c0 = [5u8, 10, 15];
-        let c1 = [10u8, 5, 3];
-        let dist = 3usize;
-        let d = ETC2_DISTANCE_TABLE[dist] as i32;
-        let c0x = expand4_3(c0);
-        let c1x = expand4_3(c1);
-        let palette = [c0x, add_clamp(c1x, d), c1x, add_clamp(c1x, -d)];
-        let mut colors = [[0u8; 3]; 16];
-        for (i, c) in colors.iter_mut().enumerate() {
-            let p = palette[i % 4];
-            *c = [p[0] as u8, p[1] as u8, p[2] as u8];
-        }
-        let rgb = rgb_stream_of(&colors);
-        let enc = encode_t(&rgb, 16).unwrap();
-        println!("T block={:02x?} err={}", enc.block, enc.err);
-        println!("T ours={:?}", decode_etc2_rgb_block(&enc.block));
-        let mut theirs = [0u32; 16];
-        texture2ddecoder::decode_etc2_rgb_block(&enc.block, &mut theirs);
-        println!(
-            "T theirs={:?}",
-            theirs
-                .iter()
-                .map(|v| [
-                    (*v & 0xFF) as u8,
-                    ((*v >> 8) & 0xFF) as u8,
-                    ((*v >> 16) & 0xFF) as u8
-                ])
-                .collect::<Vec<_>>()
-        );
-
-        // H test palette
-        let c0 = [15u8, 5, 3];
-        let c1 = [3u8, 10, 12];
-        let stored = 2usize;
-        let implied = 1usize;
-        let dist = (stored << 1) | implied;
-        let d = ETC2_DISTANCE_TABLE[dist] as i32;
-        let c0x = expand4_3(c0);
-        let c1x = expand4_3(c1);
-        let palette = [
-            add_clamp(c0x, d),
-            add_clamp(c0x, -d),
-            add_clamp(c1x, d),
-            add_clamp(c1x, -d),
-        ];
-        let mut colors = [[0u8; 3]; 16];
-        for (i, c) in colors.iter_mut().enumerate() {
-            let p = palette[(i * 3) % 4];
-            *c = [p[0] as u8, p[1] as u8, p[2] as u8];
-        }
-        let rgb = rgb_stream_of(&colors);
-        let enc = encode_h(&rgb, 16).unwrap();
-        println!("H block={:02x?} err={}", enc.block, enc.err);
-        println!("H ours={:?}", decode_etc2_rgb_block(&enc.block));
-    }
-
-    #[test]
-    fn debug_each_mode_gradient() {
-        let pixels = gradient_block();
-        let rgb = rgb_stream(&pixels);
-        let (ei, bi) = encode_individual(&rgb, 70);
-        println!("individual err={} bytes={:02x?}", ei, bi);
-        let d = encode_differential(&rgb).unwrap();
-        println!("diff err={} bytes={:02x?}", d.err, d.block);
-        let t = encode_t(&rgb, 16).unwrap();
-        println!("T err={} bytes={:02x?}", t.err, t.block);
-        let h = encode_h(&rgb, 16).unwrap();
-        println!("H err={} bytes={:02x?}", h.err, h.block);
-        let p = encode_planar(&rgb).unwrap();
-        println!("planar err={} bytes={:02x?}", p.err, p.block);
-        let dec = decode_etc2_rgb_block(&p.block);
-        println!("planar dec[0]={:?} src[0]={:?}", dec[0], pixels[0]);
-        // which mode did the full encoder pick?
-        let full = encode_block(&pixels, 70);
-        let fdec = decode_etc2_rgb_block(&full[8..16]);
-        println!(
-            "full bytes={:02x?} dec[0]={:?} src[0]={:?}",
-            &full[8..16],
-            fdec[0],
-            pixels[0]
-        );
     }
 
     /// A block with two flat halves: the full encoder picks individual mode,
