@@ -1173,6 +1173,16 @@ fn try_place(
     }
     candidates.sort_by_key(|(_, _, s)| *s);
 
+    // El footprint rasterizado depende solo del mesh, del tamaño, de la
+    // orientación y del padding, no del candidato en el que se coloque:
+    // se calcula una vez por orientación (como mucho dos) y se reutiliza
+    // tanto para validar el solape como para marcar la celda. Rasterizarlo
+    // dentro del bucle costaba O(free_rects × área) allocations por sprite
+    // (M8). El orden se mantiene: se puntúa antes de validar porque
+    // puntuar es aritmética pura, mientras que el barrido de solape se
+    // corta en cuanto un candidato sirve.
+    let mut footprints: [Option<Vec<bool>>; 2] = [None, None];
+
     for (ri, rotated, _) in candidates {
         let fr = page.free_rects[ri];
         let (pw, ph) = if rotated { (h, w) } else { (w, h) };
@@ -1188,9 +1198,16 @@ fn try_place(
                 page.occupied = vec![false; (page.width * page.height) as usize];
             }
             if let Some(mesh) = &item.mesh {
-                let footprint =
-                    polygon_footprint(mesh, item.width, item.height, rotated, opts.padding);
-                if overlaps(&page.occupied, &footprint, page.width, page.height, frame) {
+                let footprint = footprints[rotated as usize].get_or_insert_with(|| {
+                    polygon_footprint(mesh, item.width, item.height, rotated, opts.padding)
+                });
+                if overlaps(
+                    &page.occupied,
+                    footprint.as_slice(),
+                    page.width,
+                    page.height,
+                    frame,
+                ) {
                     continue;
                 }
             }
@@ -1207,11 +1224,12 @@ fn try_place(
 
         match &item.mesh {
             Some(mesh) if opts.polygon_mode => {
-                let footprint =
-                    polygon_footprint(mesh, item.width, item.height, rotated, opts.padding);
+                let footprint = footprints[rotated as usize].get_or_insert_with(|| {
+                    polygon_footprint(mesh, item.width, item.height, rotated, opts.padding)
+                });
                 blit_footprint(
                     &mut page.occupied,
-                    &footprint,
+                    footprint.as_slice(),
                     page.width,
                     page.height,
                     frame,
