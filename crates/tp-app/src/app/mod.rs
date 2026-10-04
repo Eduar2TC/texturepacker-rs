@@ -172,6 +172,13 @@ pub struct App {
     /// en el frame siguiente: ningún widget del panel de Ajustes puede
     /// cablearse mal a medias. `None` = aún sin muestrear (primer frame).
     config_fingerprint: Option<String>,
+    /// Árbol de entrada ya construido, con la clave que lo produce. Véase
+    /// `App::take_tree` (en el módulo `sprites_panel`): `build_tree` hace
+    /// `read_dir` recursivo con sort y allocations por nodo, y se llamaba
+    /// dentro de `update()`, o sea en cada frame (≈60 repasos de disco por
+    /// segundo). Ahora se rehace solo cuando cambia algo que lee (config y
+    /// filtro) o cuando el snapshot de disco avisa (M14).
+    tree_cache: Option<sprites_panel::TreeCache>,
     /// Filesystem watcher (autowatch): edits on disk refresh the preview.
     watcher: Option<notify::RecommendedWatcher>,
     /// Clonable handle to wake the UI from the watcher thread.

@@ -37,12 +37,75 @@ impl SelectMode {
     }
 }
 
-struct TreeNode {
+/// Un nodo del árbol de entrada. Es `pub(super)` porque vive cachéado dentro
+/// de `App` (véase [`App::take_tree`]).
+pub(super) struct TreeNode {
     path: PathBuf,
     name: String,
     is_dir: bool,
     origin: Origin,
     children: Vec<TreeNode>,
+}
+
+/// Todo lo que lee [`build_tree`] en el mismo orden: son los cinco inputs
+/// del caché, y nada más. Se compara campo a campo en vez de usar la huella
+/// `Debug` de `config` (que cambia con cualquier ajuste del empaquetado, y
+/// arrastrar un slider haría releer el disco en cada frame).
+#[derive(PartialEq)]
+struct TreeClave {
+    entrada: PathBuf,
+    extras: Vec<PathBuf>,
+    recursivo: bool,
+    excluidos: Vec<PathBuf>,
+    filtro: String,
+}
+
+/// Árbol de entrada construido **junto con la clave que lo produce**. Véase
+/// [`App::take_tree`] (M14).
+pub(super) struct TreeCache {
+    clave: TreeClave,
+    arbol: Vec<TreeNode>,
+}
+
+impl App {
+    fn tree_clave(&self) -> TreeClave {
+        TreeClave {
+            entrada: self.config.input_directory.clone(),
+            extras: self.config.extra_inputs.clone(),
+            recursivo: self.config.recursive,
+            excluidos: self.config.excluded_inputs.clone(),
+            filtro: self.tree_filter.clone(),
+        }
+    }
+
+    /// Saca el árbol de `App` para poder pintarlo mientras se sigue teniendo
+    /// `&mut App` (el préstamo de un campo no se puede partir por la mitad).
+    /// Si la clave no cuadra, se rehace leyendo el disco. Se devuelve al
+    /// final del frame con [`App::keep_tree`]; si no se devuelve (los pocos
+    /// `return` de `sprites_ui`), el siguiente frame reconstruye.
+    ///
+    /// La clave se viaja **dentro** del caché y no se recalcula al guardar:
+    /// `sprites_ui` puede mutar `config` mientras pinta (quitar un sprite),
+    /// y con la clave recalculada el árbol viejo quedaría firmado por la
+    /// config nueva, que es justo el fallo que se evita.
+    ///
+    /// El caché solo cubre config y filtro: los ficheros en disco lo dice
+    /// `poll_changes`, que lo vacía cuando el snapshot cambia.
+    pub(super) fn take_tree(&mut self) -> TreeCache {
+        let clave = self.tree_clave();
+        match self.tree_cache.take() {
+            Some(c) if c.clave == clave => c,
+            _ => TreeCache {
+                clave,
+                arbol: build_tree(&self.config, &self.tree_filter),
+            },
+        }
+    }
+
+    /// Devuelve el árbol a la caché con la clave de cuando se sacó.
+    pub(super) fn keep_tree(&mut self, cache: TreeCache) {
+        self.tree_cache = Some(cache);
+    }
 }
 
 enum TreeAction {
@@ -84,8 +147,9 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         app.tree_kb_focus = false;
     }
 
-    let tree = build_tree(&app.config, &app.tree_filter);
-    let total = count_files(&tree);
+    let cache = app.take_tree();
+    let tree = &cache.arbol;
+    let total = count_files(tree);
 
     ui.horizontal(|ui| {
         ui.strong(t!("Sprites ({})", total));
@@ -139,6 +203,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             ui.label(egui::RichText::new("📁").size(28.0));
             ui.label(egui::RichText::new(msg).weak());
         });
+        app.keep_tree(cache);
         return;
     }
 
@@ -170,7 +235,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 }
                 ui.separator();
             }
-            for node in &tree {
+            for node in tree {
                 render_node(app, ui, node, true, &mut walk, force);
             }
             // Teclado de la lista (flechas, Ctrl+A, Supr): se atiende aquí,
@@ -240,6 +305,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 .iter()
                 .position(|g| g.name == group)
             else {
+                app.keep_tree(cache);
                 return;
             };
             let moved = app.move_sprites_to_group(&ids, index);
@@ -284,6 +350,8 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             }
         }
     }
+
+    app.keep_tree(cache);
 }
 
 /// Ids a arrastrar para la fila `path`: si la fila pertenece a una
@@ -1100,4 +1168,130 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                  hoja se escribe en su subcarpeta de salida."
             ));
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::SNAPSHOT_POLL_MS;
+    use crate::testing::{create_example_project, idle_input};
+    use std::time::Duration;
+
+    /// Proyecto de ejemplo + app headless (con la carpeta de sprites real).
+    fn proyecto(tag: &str) -> (App, egui::Context, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_tree_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        let project = create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        let ctx = egui::Context::default();
+        let app = App::new_for_testing(ctx.clone(), Some(project));
+        (app, ctx, tmp)
+    }
+
+    /// Nombres de todos los nodos, carpetas incluidas (orden preorden).
+    fn nombres(arbol: &[TreeNode]) -> Vec<String> {
+        let mut out = Vec::new();
+        for n in arbol {
+            out.push(n.name.clone());
+            out.extend(nombres(&n.children));
+        }
+        out
+    }
+
+    /// M14: el árbol construido se reutiliza (no se releen las carpetas) y
+    /// la clave lo invalida cuando cambia algo que `build_tree` lee.
+    #[test]
+    fn el_arbol_cacheado_se_reusa_hasta_que_cambia_algo() {
+        let (mut app, _ctx, tmp) = proyecto("cache");
+        let sprites = tmp.join("sprites");
+
+        let cache = app.take_tree();
+        assert!(
+            !cache.arbol.is_empty(),
+            "el proyecto de ejemplo tiene sprites"
+        );
+        app.keep_tree(cache);
+
+        // La carpeta se aparta de su sitio: si la caché se releyera el
+        // disco, el árbol saldría vacío.
+        let fuera = tmp.join("sprites_fuera");
+        std::fs::rename(&sprites, &fuera).unwrap();
+        let cache = app.take_tree();
+        assert!(
+            nombres(&cache.arbol).contains(&"hero.png".to_string()),
+            "la caché debía seguir valiendo sin volver a mirar el disco"
+        );
+        app.keep_tree(cache);
+
+        // Un filtro distinto cambia la clave: se rehace (y ya no hay nada).
+        app.tree_filter = "zzz-sin-coincidencias".to_string();
+        let cache = app.take_tree();
+        assert!(
+            cache.arbol.is_empty(),
+            "la clave nueva no puede devolver el árbol viejo"
+        );
+        app.keep_tree(cache);
+
+        // Con la carpeta de vuelta y otra vez la clave cambiada, sí se
+        // relee el disco y aparece el contenido.
+        std::fs::rename(&fuera, &sprites).unwrap();
+        app.tree_filter = String::new();
+        let cache = app.take_tree();
+        assert!(
+            nombres(&cache.arbol).contains(&"hero.png".to_string()),
+            "con la clave cambiada el árbol debe releer el disco"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// M14: la caché no es un muro. `poll_changes` la vacía cuando el
+    /// snapshot de disco cambia, así que un sprite nuevo en la carpeta de
+    /// entrada entra en el panel sin tocar config ni filtro.
+    #[test]
+    fn un_sprite_nuevo_en_disco_entra_en_el_arbol() {
+        let (mut app, ctx, tmp) = proyecto("disco");
+        let sprites = tmp.join("sprites");
+
+        // El primer frame pinta el panel y deja su árbol en la caché.
+        let _ = app.run_frame(&ctx, idle_input());
+        assert!(
+            app.tree_cache.is_some(),
+            "el panel debe haber dejado su árbol en la caché"
+        );
+        assert!(
+            app.sprite_row_rects()
+                .iter()
+                .any(|(p, _)| p.ends_with("hero.png")),
+            "las filas del proyecto de ejemplo deben estar registradas"
+        );
+
+        std::fs::copy(sprites.join("hero.png"), sprites.join("nuevo.png")).unwrap();
+        std::thread::sleep(Duration::from_millis(SNAPSHOT_POLL_MS + 20));
+        app.poll_changes(&ctx);
+
+        let cache = app.take_tree();
+        assert!(
+            nombres(&cache.arbol).contains(&"nuevo.png".to_string()),
+            "el snapshot cambió: la caché debía vaciarse y releer el disco"
+        );
+        app.keep_tree(cache);
+
+        let _ = app.run_frame(&ctx, idle_input());
+        assert!(
+            app.sprite_row_rects()
+                .iter()
+                .any(|(p, _)| p.ends_with("nuevo.png")),
+            "la fila del sprite nuevo debe aparecer en el panel"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

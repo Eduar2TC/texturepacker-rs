@@ -87,6 +87,7 @@ impl App {
             // `None` = sin muestrear: el primer frame de `poll_changes` toma
             // la huella sin notificar (ver `App::config_fingerprint`).
             config_fingerprint: None,
+            tree_cache: None,
             watcher: None,
             egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),

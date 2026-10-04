@@ -403,6 +403,11 @@ impl App {
             self.last_snapshot_poll = std::time::Instant::now();
             self.preview_stale = self.snapshot_changed();
             if self.preview_stale {
+                // El disco cambió: el árbol cacheado del panel izquierdo ya
+                // no refleja las carpetas de entrada (M14). La clave de la
+                // caché solo cubre config y filtro; los ficheros la ignoran,
+                // así que aquí hay que vaciarla a mano.
+                self.tree_cache = None;
                 self.request_preview(true);
             }
         }
