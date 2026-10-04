@@ -41,7 +41,9 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         if has_errors {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button(egui::RichText::new("✖ Error").color(ui.visuals().error_fg_color))
+                    .small_button(
+                        egui::RichText::new(t!("✖ Error")).color(ui.visuals().error_fg_color),
+                    )
                     .on_hover_text(t!("Ir al Log"))
                     .clicked()
                 {
@@ -153,14 +155,14 @@ fn sprites_view(app: &mut App, ui: &mut egui::Ui) {
                 .striped(true)
                 .min_col_width(70.0)
                 .show(ui, |ui| {
-                    ui.strong("id");
+                    ui.strong(t!("id"));
                     ui.strong(t!("tamaño"));
                     ui.strong(t!("recortado"));
-                    ui.strong("frame (x,y,w,h)");
-                    ui.strong("rot");
+                    ui.strong(t!("frame (x,y,w,h)"));
+                    ui.strong(t!("rot"));
                     ui.strong(t!("página"));
-                    ui.strong("alias");
-                    ui.strong("pivot");
+                    ui.strong(t!("alias"));
+                    ui.strong(t!("pivot"));
                     ui.strong(t!("malla"));
                     ui.end_row();
                     for s in &out.result.sprites {

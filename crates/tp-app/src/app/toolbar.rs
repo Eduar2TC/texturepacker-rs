@@ -108,7 +108,7 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             // «Tutorial» abre la documentación del proyecto en el
             // navegador (egui-winit → `webbrowser`).
             if ui
-                .button("Tutorial")
+                .button(t!("Tutorial"))
                 .on_hover_text(t!("Abre la documentación del proyecto en el navegador"))
                 .clicked()
             {

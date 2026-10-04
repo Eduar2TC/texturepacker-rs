@@ -106,9 +106,10 @@ pub(super) fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
     } else {
         app.log(
             LogKind::Warning,
-            format!(
-                "Nada nuevo en el workspace ({total} fichero(s) soltado(s): \
-                 ya estaban o no son imágenes)."
+            t!(
+                "Nada nuevo en el workspace ({} fichero(s) soltado(s): \
+                 ya estaban o no son imágenes).",
+                total
             ),
         );
     }

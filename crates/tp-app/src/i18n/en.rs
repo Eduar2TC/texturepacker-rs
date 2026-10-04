@@ -24,6 +24,7 @@ pub(crate) static EN: &[(&str, &str)] = &[
         "Stored on this machine, not in the project.",
     ),
     ("📂 Abrir", "📂 Open"),
+    ("Tutorial", "Tutorial"),
     (
         "Abrir proyecto (.tpproj o .tps) — Ctrl+O",
         "Open project (.tpproj or .tps) — Ctrl+O",
@@ -103,9 +104,15 @@ pub(crate) static EN: &[(&str, &str)] = &[
     ("recortado", "trimmed"),
     ("página", "page"),
     ("malla", "mesh"),
+    ("id", "id"),
+    ("frame (x,y,w,h)", "frame (x,y,w,h)"),
+    ("rot", "rot"),
+    ("alias", "alias"),
+    ("pivot", "pivot"),
     ("Salida", "Output"),
     ("Malla", "Mesh"),
     ("Ir al Log", "Go to Log"),
+    ("✖ Error", "✖ Error"),
     ("Ejecuta un empaquetado primero.", "Run a pack first."),
     ("(ninguno: añade sprites y publica)", "(none: add sprites and publish)"),
     ("(ninguno)", "(none)"),
@@ -185,6 +192,10 @@ pub(crate) static EN: &[(&str, &str)] = &[
     ("Proyecto inválido: {}", "Invalid project: {}"),
     ("No se pudo leer: {}", "Could not read: {}"),
     ("{} sprite(s) añadido(s).", "{} sprite(s) added."),
+    (
+        "Nada nuevo en el workspace ({} fichero(s) soltado(s): ya estaban o no son imágenes).",
+        "Nothing new in the workspace ({} file(s) dropped: already present or not images).",
+    ),
     (
         "Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».",
         "Welcome to TexturePacker-RS. Add sprites and press «Publish».",
@@ -334,6 +345,8 @@ pub(crate) static EN: &[(&str, &str)] = &[
     ("Posiciones predefinidas", "Preset positions"),
     ("9-patch centro", "9-patch center"),
     ("Sin bordes", "No borders"),
+    ("3-patch horizontal", "3-patch horizontal"),
+    ("3-patch vertical", "3-patch vertical"),
     ("🔎 Detectar barras sólidas", "🔎 Detect solid bars"),
     ("💾 Guardar pivots en pivots.json", "💾 Save pivots to pivots.json"),
 

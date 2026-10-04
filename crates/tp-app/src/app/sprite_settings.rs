@@ -146,7 +146,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
             ui.separator();
 
             // -------- 9-patch / 3-patch --------
-            ui.heading("Bordes 9-patch");
+            ui.heading(t!("Bordes 9-patch"));
             ui.label(
                 egui::RichText::new(t!(
                     "Barras [izq, arriba, der, abajo] en píxeles de la imagen original. \
@@ -177,11 +177,11 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                     border = [8, 8, 8, 8];
                     border_changed = true;
                 }
-                if ui.button("3-patch horizontal").clicked() {
+                if ui.button(t!("3-patch horizontal")).clicked() {
                     border = [8, 0, 8, 0];
                     border_changed = true;
                 }
-                if ui.button("3-patch vertical").clicked() {
+                if ui.button(t!("3-patch vertical")).clicked() {
                     border = [0, 8, 0, 8];
                     border_changed = true;
                 }

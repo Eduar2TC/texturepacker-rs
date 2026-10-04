@@ -554,6 +554,98 @@ mod tests {
         );
     }
 
+    /// Métodos de egui que pintan texto (no identificadores: `Grid::new`,
+    /// `id_salt` y compañía quedan fuera a propósito).
+    const UI_TEXTO: &[&str] = &[
+        "button",
+        "small_button",
+        "heading",
+        "strong",
+        "label",
+        "text",
+        "hint_text",
+        "placeholder_text",
+        "selected_text",
+        "on_hover_text",
+        "colored_label",
+        "from_label",
+        "title",
+        "shortcut_text",
+    ];
+
+    /// Literales que son idénticos en los dos idiomas (préstamos como «FPS»
+    /// o «Zoom» y los separadores «x»/«y» de las dimensiones): no merecen
+    /// entrada en la tabla y el test de arriba los deja pasar.
+    const UI_IGUALES: &[&str] = &["FPS", "Zoom", "x", "y"];
+
+    /// El test `cada_clave_en_uso_tiene_traduccion` solo mira lo que ya pasa
+    /// por `t!`, así que un literal escrito a pelo en la UI no lo ve nadie y
+    /// la pantalla se queda en el idioma en que se programó. Este barrido va
+    /// al revés: recorre las fuentes en busca de literales que un método de
+    /// texto pinta sin traducir (M16 cazó diez de ellos).
+    #[test]
+    fn la_ui_no_pinta_literales_sin_t() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let mut ficheros = Vec::new();
+        crate::glyph_guard::walk(&root, &mut ficheros);
+        let mut crudos = Vec::new();
+        for fichero in ficheros {
+            if fichero.components().any(|c| c.as_os_str() == "bin") {
+                continue;
+            }
+            let Ok(src) = std::fs::read_to_string(&fichero) else {
+                continue;
+            };
+            let lineas: Vec<&str> = src.lines().collect();
+            for (n, linea) in lineas.iter().enumerate() {
+                // Lo que va tras `//` es comentario (un ejemplo en un
+                // doc-comentario no es un literal de la UI).
+                let codigo = linea.split("//").next().unwrap_or_default();
+                for metodo in UI_TEXTO {
+                    let patron = format!(".{metodo}(");
+                    let mut desde = 0;
+                    while let Some(p) = codigo[desde..].find(&patron) {
+                        let ini = desde + p + patron.len();
+                        desde = ini;
+                        let resto = &codigo[ini..];
+                        let tras = resto.trim_start();
+                        // `RichText::new("…")` envuelve a la cadena: quitarle
+                        // la capa deja el mismo caso que `.label("…")`.
+                        let tras = tras
+                            .strip_prefix("egui::RichText::new(")
+                            .map(str::trim_start)
+                            .unwrap_or(tras);
+                        let Some(cadena) = tras.strip_prefix('"') else {
+                            // Sin cadena delante puede seguir en la línea
+                            // siguiente: ahí `t!(` ya cuenta como traducido.
+                            if resto.trim().is_empty() {
+                                let sig = lineas.get(n + 1).copied().unwrap_or_default();
+                                if sig.trim_start().starts_with('"') {
+                                    crudos.push(format!("{}:{}: {sig}", fichero.display(), n + 2));
+                                }
+                            }
+                            continue;
+                        };
+                        let fin = cadena.find('"').unwrap_or(cadena.len());
+                        let texto = &cadena[..fin];
+                        if texto.chars().any(|c| c.is_ascii_alphabetic())
+                            && !UI_IGUALES.contains(&texto)
+                        {
+                            crudos.push(format!("{}:{}: {texto:?}", fichero.display(), n + 1));
+                        }
+                    }
+                }
+            }
+        }
+        crudos.sort();
+        crudos.dedup();
+        assert!(
+            crudos.is_empty(),
+            "literales que la UI pinta sin pasar por t!(…):\n  {}",
+            crudos.join("\n  ")
+        );
+    }
+
     #[test]
     fn la_traduccion_conserve_los_placeholders() {
         let mut malas = Vec::new();
