@@ -25,6 +25,22 @@ Capa de Entrada (CLI / GUI / .tpproj)
 5. Exportación & Cifrado        (PNG/WebP/ASTC/ETC2, AES-256-GCM, plantillas Mustache)
 ```
 
+## Capturas
+
+El proyecto de ejemplo ya empaquetado al abrirlo: la vista previa se
+encuadra sola en la primera carga y el filete fino marca el límite de la
+página dentro del lienzo.
+
+| Tema oscuro | Tema claro |
+|-------------|------------|
+| ![TexturePacker-RS en tema oscuro: árbol de sprites, vista previa del atlas con contornos, pivots y filete de página, y panel de ajustes](docs/screenshots/principal-oscuro.png) | ![TexturePacker-RS en tema claro, con la misma pantalla](docs/screenshots/principal-claro.png) |
+
+La misma pantalla en inglés, que es como se ven los plurales concordados
+(«12 sprites · 1 alias · 1 page»). Idioma y tema se eligen en
+**Ajustes → Interfaz** y se guardan en el equipo, no en el proyecto:
+
+![TexturePacker-RS con la interfaz en inglés](docs/screenshots/interfaz-en.png)
+
 ## Componentes
 
 | Crate        | Descripción                                                              |
@@ -522,7 +538,7 @@ frase, sin sal) se siguen descifrando; sólo se deja de escribir ese formato.
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta 382 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta más de 450 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español en el código que la GUI traduce al
 idioma elegido): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
