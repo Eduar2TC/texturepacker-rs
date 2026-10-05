@@ -1888,48 +1888,40 @@ mod tests {
     /// no «de junto al directorio de trabajo desde el que se lance».
     #[test]
     fn las_rutas_relativas_se_resuelven_contra_la_carpeta_del_proyecto() {
+        // Base absoluta de verdad en cada plataforma: `Path::new("/juego")`
+        // no es absoluta en Windows (le falta la unidad), y el test estaría
+        // afirmando que no se toca una ruta que sí se toca.
+        let base = std::env::temp_dir().join("juego").join("assets");
+        let absoluto = std::env::temp_dir().join("absoluto").join("dos.png");
         let mut cfg = ProjectConfig {
             input_directory: PathBuf::from("sprites"),
             output_directory: PathBuf::from("out"),
-            extra_inputs: vec![
-                PathBuf::from("extras/uno.png"),
-                PathBuf::from("/absoluto/dos.png"),
-            ],
+            extra_inputs: vec![PathBuf::from("extras/uno.png"), absoluto.clone()],
             excluded_inputs: vec![PathBuf::from("sprites/roto.png")],
             export_template: Some(PathBuf::from("plantilla.hbs")),
             custom_exporters_directory: Some(PathBuf::from("exportadores")),
             ..ProjectConfig::default()
         };
 
-        cfg.resolve_relative_paths(Some(Path::new("/juego/assets")));
+        cfg.resolve_relative_paths(Some(base.as_path()));
 
-        assert_eq!(cfg.input_directory, Path::new("/juego/assets/sprites"));
-        assert_eq!(cfg.output_directory, Path::new("/juego/assets/out"));
+        assert_eq!(cfg.input_directory, base.join("sprites"));
+        assert_eq!(cfg.output_directory, base.join("out"));
+        assert_eq!(cfg.extra_inputs[0], base.join("extras/uno.png"));
         assert_eq!(
-            cfg.extra_inputs[0],
-            Path::new("/juego/assets/extras/uno.png")
-        );
-        assert_eq!(
-            cfg.extra_inputs[1],
-            Path::new("/absoluto/dos.png"),
+            cfg.extra_inputs[1], absoluto,
             "las rutas absolutas no se tocan"
         );
-        assert_eq!(
-            cfg.excluded_inputs[0],
-            Path::new("/juego/assets/sprites/roto.png")
-        );
-        assert_eq!(
-            cfg.export_template,
-            Some(PathBuf::from("/juego/assets/plantilla.hbs"))
-        );
+        assert_eq!(cfg.excluded_inputs[0], base.join("sprites/roto.png"));
+        assert_eq!(cfg.export_template, Some(base.join("plantilla.hbs")));
         assert_eq!(
             cfg.custom_exporters_directory,
-            Some(PathBuf::from("/juego/assets/exportadores"))
+            Some(base.join("exportadores"))
         );
 
         // Cargar dos veces no duplica la base: lo absoluto ya no se toca.
         let primera = cfg.clone();
-        cfg.resolve_relative_paths(Some(Path::new("/juego/assets")));
+        cfg.resolve_relative_paths(Some(base.as_path()));
         assert_eq!(cfg.input_directory, primera.input_directory);
         assert_eq!(cfg.extra_inputs, primera.extra_inputs);
     }

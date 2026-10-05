@@ -228,10 +228,12 @@ mod tests {
         // si lo hubiera escrito a mano para compartir la carpeta.
         let texto = std::fs::read_to_string(&proyecto).expect("lee el .tpproj");
         let texto = texto.replace(&sprites.display().to_string(), "sprites");
-        assert!(
-            texto.contains("input_directory = \"sprites\""),
-            "el reemplazo a relativo no cuadró: {texto}"
-        );
+        // TOML escoge cadena literal («'…'») cuando el valor lleva barras
+        // invertidas, que es el caso normal en Windows: la comprobación no
+        // puede depender del estilo de comillas que el serializador elija.
+        let relativa = texto.contains("input_directory = \"sprites\"")
+            || texto.contains("input_directory = 'sprites'");
+        assert!(relativa, "el reemplazo a relativo no cuadró: {texto}");
         std::fs::write(&proyecto, texto).expect("reescribe el .tpproj");
 
         let ctx = eframe::egui::Context::default();
