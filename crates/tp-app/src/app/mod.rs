@@ -156,6 +156,15 @@ pub struct App {
     /// mismo aviso en cada repaso del snapshot (se olvidan al recuperarse).
     unreadable_dirs: Vec<PathBuf>,
     project_path: Option<PathBuf>,
+    /// Huella TOML de la última versión del proyecto escrita (o cargada) en
+    /// disco: mientras la configuración no se separe de ella no hay nada que
+    /// guardar (review UI/UX C2).
+    saved_config: String,
+    /// El diálogo «hay cambios sin guardar» está abierto.
+    exit_pending: bool,
+    /// El usuario ya decidió salir sin guardar: el siguiente cierre pasa sin
+    /// volver a preguntar.
+    exit_confirmed: bool,
     /// Text filter applied to the sprites tree.
     tree_filter: String,
     /// Whether the tree filter has keyboard focus (blocks the Delete key).
@@ -226,6 +235,15 @@ pub struct App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         apply_theme(ctx, self.prefs.theme());
+
+        // Cambios sin guardar: si el sistema pide cerrar la ventana con la
+        // configuración tocada, el cierre se cancela y se abre el diálogo de
+        // confirmación; si no hay nada pendiente, el cierre pasa solo (C2).
+        let mut dirty = self.is_dirty();
+        if ctx.input(|i| i.viewport().close_requested()) && dirty && !self.exit_confirmed {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.exit_pending = true;
+        }
 
         if let Some(rx) = &self.running {
             match rx.try_recv() {
@@ -366,12 +384,19 @@ impl eframe::App for App {
         animation::animation_window(self, ctx);
         split_sheet::split_window(self, ctx);
 
+        // El diálogo de cierre puede haber guardado el proyecto, así que la
+        // huella se vuelve a mirar justo antes de componer el título.
+        self.exit_dialog(ctx);
+        dirty = self.is_dirty();
+
         // La ruta del proyecto vive en el título de la ventana, no en la
-        // barra de herramientas (evita truncamientos y ruido visual).
-        let title = match &self.project_path {
+        // barra de herramientas (evita truncamientos y ruido visual). El
+        // punto delante avisa de que hay cambios sin guardar (C2).
+        let base = match &self.project_path {
             Some(p) => format!("{} — TexturePacker-RS", p.display()),
             None => "TexturePacker-RS".to_string(),
         };
+        let title = if dirty { format!("• {base}") } else { base };
         if self.last_title != title {
             self.last_title = title.clone();
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));

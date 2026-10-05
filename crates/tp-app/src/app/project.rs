@@ -2,6 +2,7 @@
 
 use super::{App, LogKind};
 use crate::i18n::t;
+use eframe::egui;
 use std::path::PathBuf;
 use tp_core::config::ProjectConfig;
 
@@ -34,6 +35,9 @@ impl App {
             match std::fs::write(&path, text) {
                 Ok(_) => {
                     self.project_path = Some(path.clone());
+                    // A partir de aquí lo que hay en memoria es lo que hay en
+                    // disco: no quedan cambios pendientes (C2).
+                    self.saved_config = self.config.to_toml().unwrap_or_default();
                     self.log(LogKind::Info, t!("Proyecto guardado en {}", path.display()));
                 }
                 Err(e) => self.log(LogKind::Error, t!("No se pudo guardar: {}", e)),
@@ -70,6 +74,7 @@ impl App {
                         // trabajo desde el que se lanzó la app (C3).
                         cfg.resolve_relative_paths(path.parent());
                         self.config = cfg;
+                        self.saved_config = self.config.to_toml().unwrap_or_default();
                         self.sync_variants();
                         self.sync_paths();
                         self.selected_paths.clear();
@@ -112,6 +117,61 @@ impl App {
             t!("Configuración restablecida a los valores por defecto.").into(),
         );
         self.after_workspace_change();
+    }
+
+    /// `true` cuando la configuración en memoria se ha separado de la última
+    /// versión escrita (o cargada) en disco: hay cambios sin guardar.
+    ///
+    /// Se compara por la misma huella TOML que escribe el `.tpproj`, de modo
+    /// que lo que no se serializa tampoco cuenta como cambio pendiente. La
+    /// huella es estable mientras la configuración no cambia, porque la
+    /// serialización recorre el mismo `HashMap` de siempre.
+    pub(super) fn is_dirty(&self) -> bool {
+        self.config
+            .to_toml()
+            .map(|t| t != self.saved_config)
+            .unwrap_or(true)
+    }
+
+    /// Diálogo «hay cambios sin guardar»: se abre cuando el sistema pide
+    /// cerrar la ventana con la configuración tocada y sólo se cierra con una
+    /// decisión. Guardar puede cancelarse (diálogo de archivo del sistema o
+    /// error de escritura), en cuyo caso la ventana sigue abierta (C2).
+    pub(super) fn exit_dialog(&mut self, ctx: &egui::Context) {
+        if !self.exit_pending {
+            return;
+        }
+        let respuesta = egui::Modal::new(egui::Id::new("exit_dialog")).show(ctx, |ui| {
+            ui.set_min_width(360.0);
+            ui.label(egui::RichText::new(t!("Hay cambios sin guardar")).heading());
+            ui.add_space(6.0);
+            ui.label(t!("¿Guardar los cambios antes de salir?"));
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui.button(t!("💾 Guardar y salir")).clicked() {
+                    self.save_project();
+                    self.exit_pending = false;
+                    // Si el guardado llegó a completarse no queda nada
+                    // pendiente y la salida puede tramitarse.
+                    self.exit_confirmed = !self.is_dirty();
+                    if self.exit_confirmed {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+                if ui.button(t!("Salir sin guardar")).clicked() {
+                    self.exit_pending = false;
+                    self.exit_confirmed = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if ui.button(t!("Cancelar")).clicked() {
+                    self.exit_pending = false;
+                }
+            });
+        });
+        if respuesta.should_close() {
+            // Esc o clic fuera del diálogo: se trata como «Cancelar».
+            self.exit_pending = false;
+        }
     }
 }
 
@@ -197,6 +257,117 @@ mod tests {
             n >= 4,
             "la vista previa debe encontrar los sprites (hay {n}): {outcome:?}"
         );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Proyecto temporal con su `.tpproj` ya en disco: `save_project` escribe
+    /// en él sin necesidad de abrir el diálogo de archivo del sistema.
+    fn proyecto_temp(tag: &str) -> (PathBuf, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_dirty_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("el reloj va hacia delante")
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
+        let proyecto =
+            crate::testing::create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        (tmp, proyecto)
+    }
+
+    /// Un frame en el que el sistema pide cerrar la ventana.
+    fn input_cierre() -> egui::RawInput {
+        let info = egui::ViewportInfo {
+            events: vec![egui::ViewportEvent::Close],
+            ..Default::default()
+        };
+        egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_max(
+                egui::Pos2::ZERO,
+                egui::pos2(1360.0, 860.0),
+            )),
+            viewports: [(egui::ViewportId::ROOT, info)].into_iter().collect(),
+            ..egui::RawInput::default()
+        }
+    }
+
+    fn cancela_el_cierre(out: &egui::FullOutput) -> bool {
+        out.viewport_output.values().any(|v| {
+            v.commands
+                .iter()
+                .any(|c| matches!(c, egui::ViewportCommand::CancelClose))
+        })
+    }
+
+    /// C2: la huella de «sin guardar» acompaña a la configuración: cambia
+    /// cuando se toca y se borra cuando se escribe en disco.
+    #[test]
+    fn los_cambios_sin_guardar_se_boran_al_guardar() {
+        let (tmp, proyecto) = proyecto_temp("huella");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx, Some(proyecto.clone()));
+        assert!(!app.is_dirty(), "recién abierto no hay nada pendiente");
+
+        app.config.padding = 5;
+        assert!(
+            app.is_dirty(),
+            "tocar la configuración deja cambios sin guardar"
+        );
+
+        app.save_project();
+        assert!(!app.is_dirty(), "guardar los debe borrar");
+
+        // Un cambio posterior sigue pendiente en esta sesión, pero no
+        // contamina al fichero: lo que quedó escrito no es un cambio al
+        // volver a abrirlo.
+        app.config.padding = 9;
+        assert!(app.is_dirty(), "los cambios posteriores siguen pendientes");
+        let otra = App::new_for_testing(egui::Context::default(), Some(proyecto));
+        assert!(
+            !otra.is_dirty(),
+            "lo recién guardado no es un cambio pendiente"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// C2: cerrar con cambios pendientes no se tramita solo: el cierre se
+    /// cancela y se abre el diálogo de confirmación.
+    #[test]
+    fn cerrar_con_cambios_pendientes_se_cancela_y_se_pregunta() {
+        let (tmp, proyecto) = proyecto_temp("cierre");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        app.config.padding = 5;
+        assert!(app.is_dirty(), "el test sólo tiene sentido con cambios");
+
+        let out = app.run_frame(&ctx, input_cierre());
+
+        assert!(app.exit_pending, "debe abrirse el diálogo de confirmación");
+        assert!(
+            cancela_el_cierre(&out),
+            "el cierre debe cancelarse hasta que el usuario decida"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Y cerrar sin nada pendiente sigue siendo instantáneo.
+    #[test]
+    fn cerrar_sin_cambios_pendientes_no_molesta() {
+        let (tmp, proyecto) = proyecto_temp("cierre_limpio");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        assert!(!app.is_dirty(), "no debe haber nada pendiente");
+
+        let out = app.run_frame(&ctx, input_cierre());
+
+        assert!(
+            !app.exit_pending,
+            "si no hay cambios no debe abrirse el diálogo"
+        );
+        assert!(!cancela_el_cierre(&out), "el cierre debe pasar sin más");
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

@@ -78,6 +78,9 @@ impl App {
             logs: Vec::new(),
             unreadable_dirs: Vec::new(),
             project_path: None,
+            saved_config: String::new(),
+            exit_pending: false,
+            exit_confirmed: false,
             tree_filter: String::new(),
             tree_filter_focused: false,
             tree_force_open: None,
@@ -113,6 +116,9 @@ impl App {
         app.sync_paths();
         app.sync_variants();
         app.start_watcher();
+        // Huella de «sin guardar»: al arrancar la configuración en memoria es
+        // exactamente la que hay en disco (la por defecto, todavía sin tocar).
+        app.saved_config = app.config.to_toml().unwrap_or_default();
         if let Some(path) = initial_project {
             app.open_project(path);
         }

@@ -47,6 +47,14 @@ pub static EN: &[(&str, &str)] = &[
         "Configuración restablecida a los valores por defecto.",
         "Settings reset to their defaults.",
     ),
+    ("Hay cambios sin guardar", "Unsaved changes"),
+    (
+        "¿Guardar los cambios antes de salir?",
+        "Save changes before exiting?",
+    ),
+    ("💾 Guardar y salir", "💾 Save and exit"),
+    ("Salir sin guardar", "Exit without saving"),
+    ("Cancelar", "Cancel"),
     ("➕ Añadir", "➕ Add"),
     (
         "Añadir sprites al workspace",
