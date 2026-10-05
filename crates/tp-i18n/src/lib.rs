@@ -304,10 +304,13 @@ fn match_pattern(patron: &str, texto: &str) -> Option<Vec<String>> {
             Some(Seg::Lit(l)) => {
                 let resto = &texto[pos..];
                 let found = if i + 2 == segs.len() {
-                    resto
-                        .len()
-                        .checked_sub(l.len())
-                        .filter(|&p| &resto[p..] == l.as_str())?
+                    // Último trozo: el literal tiene que cerrar el texto, y
+                    // el índice se saca con `strip_suffix` en vez de
+                    // restando longitudes. Restar bytes sobre un texto con
+                    // acentos puede caer en medio de un carácter, y partir
+                    // ahí era un panic («byte index not a char boundary»)
+                    // que un mensaje con una «á» bastaba para disparar.
+                    resto.strip_suffix(l.as_str()).map(str::len)?
                 } else {
                     resto.find(l.as_str())?
                 };
@@ -538,6 +541,22 @@ mod tests {
             "ASTC demasiado corto"
         );
         assert_eq!(tr_in(Lang::En, "Texto ya en inglés"), "Texto ya en inglés");
+    }
+
+    /// El caso que hacía panic al traducir: para comprobar que el último
+    /// literal cierra el texto se restaban longitudes de byte, y con
+    /// «áé» el resultado (1) cae en medio de la «á». Un mensaje del motor
+    /// con un acento bastaba para tumbar la app al mostrarlo.
+    #[test]
+    fn match_pattern_no_parte_un_caracter_por_mitad() {
+        // «ban» mide 3 bytes, «áé» 4: 4−3 = 1, que no es límite de carácter.
+        assert_eq!(match_pattern("{}ban", "áé"), None);
+        assert_eq!(match_pattern("{}ban", "ábán"), None);
+        // Y con un final que sí encaja sigue emparejando.
+        assert_eq!(
+            match_pattern("{}ban", "soloban"),
+            Some(vec!["solo".to_string()])
+        );
     }
 
     #[test]
