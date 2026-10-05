@@ -46,7 +46,7 @@ fn load_project_arg(path: &Path, quiet: bool) -> CmdResult<ProjectConfig> {
             .map_err(|e| format!("Proyecto inválido {}: {e}", path.display()))?;
         if !quiet {
             for warning in &project.warnings {
-                eprintln!("aviso: {warning}");
+                eprintln!("{}", tp_i18n::tr(&format!("aviso: {warning}")));
             }
         }
         return Ok(project.config);
@@ -147,9 +147,17 @@ fn print_exporter_list(values: &[(String, String)]) {
     if let Some(dir) = val("custom-exporters-directory") {
         let ids = tp_core::dataformats::custom_exporter_ids(Path::new(&dir));
         if ids.is_empty() {
-            eprintln!("⚠ --custom-exporters-directory: no hay <id>.hbs en {dir}");
+            eprintln!(
+                "{}",
+                tp_i18n::tr(&format!(
+                    "⚠ --custom-exporters-directory: no hay <id>.hbs en {dir}"
+                ))
+            );
         } else {
-            println!("Exportadores propios de {dir}:");
+            println!(
+                "{}",
+                tp_i18n::tr(&format!("Exportadores propios de {dir}:"))
+            );
             for id in ids {
                 println!("  {id}");
             }
@@ -488,7 +496,7 @@ fn build_pack_config(
 fn announce_path_warning(path_warning: Option<&str>, quiet: bool) {
     if let Some(msg) = path_warning {
         if !quiet {
-            println!("⚠ {msg}");
+            println!("⚠ {}", tp_i18n::tr(msg));
         }
     }
 }
@@ -505,7 +513,7 @@ fn run_no_pack_actions(
     if let Some(v) = val("convert-texture") {
         let msg = convert_texture(cfg, Path::new(&v))?;
         if !quiet {
-            println!("{msg}");
+            println!("{}", tp_i18n::tr(&msg));
         }
         return Ok(true);
     }
@@ -514,7 +522,7 @@ fn run_no_pack_actions(
     if let Some(v) = val("save") {
         let msg = save_project(cfg, Path::new(&v))?;
         if !quiet {
-            println!("{msg}");
+            println!("{}", tp_i18n::tr(&msg));
         }
         return Ok(true);
     }
@@ -551,19 +559,25 @@ fn announce_pack_plan(cfg: &ProjectConfig, flags: &[String], quiet: bool) {
             cfg.data_format.clone()
         };
         println!(
-            "· entrada: {} · salida: {} · nombre base: {}",
-            cfg.input_directory.display(),
-            cfg.output_directory.display(),
-            cfg.base_file_name
+            "{}",
+            tp_i18n::tr(&format!(
+                "· entrada: {} · salida: {} · nombre base: {}",
+                cfg.input_directory.display(),
+                cfg.output_directory.display(),
+                cfg.base_file_name
+            ))
         );
         println!(
-            "· textura: {} · píxeles: {} · datos: {} · hasta {} px · padding {} + {}",
-            cfg.gpu_format.as_str(),
-            cfg.pixel_format.as_str(),
-            data_desc,
-            cfg.max_texture_size,
-            cfg.padding,
-            cfg.border_padding
+            "{}",
+            tp_i18n::tr(&format!(
+                "· textura: {} · píxeles: {} · datos: {} · hasta {} px · padding {} + {}",
+                cfg.gpu_format.as_str(),
+                cfg.pixel_format.as_str(),
+                data_desc,
+                cfg.max_texture_size,
+                cfg.padding,
+                cfg.border_padding
+            ))
         );
     }
 }
@@ -588,14 +602,17 @@ fn run_pack_pipeline(cfg: &ProjectConfig, flags: &[String], quiet: bool) -> CmdR
 
     if !quiet {
         println!(
-            "✔ Empaquetado en {} ms: {} sprites ({} aliases), {} página(s)",
-            started.elapsed().as_millis(),
-            result.total_sprites,
-            result.alias_count,
-            result.pages.len()
+            "{}",
+            tp_i18n::tr(&format!(
+                "✔ Empaquetado en {} ms: {} sprites ({} aliases), {} página(s)",
+                started.elapsed().as_millis(),
+                result.total_sprites,
+                result.alias_count,
+                result.pages.len()
+            ))
         );
         for w in &result.warnings {
-            println!("⚠ {w}");
+            println!("⚠ {}", tp_i18n::tr(w));
         }
         for f in &result.output_files {
             println!("  → {f}");

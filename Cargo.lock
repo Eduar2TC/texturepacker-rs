@@ -4168,6 +4168,7 @@ dependencies = [
  "regex",
  "serde_json",
  "tp-core",
+ "tp-i18n",
 ]
 
 [[package]]

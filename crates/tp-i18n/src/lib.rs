@@ -18,6 +18,7 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 
 pub mod en;
+pub mod en_cli;
 pub mod en_core;
 
 /// Idioma efectivo: el que se pinta.
@@ -186,7 +187,11 @@ pub fn tr(msg: &str) -> String {
 pub(crate) fn tr_in(lang: Lang, msg: &str) -> String {
     match lang {
         Lang::Es => msg.to_string(),
-        Lang::En => tr_en(msg, 3),
+        // Cinco niveles: un mensaje del CLI puede llevar el prefijo
+        // («aviso: »), el envoltorio del comando («Empaquetado fallido: »),
+        // el del subsistema («Configuración inválida: ») y aún así llegar
+        // al detalle con huecos. Con tres se quedaba a medias.
+        Lang::En => tr_en(msg, 5),
     }
 }
 
@@ -198,10 +203,17 @@ fn tr_en(msg: &str, profundidad: u8) -> String {
     if let Some(en) = en_core::lookup(msg) {
         return en.to_string();
     }
+    if let Some(en) = en_cli::lookup(msg) {
+        return en.to_string();
+    }
     if profundidad == 0 {
         return msg.to_string();
     }
-    for (es, en) in en::EN.iter().chain(en_core::EN_CORE.iter()) {
+    for (es, en) in en::EN
+        .iter()
+        .chain(en_core::EN_CORE.iter())
+        .chain(en_cli::EN_CLI.iter())
+    {
         if !es.contains('{') {
             continue;
         }
@@ -490,6 +502,72 @@ mod tests {
     }
 
     #[test]
+    fn la_tabla_del_cli_no_tiene_claves_vacias_ni_duplicadas() {
+        let mut vistas = std::collections::HashSet::new();
+        for (es, en) in en_cli::EN_CLI {
+            assert!(!es.is_empty() && !en.is_empty(), "entrada vacía: {es:?}");
+            assert!(vistas.insert(*es), "clave de tp-cli duplicada: {es}");
+        }
+    }
+
+    /// El CLI traduce al imprimir, sobre el mensaje ya formateado: si una
+    /// traducción perdiera o añadiera un `{}`, `substitute` insertaría los
+    /// argumentos en el hueco equivocado y saldría basura.
+    #[test]
+    fn la_traduccion_del_cli_conserve_los_placeholders() {
+        let mut malas = Vec::new();
+        for (es, en) in en_cli::EN_CLI {
+            if placeholders(es) != placeholders(en) {
+                malas.push(format!("{es} / {en}"));
+            }
+        }
+        assert!(
+            malas.is_empty(),
+            "los mensajes de la CLI pierden o añaden {{…}}:\n  {}",
+            malas.join("\n  ")
+        );
+    }
+
+    /// Un mensaje de la CLI formateado se traduce entero y con sus
+    /// argumentos en el sitio, que es justo lo que hace `fail()` al salir.
+    #[test]
+    fn tr_del_cli_traduce_el_mensaje_ya_formateado() {
+        let en = tr_in(Lang::En, "--scale inválido: 9 (número en (0, 8])");
+        assert_eq!(en, "invalid --scale: 9 (number in (0, 8])");
+        // El hueco lleva dentro un mensaje del motor, que se traduce a su
+        // vez: es lo que separa «Decryption failed:» de un error entero en
+        // español metido en medio de una frase en inglés.
+        assert_eq!(
+            tr_in(
+                Lang::En,
+                "Descifrado fallido: Error descifrando (¿clave incorrecta?)"
+            ),
+            "Decryption failed: Error decrypting (wrong key?)"
+        );
+        // Un hueco sin clave propia se queda como está: el hueco no lo
+        // llena un traductor, y en español sigue siendo legible —esa es la
+        // regla del crate: mejor español que un hueco vacío—.
+        assert_eq!(
+            tr_in(Lang::En, "No se pudo leer a.png: El fichero no existe"),
+            "Could not read a.png: El fichero no existe"
+        );
+        // El caso real que hizo panicar al CLI: un mensaje del motor largo y
+        // con acentos, metido dentro de un mensaje del propio CLI.
+        assert_eq!(
+            tr_in(
+                Lang::En,
+                "Empaquetado fallido: No se encontraron sprites válidos en el directorio de entrada"
+            ),
+            "Pack failed: No valid sprites found in the input directory"
+        );
+        // En español no se traduce nada.
+        assert_eq!(
+            tr_in(Lang::Es, "--scale inválido: 9 (número en (0, 8])"),
+            "--scale inválido: 9 (número en (0, 8])"
+        );
+    }
+
+    #[test]
     fn la_traduccion_del_motor_conserve_los_placeholders() {
         let mut malas = Vec::new();
         for (es, en) in en_core::EN_CORE {
@@ -546,7 +624,22 @@ mod tests {
     /// El caso que hacía panic al traducir: para comprobar que el último
     /// literal cierra el texto se restaban longitudes de byte, y con
     /// «áé» el resultado (1) cae en medio de la «á». Un mensaje del motor
-    /// con un acento bastaba para tumbar la app al mostrarlo.
+    /// con un acento bastaba para tumbar el CLI al imprimirlo.
+    /// Un mensaje real de la CLI anida cuatro plantillas: el prefijo de
+    /// aviso, el envoltorio del comando, el del subsistema y el detalle con
+    /// huecos. Con tres niveles de recursión el último salía en español, a
+    /// medias dentro de una frase en inglés.
+    #[test]
+    fn tr_baja_hasta_el_ultimo_nivel_de_envoltorio() {
+        assert_eq!(
+            tr_in(
+                Lang::En,
+                "aviso: Empaquetado fallido: Configuración inválida: max_texture_size debe ser una potencia de dos positiva (se obtuvo 5)"
+            ),
+            "warning: Pack failed: Invalid configuration: max_texture_size must be a positive power of two (got 5)"
+        );
+    }
+
     #[test]
     fn match_pattern_no_parte_un_caracter_por_mitad() {
         // «ban» mide 3 bytes, «áé» 4: 4−3 = 1, que no es límite de carácter.

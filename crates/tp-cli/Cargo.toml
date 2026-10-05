@@ -8,6 +8,8 @@ description = "TexturePacker-RS command-line interface"
 
 [dependencies]
 tp-core = { path = "../tp-core", features = ["gpu-formats"] }
+# Idioma de los mensajes: el CLI construye en español y traduce al imprimir.
+tp-i18n = { path = "../tp-i18n" }
 regex.workspace = true
 serde_json.workspace = true
 

@@ -59,11 +59,17 @@ pub(crate) fn cmd_decrypt(args: &[String]) {
     }
     match val("pixel-format") {
         Some(pf) => println!(
-            "✔ Descifrado + vista previa ({}): {}",
-            pf.to_ascii_uppercase(),
-            out_path.display()
+            "{}",
+            tp_i18n::tr(&format!(
+                "✔ Descifrado + vista previa ({}): {}",
+                pf.to_ascii_uppercase(),
+                out_path.display()
+            ))
         ),
-        None => println!("✔ Descifrado: {}", out_path.display()),
+        None => println!(
+            "{}",
+            tp_i18n::tr(&format!("✔ Descifrado: {}", out_path.display()))
+        ),
     }
 }
 

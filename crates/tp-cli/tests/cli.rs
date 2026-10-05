@@ -6,10 +6,19 @@
 use std::process::Command;
 
 /// Ejecuta `tp-cli` con los argumentos dados y devuelve (código, stdout,
-/// stderr) ya decodificados.
+/// stderr) ya decodificados. El locale va fijado de manera explícita: sin
+/// él, el idioma de la salida dependería del equipo que lanza `cargo test`
+/// y estos tests dejarían de decidir nada.
 fn tp_cli(args: &[&str]) -> (Option<i32>, String, String) {
+    tp_cli_in(args, "es_ES.UTF-8")
+}
+
+/// Igual que [`tp_cli`], pero con el locale dado (`LC_ALL` manda sobre
+/// `LANG`, así que con una variable basta).
+fn tp_cli_in(args: &[&str], locale: &str) -> (Option<i32>, String, String) {
     let out = Command::new(env!("CARGO_BIN_EXE_tp-cli"))
         .args(args)
+        .env("LC_ALL", locale)
         .output()
         .expect("no se pudo lanzar el binario de tp-cli");
     (
@@ -58,4 +67,58 @@ fn comando_desconocido_sigue_saliendo_con_1() {
     assert_eq!(code, Some(1), "{stderr}");
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("nones"), "{stderr}");
+}
+
+/// El motivo por el que existe el i18n de la CLI: `LC_ALL=C` es el locale
+/// que fija un script o un runner de CI, y su salida tiene que salir en
+/// inglés para poder greppearla sin depender del equipo.
+#[test]
+fn con_locale_c_los_mensajes_salen_en_ingles() {
+    let (code, _, stderr) = tp_cli_in(&[], "C.UTF-8");
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("tp-cli: missing command"),
+        "no salió en inglés: {stderr}"
+    );
+
+    let (code, _, stderr) = tp_cli_in(&["paquete"], "C.UTF-8");
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("error: Unknown command: paquete"),
+        "no salió en inglés: {stderr}"
+    );
+
+    // Un error de uso de decrypt, que es donde un script mira.
+    let (code, _, stderr) = tp_cli_in(&["decrypt", "a.tpenc"], "C.UTF-8");
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("decrypt needs --key PASSPHRASE"),
+        "no salió en inglés: {stderr}"
+    );
+}
+
+/// Y que el español sigue intacto: el proyecto es de origen hispano y la
+/// traducción no puede costarle sus mensajes a quien habla español.
+#[test]
+fn con_locale_espanol_los_mensajes_se_quedan_en_espanol() {
+    let (code, _, stderr) = tp_cli_in(&[], "es_MX.UTF-8");
+    assert_eq!(code, Some(2), "{stderr}");
+    assert!(
+        stderr.contains("tp-cli: falta un comando"),
+        "no salió en español: {stderr}"
+    );
+
+    let (code, _, stderr) = tp_cli_in(&["paquete"], "es_MX.UTF-8");
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("error: Comando desconocido: paquete"),
+        "no salió en español: {stderr}"
+    );
+
+    let (code, _, stderr) = tp_cli_in(&["decrypt", "a.tpenc"], "es_MX.UTF-8");
+    assert_eq!(code, Some(1), "{stderr}");
+    assert!(
+        stderr.contains("decrypt necesita --key CLAVE"),
+        "no salió en español: {stderr}"
+    );
 }
