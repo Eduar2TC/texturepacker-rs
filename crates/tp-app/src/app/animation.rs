@@ -206,9 +206,9 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         if ui
             .add_enabled(frames.len() > 1, egui::Button::new(play_label))
             .on_hover_text(if app.anim.playing {
-                "Pausar"
+                t!("Pausar")
             } else {
-                "Reproducir"
+                t!("Reproducir")
             })
             .clicked()
         {

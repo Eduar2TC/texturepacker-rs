@@ -113,7 +113,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
         ui.menu_button(t!("Vista"), |ui| {
             ui.checkbox(&mut app.show_outlines, t!("Mostrar contornos"))
                 .on_hover_text(t!("Marcos y triangulación de los sprites"));
-            ui.checkbox(&mut app.show_pivots, "Pivots");
+            ui.checkbox(&mut app.show_pivots, t!("Pivots"));
             ui.checkbox(&mut app.show_borders, t!("Bordes 9-patch"))
                 .on_hover_text(t!("Barras verdes de los bordes 9-patch de cada sprite"));
         });

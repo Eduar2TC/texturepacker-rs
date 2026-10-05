@@ -1459,7 +1459,7 @@ fn custom_exporters_body(app: &mut App, ui: &mut egui::Ui) -> bool {
     let mut selected = active.clone();
     egui::ComboBox::from_id_salt("custom_exporter_id")
         .selected_text(if active.is_empty() {
-            "— ninguno —".to_string()
+            t!("— ninguno —").to_string()
         } else {
             active.clone()
         })

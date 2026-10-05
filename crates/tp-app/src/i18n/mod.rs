@@ -151,7 +151,61 @@ mod tests {
         "from_label",
         "title",
         "shortcut_text",
+        "checkbox",
     ];
+
+    /// Texto del argumento que abre en `ini` (índice dentro de la línea `n`),
+    /// desde el paréntesis que lo abre hasta el que lo cierra, saltando los
+    /// literales para no contar sus llaves ni sus paréntesis. Devuelve `None`
+    /// si el cierre no llega antes de que se acabe el archivo.
+    fn argumento(lineas: &[&str], n: usize, ini: usize) -> Option<String> {
+        let mut out = String::new();
+        let mut fondo = 1usize;
+        let mut en_cadena = false;
+        let mut escape = false;
+        let mut primera = true;
+        for linea in lineas.get(n..)? {
+            let texto = if primera {
+                primera = false;
+                &linea[ini..]
+            } else {
+                linea
+            };
+            for c in texto.chars() {
+                if en_cadena {
+                    out.push(c);
+                    if escape {
+                        escape = false;
+                    } else if c == '\\' {
+                        escape = true;
+                    } else if c == '"' {
+                        en_cadena = false;
+                    }
+                    continue;
+                }
+                match c {
+                    '"' => {
+                        en_cadena = true;
+                        out.push(c);
+                    }
+                    '(' => {
+                        fondo += 1;
+                        out.push(c);
+                    }
+                    ')' => {
+                        fondo -= 1;
+                        out.push(c);
+                        if fondo == 0 {
+                            return Some(out);
+                        }
+                    }
+                    _ => out.push(c),
+                }
+            }
+            out.push('\n');
+        }
+        None
+    }
 
     /// Literales que son idénticos en los dos idiomas (préstamos como «FPS»
     /// o «Zoom» y los separadores «x»/«y» de las dimensiones): no merecen
@@ -202,6 +256,39 @@ mod tests {
                                 let sig = lineas.get(n + 1).copied().unwrap_or_default();
                                 if sig.trim_start().starts_with('"') {
                                     crudos.push(format!("{}:{}: {sig}", fichero.display(), n + 2));
+                                }
+                                continue;
+                            }
+                            // El argumento no empieza por cadena (un `if`, un
+                            // `format!(`, una variable…): se recorre entero y,
+                            // si su primer literal no lo pinta una macro, la UI
+                            // lo pinta a pelo. Así se cazaron «Pivots» y
+                            // «Pausar»/«Reproducir» (I8).
+                            if let Some(arg) = argumento(&lineas, n, ini) {
+                                let Some(comilla) = arg.find('"') else {
+                                    continue;
+                                };
+                                let antes = &arg[..comilla];
+                                // La aguja se arma con `concat!` para no
+                                // escribir el patrón en el fuente: los tests
+                                // de este propio módulo lo buscan a mano.
+                                let pinta_macro = [concat!("t", "!("), "format!(", "concat!("]
+                                    .iter()
+                                    .any(|m| antes.contains(m));
+                                if pinta_macro {
+                                    continue;
+                                }
+                                let tras_comilla = &arg[comilla + 1..];
+                                let fin = tras_comilla.find('"').unwrap_or(tras_comilla.len());
+                                let texto = &tras_comilla[..fin];
+                                if texto.chars().any(|c| c.is_ascii_alphabetic())
+                                    && !UI_IGUALES.contains(&texto)
+                                {
+                                    crudos.push(format!(
+                                        "{}:{}: {texto:?}",
+                                        fichero.display(),
+                                        n + 1
+                                    ));
                                 }
                             }
                             continue;
