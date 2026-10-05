@@ -1,0 +1,7 @@
+[package]
+name = "tp-i18n"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Shared i18n tables (es/en) for the TexturePacker-RS engine, app and CLI"

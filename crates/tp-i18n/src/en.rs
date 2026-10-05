@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-pub(crate) static EN: &[(&str, &str)] = &[
+pub static EN: &[(&str, &str)] = &[
     // Sección «Interfaz» del panel de Ajustes.
     ("Interfaz", "Interface"),
     ("Idioma", "Language"),
@@ -621,6 +621,6 @@ fn map() -> &'static HashMap<&'static str, &'static str> {
 }
 
 /// Traducción de `es`, si la hay.
-pub(crate) fn lookup(es: &str) -> Option<&'static str> {
+pub fn lookup(es: &str) -> Option<&'static str> {
     map().get(es).copied()
 }

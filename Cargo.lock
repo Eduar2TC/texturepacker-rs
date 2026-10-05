@@ -4150,6 +4150,7 @@ dependencies = [
  "serde_json",
  "toml",
  "tp-core",
+ "tp-i18n",
 ]
 
 [[package]]
@@ -4196,6 +4197,10 @@ dependencies = [
  "webp",
  "xxhash-rust",
 ]
+
+[[package]]
+name = "tp-i18n"
+version = "0.5.0"
 
 [[package]]
 name = "tracing"

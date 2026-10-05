@@ -1,7 +1,7 @@
 //! Traducciones al inglés de los **mensajes del motor** (`tp-core`).
 //!
 //! `tp-core` devuelve siempre español (es la lengua del proyecto y también
-//! la de su CLI), así que la tabla vive aquí, en la app: [`super::tr`]
+//! la de su CLI), así que la tabla vive aquí, en el crate compartido: [`crate::tr`]
 //! traduce en el momento de mostrar, ya sea la cadena entera o su patrón
 //! con huecos `{}` cuando el mensaje ya venía formateado con argumentos.
 //!
@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 
 /// `(español del motor, inglés)`; el orden importa porque el primer patrón
 /// con huecos que encaje en un mensaje es el que lo traduce.
-pub(crate) static EN_CORE: &[(&str, &str)] = &[
+pub static EN_CORE: &[(&str, &str)] = &[
     ("iPad + iPhone (documentación)", "iPad + iPhone (documentation)"),
     ("Descuentos 1/2, 1/3 y 1/4", "1/2, 1/3 and 1/4 discounts"),
     ("(hoja principal)", "(main sheet)"),
@@ -408,6 +408,6 @@ fn map() -> &'static HashMap<&'static str, &'static str> {
 }
 
 /// Traducción exacta de un mensaje (o etiqueta) del motor, si la hay.
-pub(crate) fn lookup(es: &str) -> Option<&'static str> {
+pub fn lookup(es: &str) -> Option<&'static str> {
     map().get(es).copied()
 }

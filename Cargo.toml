@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["crates/tp-core", "crates/tp-app", "crates/tp-cli", "crates/tp-basis"]
+members = [
+    "crates/tp-core",
+    "crates/tp-app",
+    "crates/tp-cli",
+    "crates/tp-basis",
+    "crates/tp-i18n",
+]
 # winit parcheado fuera del workspace (ver [patch.crates-io] abajo).
 exclude = ["third_party/winit"]
 
