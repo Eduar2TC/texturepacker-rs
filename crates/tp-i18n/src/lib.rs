@@ -103,25 +103,19 @@ pub fn set_choice(choice: LangChoice) {
 
 /// Idioma del equipo a partir de las variables de locale.
 ///
-/// `es*` → español, `en*` → inglés, cualquier otro locale ya instalado
-/// (fr, de, pt…) → inglés, que es el idioma internacional por el que se
-/// traduce el software; sin locale (`C`, `POSIX`, vacío) → español, que es
-/// la lengua de origen del proyecto y no hay información que mande sobre
-/// ella.
+/// `es*` → español, que es la lengua de origen del proyecto. Todo lo demás
+/// → inglés: cualquier otro locale ya instalado (fr, de, pt…) y también
+/// `C`, `POSIX` y el vacío, que es el locale por defecto de Unix, el que
+/// fijan los runners de CI y el que un script toma cuando escribe
+/// `LC_ALL=C`. Es la misma resolución que GNU coreutils: un mensaje
+/// siempre disponible en inglés es lo que deja greppear la salida sin
+/// depender de si hay traducciones instaladas.
 pub fn detect(var: impl Fn(&str) -> Result<String, std::env::VarError>) -> Lang {
     let value: String = ["LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .find_map(|k| var(k).ok())
         .unwrap_or_default();
     let value = value.trim().to_ascii_lowercase();
-    if value.is_empty()
-        || value == "c"
-        || value.starts_with("c.")
-        || value.starts_with("c_")
-        || value.starts_with("posix")
-    {
-        return Lang::Es;
-    }
     if value.starts_with("es") {
         Lang::Es
     } else {
@@ -470,13 +464,17 @@ mod tests {
             move |_: &str| -> Result<String, std::env::VarError> { Ok(value.to_string()) }
         };
         assert_eq!(detect(var("es_MX.UTF-8")), Lang::Es);
+        assert_eq!(detect(var("es")), Lang::Es);
         assert_eq!(detect(var("en_US.UTF-8")), Lang::En);
         assert_eq!(detect(var("fr_FR.UTF-8")), Lang::En);
-        assert_eq!(detect(var("C")), Lang::Es);
-        assert_eq!(detect(var("C.UTF-8")), Lang::Es);
-        assert_eq!(detect(var("c.utf8")), Lang::Es);
-        assert_eq!(detect(var("POSIX")), Lang::Es);
-        assert_eq!(detect(|_| Err(std::env::VarError::NotPresent)), Lang::Es);
+        // `C`, `POSIX` y el vacío son el locale por defecto de Unix: el que
+        // fijan los runners de CI y el que un script toma con `LC_ALL=C`, y
+        // en todo el software del sistema sus mensajes salen en inglés.
+        assert_eq!(detect(var("C")), Lang::En);
+        assert_eq!(detect(var("C.UTF-8")), Lang::En);
+        assert_eq!(detect(var("c.utf8")), Lang::En);
+        assert_eq!(detect(var("POSIX")), Lang::En);
+        assert_eq!(detect(|_| Err(std::env::VarError::NotPresent)), Lang::En);
     }
 
     #[test]
