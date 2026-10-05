@@ -180,7 +180,7 @@ impl App {
 
     /// Snapshot of the workspace inputs: sprite set, every packing setting
     /// and the mtime of every sprite file on disk (autowatch).
-    pub(super) fn workspace_snapshot(&self) -> WorkspaceSnapshot {
+    pub(super) fn workspace_snapshot(&mut self) -> WorkspaceSnapshot {
         let mut sprites: Vec<String> = self
             .config
             .extra_inputs
@@ -195,27 +195,55 @@ impl App {
                 .map(|p| p.display().to_string()),
         );
         sprites.sort();
+        let files = self.collect_input_files();
         WorkspaceSnapshot {
             sprites,
             config_toml: self.config.to_toml().unwrap_or_default(),
-            files: self.collect_input_files(),
+            files,
         }
+    }
+
+    /// Avisa de los directorios que no se pudieron leer sin repetir el
+    /// mismo mensaje en cada repaso del snapshot: si uno deja de fallar y
+    /// vuelve a fallar más tarde, se vuelve a avisar (review UI/UX I5).
+    pub(super) fn report_unreadable(&mut self, mut fallidos: Vec<PathBuf>) {
+        fallidos.sort();
+        fallidos.dedup();
+        for dir in &fallidos {
+            if self.unreadable_dirs.contains(dir) {
+                continue;
+            }
+            self.log(
+                LogKind::Warning,
+                t!(
+                    "No se pudo leer la carpeta {}: parte de sus sprites no entrará en el workspace",
+                    dir.display()
+                ),
+            );
+        }
+        self.unreadable_dirs = fallidos;
     }
 
     /// Every sprite file on disk with its mtime (ms) and size, sorted:
     /// detects sprites edited, added or removed on the input directories.
-    pub(super) fn collect_input_files(&self) -> Vec<(String, u128, u64)> {
+    ///
+    /// Los directorios que no se pudieron leer se mandan al registro: un
+    /// `read_dir` que falla dejaba al usuario con sprites que no aparecían
+    /// y sin ninguna explicación (review UI/UX I5).
+    pub(super) fn collect_input_files(&mut self) -> Vec<(String, u128, u64)> {
         let mut files: Vec<PathBuf> = Vec::new();
+        let mut fallidos: Vec<PathBuf> = Vec::new();
         if !self.config.input_directory.as_os_str().is_empty() {
-            collect_images(&self.config.input_directory, &mut files);
+            fallidos.extend(collect_images(&self.config.input_directory, &mut files));
         }
         for p in &self.config.extra_inputs {
             if p.is_dir() {
-                collect_images(p, &mut files);
+                fallidos.extend(collect_images(p, &mut files));
             } else if p.is_file() {
                 files.push(p.clone());
             }
         }
+        self.report_unreadable(fallidos);
         files.sort();
         files.dedup();
         files
@@ -292,16 +320,17 @@ impl App {
         });
     }
 
-    pub(super) fn snapshot_changed(&self) -> bool {
-        match &self.packed_snapshot {
-            None => true,
-            Some(old) => {
-                let new = self.workspace_snapshot();
-                new.sprites != old.sprites
-                    || new.config_toml != old.config_toml
-                    || new.files != old.files
-            }
+    pub(super) fn snapshot_changed(&mut self) -> bool {
+        if self.packed_snapshot.is_none() {
+            return true;
         }
+        // El snapshot se calcula antes de mirar el anterior: el recorrido de
+        // discos ya no puede compartir `self` con la comparación.
+        let new = self.workspace_snapshot();
+        let Some(old) = &self.packed_snapshot else {
+            return true;
+        };
+        new.sprites != old.sprites || new.config_toml != old.config_toml || new.files != old.files
     }
 
     /// Apply a pipeline result: refresh textures and keep the selection
@@ -583,18 +612,25 @@ impl App {
     }
 }
 
-pub(super) fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) {
+pub(super) fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) -> Vec<PathBuf> {
+    // Un fichero no es un error: el `.tps` admite archivos sueltos en
+    // `input_directory` y simplemente no hay nada que recorrer.
+    if dir.is_file() {
+        return Vec::new();
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+        return vec![dir.to_path_buf()];
     };
+    let mut fallidos = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
         if path.is_dir() {
-            collect_images(&path, out);
+            fallidos.extend(collect_images(&path, out));
         } else if tp_core::ingest::is_image_file(&path) {
             out.push(path);
         }
     }
+    fallidos
 }
 
 /// La ventana real solo pinta cuando egui lo pide; los tests que bombean
@@ -1341,5 +1377,104 @@ mod on_demand_tests {
             "el lienzo debe dejar de mostrar el estado vacío tras el drop"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+}
+
+#[cfg(test)]
+mod aviso_carpeta_tests {
+    use super::*;
+
+    fn avisos(app: &App) -> usize {
+        app.logs
+            .iter()
+            .filter(|e| e.text.contains("No se pudo leer la carpeta"))
+            .count()
+    }
+
+    /// I5: un `read_dir` que falla no se puede arreglar desde la app, pero
+    /// callarlo deja al usuario con sprites que no aparecen y sin ninguna
+    /// explicación. Además el aviso no debe repetirse en cada repaso del
+    /// snapshot (se hace cada 150 ms), ni perderse si el fallo vuelve.
+    #[test]
+    fn una_carpeta_de_entrada_ilegible_se_avisa_sin_repadir() {
+        let dir = std::env::temp_dir().join(format!("tp_scan_gap_{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.config.input_directory = dir.clone();
+
+        app.collect_input_files();
+        assert_eq!(
+            avisos(&app),
+            1,
+            "una carpeta inexistente debe avisarse exactamente una vez"
+        );
+
+        app.collect_input_files();
+        app.collect_input_files();
+        assert_eq!(
+            avisos(&app),
+            1,
+            "el mismo fallo no debe repetirse en cada repaso del snapshot"
+        );
+
+        // Si se recupera, el aviso se olvida (no es noticia); si vuelve a
+        // fallar después, se vuelve a avisar.
+        std::fs::create_dir_all(dir.join("sub")).expect("se recupera la carpeta");
+        app.collect_input_files();
+        assert_eq!(avisos(&app), 1, "recuperarse no es noticia");
+
+        std::fs::remove_dir_all(&dir).expect("se vuelve a romper");
+        app.collect_input_files();
+        assert_eq!(
+            avisos(&app),
+            2,
+            "un fallo nuevo tras haberse recuperado debe avisarse otra vez"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Un fichero en `input_directory` no es un error de lectura: el `.tps`
+    /// admite archivos sueltos y no hay nada que recorrer, así que ni se
+    /// lista ni se avisa (antes y después del cambio el resultado es el
+    /// mismo, pero ahora no se siembra un aviso falso).
+    #[test]
+    fn un_fichero_como_entrada_no_produce_aviso() {
+        let tmp = std::env::temp_dir().join(format!("tp_scan_file_{}", std::process::id()));
+        std::fs::create_dir_all(&tmp).expect("tmp");
+        let png = tmp.join("suelto.png");
+        std::fs::write(&png, b"no es un png de verdad").expect("fichero");
+
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.config.input_directory = png.clone();
+
+        let encontrados = app.collect_input_files();
+        assert_eq!(avisos(&app), 0, "un fichero no es una carpeta ilegible");
+        assert!(
+            encontrados.is_empty(),
+            "en un fichero no hay nada que recorrer: {encontrados:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// `report_unreadable` es un helper: se comprueba que el camino que lo
+    /// usa (`collect_input_files`) está cableado a él.
+    #[test]
+    fn la_carpeta_que_no_se_pudo_leer_entra_en_el_snapshot() {
+        let dir = std::env::temp_dir().join(format!("tp_scan_snap_{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.config.input_directory = dir.clone();
+        let snapshot = app.workspace_snapshot();
+        assert!(
+            snapshot.files.is_empty(),
+            "sin carpeta no hay sprites que listar"
+        );
+        assert_eq!(avisos(&app), 1, "el snapshot es quien avisa");
+        std::fs::remove_dir_all(&dir).ok();
     }
 }

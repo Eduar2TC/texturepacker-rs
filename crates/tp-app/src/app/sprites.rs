@@ -223,7 +223,8 @@ impl App {
     pub(super) fn remove_path(&mut self, path: &Path) -> usize {
         if path.is_dir() {
             let mut files = Vec::new();
-            collect_images(path, &mut files);
+            let fallidos = collect_images(path, &mut files);
+            self.report_unreadable(fallidos);
             for file in &files {
                 self.exclude(file);
             }

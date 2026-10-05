@@ -152,6 +152,9 @@ pub struct App {
     split: split_sheet::SplitState,
     bottom_tab: BottomTab,
     logs: Vec<LogEntry>,
+    /// Directorios que ya se avisó que no se pudieron leer: evita repetir el
+    /// mismo aviso en cada repaso del snapshot (se olvidan al recuperarse).
+    unreadable_dirs: Vec<PathBuf>,
     project_path: Option<PathBuf>,
     /// Text filter applied to the sprites tree.
     tree_filter: String,

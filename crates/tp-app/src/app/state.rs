@@ -76,6 +76,7 @@ impl App {
             split: split_sheet::SplitState::default(),
             bottom_tab: BottomTab::Log,
             logs: Vec::new(),
+            unreadable_dirs: Vec::new(),
             project_path: None,
             tree_filter: String::new(),
             tree_filter_focused: false,

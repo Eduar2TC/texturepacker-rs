@@ -83,13 +83,17 @@ pub fn idle_input() -> eframe::egui::RawInput {
 /// repaint (`set_request_repaint_callback`), durmiendo el delay pedido.
 /// Devuelve pronto cuando `stop` se cumple (típicamente `app.result().is_some()`).
 ///
+/// El predicado recibe `&mut App` para que también pueda mirar métodos que
+/// recorren el disco y actualizan el registro (`snapshot_changed`), no sólo
+/// campos.
+///
 /// A diferencia de los bucles manuales («run_frame + sleep(10 ms)»), este
 /// bombeo **no** mantiene viva a la app por su cuenta: si la app no
 /// programa repaints, el bucle se para y `stuck` queda en `true`.
 pub fn pump_on_demand(
     app: &mut App,
     ctx: &eframe::egui::Context,
-    stop: impl Fn(&App) -> bool,
+    stop: impl Fn(&mut App) -> bool,
     max: Duration,
 ) -> PumpOutcome {
     let pending: Arc<Mutex<Option<Duration>>> = Arc::new(Mutex::new(None));

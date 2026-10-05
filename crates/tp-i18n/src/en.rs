@@ -471,6 +471,10 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("Vista previa actualizada en {} ms.", "Preview updated in {} ms."),
     (
+        "No se pudo leer la carpeta {}: parte de sus sprites no entrará en el workspace",
+        "Could not read folder {}: some of its sprites will not make it into the workspace",
+    ),
+    (
         "{} sprite(s) colocados en ({}, {}): se reempaqueta al instante.",
         "{} sprite(s) placed at ({}, {}): repacking right away.",
     ),
