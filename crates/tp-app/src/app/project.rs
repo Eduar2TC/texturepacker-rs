@@ -64,7 +64,11 @@ impl App {
                     ProjectConfig::from_toml(&text).map(|cfg| (cfg, Vec::new()))
                 };
                 match loaded {
-                    Ok((cfg, warnings)) => {
+                    Ok((mut cfg, warnings)) => {
+                        // Las rutas guardadas en relativo van contra el
+                        // propio proyecto, no contra el directorio de
+                        // trabajo desde el que se lanzó la app (C3).
+                        cfg.resolve_relative_paths(path.parent());
                         self.config = cfg;
                         self.sync_variants();
                         self.sync_paths();
@@ -140,5 +144,59 @@ mod tests {
             app.logs.iter().any(|e| e.text.contains("restablecida")),
             "reset_defaults debe dejar constancia en el registro"
         );
+    }
+
+    /// C3: una ruta escrita en relativo en el `.tpproj` significa «de junto
+    /// al proyecto», no «de junto al directorio de trabajo» (que en las
+    /// pruebas es la raíz del crate, donde no hay ningún `sprites`).
+    #[test]
+    fn las_rutas_relativas_se_resuelven_contra_el_proyecto() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_rutas_rel_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("el reloj va hacia delante")
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
+        let proyecto =
+            crate::testing::create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+
+        // Se reescribe el `.tpproj` con la ruta de entrada en relativo, como
+        // si lo hubiera escrito a mano para compartir la carpeta.
+        let texto = std::fs::read_to_string(&proyecto).expect("lee el .tpproj");
+        let texto = texto.replace(&sprites.display().to_string(), "sprites");
+        assert!(
+            texto.contains("input_directory = \"sprites\""),
+            "el reemplazo a relativo no cuadró: {texto}"
+        );
+        std::fs::write(&proyecto, texto).expect("reescribe el .tpproj");
+
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        assert_eq!(
+            app.config.input_directory, sprites,
+            "la ruta relativa debe resolverse contra la carpeta del .tpproj"
+        );
+
+        // …y con eso la vista previa encuentra los sprites.
+        let outcome = crate::testing::pump_on_demand(
+            &mut app,
+            &ctx,
+            |a| a.result.is_some(),
+            std::time::Duration::from_secs(30),
+        );
+        let n = app
+            .result
+            .as_ref()
+            .map(|o| o.result.sprites.len())
+            .unwrap_or(0);
+        assert!(
+            n >= 4,
+            "la vista previa debe encontrar los sprites (hay {n}): {outcome:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

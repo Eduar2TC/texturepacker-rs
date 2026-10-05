@@ -9,7 +9,7 @@ use crate::error::{Result, TpError};
 use crate::types::Point2D;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The project configuration. Mirrors the spec's `ProjectConfig` plus a few
 /// sensible extensions (packing strategy, variants, template format, pivots).
@@ -1057,6 +1057,59 @@ impl ProjectConfig {
         // son de tipo/valor con línea y columna del TOML.
         Ok(toml::from_str(text)?)
     }
+
+    /// Resuelve contra `project` (la carpeta del fichero de proyecto) las
+    /// rutas que el usuario guardó en relativo.
+    ///
+    /// Una ruta escrita como `sprites` significa, como en cualquier
+    /// herramienta de este tipo, «la carpeta `sprites` de junto al
+    /// proyecto»; si se interpretara contra el directorio de trabajo
+    /// corriente, el mismo proyecto cargaría sprites distintos según desde
+    /// dónde se lance la app (review UI/UX C3). El importador de `.tps` ya
+    /// lo hacía así (`parse_tps` recibe la carpeta del fichero): con este
+    /// método el `.tpproj` se comporta igual.
+    ///
+    /// Las rutas absolutas y las vacías no se tocan, así que aplicarlo dos
+    /// veces no duplica la base. Con `project` vacío (el proyecto se abrió
+    /// como `tp pack mi.tpproj`) la base es el directorio de trabajo, que es
+    /// donde está el fichero.
+    pub fn resolve_relative_paths(&mut self, project: Option<&Path>) {
+        let Some(project) = project else { return };
+        let base = if project.is_absolute() {
+            project.to_path_buf()
+        } else {
+            // Anclar al directorio de trabajo para que el resultado no siga
+            // dependiendo de él: `hojas/mi.tpproj` debe dar lo mismo que
+            // `/ruta/absoluta/mi.tpproj`.
+            std::env::current_dir().unwrap_or_default().join(project)
+        };
+        // Nada que resolver: el proyecto vive en el propio directorio de
+        // trabajo y `join("")` no cambiaría ninguna ruta relativa.
+        if base.as_os_str().is_empty() {
+            return;
+        }
+        fn abs(base: &Path, p: &mut PathBuf) {
+            if p.as_os_str().is_empty() || p.is_absolute() {
+                return;
+            }
+            *p = base.join(&*p);
+        }
+
+        abs(&base, &mut self.input_directory);
+        abs(&base, &mut self.output_directory);
+        for p in &mut self.extra_inputs {
+            abs(&base, p);
+        }
+        for p in &mut self.excluded_inputs {
+            abs(&base, p);
+        }
+        if let Some(p) = &mut self.export_template {
+            abs(&base, p);
+        }
+        if let Some(p) = &mut self.custom_exporters_directory {
+            abs(&base, p);
+        }
+    }
 }
 
 /// Campos obligatorios de un `.tpproj`: todo lo que `ProjectConfig` serializa
@@ -1829,5 +1882,74 @@ mod tests {
         let back = ProjectConfig::from_toml(&text).unwrap();
         assert_eq!(back.variant_options, cfg.variant_options);
         assert!(!base().to_toml().unwrap().contains("variant_options"));
+    }
+
+    /// C3: una ruta guardada en relativo significa «de junto al proyecto»,
+    /// no «de junto al directorio de trabajo desde el que se lance».
+    #[test]
+    fn las_rutas_relativas_se_resuelven_contra_la_carpeta_del_proyecto() {
+        let mut cfg = ProjectConfig {
+            input_directory: PathBuf::from("sprites"),
+            output_directory: PathBuf::from("out"),
+            extra_inputs: vec![
+                PathBuf::from("extras/uno.png"),
+                PathBuf::from("/absoluto/dos.png"),
+            ],
+            excluded_inputs: vec![PathBuf::from("sprites/roto.png")],
+            export_template: Some(PathBuf::from("plantilla.hbs")),
+            custom_exporters_directory: Some(PathBuf::from("exportadores")),
+            ..ProjectConfig::default()
+        };
+
+        cfg.resolve_relative_paths(Some(Path::new("/juego/assets")));
+
+        assert_eq!(cfg.input_directory, Path::new("/juego/assets/sprites"));
+        assert_eq!(cfg.output_directory, Path::new("/juego/assets/out"));
+        assert_eq!(
+            cfg.extra_inputs[0],
+            Path::new("/juego/assets/extras/uno.png")
+        );
+        assert_eq!(
+            cfg.extra_inputs[1],
+            Path::new("/absoluto/dos.png"),
+            "las rutas absolutas no se tocan"
+        );
+        assert_eq!(
+            cfg.excluded_inputs[0],
+            Path::new("/juego/assets/sprites/roto.png")
+        );
+        assert_eq!(
+            cfg.export_template,
+            Some(PathBuf::from("/juego/assets/plantilla.hbs"))
+        );
+        assert_eq!(
+            cfg.custom_exporters_directory,
+            Some(PathBuf::from("/juego/assets/exportadores"))
+        );
+
+        // Cargar dos veces no duplica la base: lo absoluto ya no se toca.
+        let primera = cfg.clone();
+        cfg.resolve_relative_paths(Some(Path::new("/juego/assets")));
+        assert_eq!(cfg.input_directory, primera.input_directory);
+        assert_eq!(cfg.extra_inputs, primera.extra_inputs);
+    }
+
+    /// El vacío no es una ruta: `join("")` devolvería la propia carpeta del
+    /// proyecto y la app creería que hay una carpeta de entrada donde no la
+    /// hay (con su consiguiente «no encuentro sprites»).
+    #[test]
+    fn las_rutas_vacias_no_se_convierten_en_la_carpeta_del_proyecto() {
+        let mut cfg = ProjectConfig::default();
+        assert!(cfg.input_directory.as_os_str().is_empty());
+        assert!(cfg.output_directory.as_os_str().is_empty());
+
+        cfg.resolve_relative_paths(Some(Path::new("/juego")));
+
+        assert!(cfg.input_directory.as_os_str().is_empty());
+        assert!(cfg.output_directory.as_os_str().is_empty());
+        assert!(cfg.extra_inputs.is_empty());
+        assert!(cfg.excluded_inputs.is_empty());
+        assert!(cfg.export_template.is_none());
+        assert!(cfg.custom_exporters_directory.is_none());
     }
 }

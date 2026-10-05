@@ -41,7 +41,7 @@ fn save_project(cfg: &ProjectConfig, path: &Path) -> CmdResult<String> {
 /// `.tps` es el XML del original (con sus avisos de ajustes no soportados).
 fn load_project_arg(path: &Path, quiet: bool) -> CmdResult<ProjectConfig> {
     let is_tps = path.extension().and_then(|e| e.to_str()) == Some("tps");
-    if is_tps {
+    let mut config = if is_tps {
         let project = tp_core::tps::load_tps(path)
             .map_err(|e| format!("Proyecto inválido {}: {e}", path.display()))?;
         if !quiet {
@@ -49,12 +49,17 @@ fn load_project_arg(path: &Path, quiet: bool) -> CmdResult<ProjectConfig> {
                 eprintln!("{}", tp_i18n::tr(&format!("aviso: {warning}")));
             }
         }
-        return Ok(project.config);
-    }
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
-    ProjectConfig::from_toml(&text)
-        .map_err(|e| format!("Proyecto inválido {}: {e}", path.display()))
+        project.config
+    } else {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
+        ProjectConfig::from_toml(&text)
+            .map_err(|e| format!("Proyecto inválido {}: {e}", path.display()))?
+    };
+    // Rutas relativas resueltas contra el propio proyecto, igual que hace la
+    // GUI: el resultado no depende de desde dónde se lance el comando (C3).
+    config.resolve_relative_paths(path.parent());
+    Ok(config)
 }
 
 /// `--convert-texture FICHERO`: convierte una sola imagen al formato
@@ -822,5 +827,41 @@ mod tests {
         let _ = std::fs::remove_file(&src);
         let _ = std::fs::remove_file(&jpg);
         let _ = std::fs::remove_dir_all(&out_dir);
+    }
+
+    /// C3: la CLI debe resolver las rutas relativas del `.tpproj` contra la
+    /// carpeta del propio proyecto, igual que hace la GUI; de otro modo el
+    /// mismo comando buscaría sprites distintos según el directorio desde el
+    /// que se lance.
+    #[test]
+    fn las_rutas_relativas_del_tpproj_se_resuelven_contra_su_carpeta() {
+        let tmp = std::env::temp_dir().join(format!("tp_cli_rel_{}", std::process::id()));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
+        let proyecto = tmp.join("mi.tpproj");
+
+        let cfg = ProjectConfig {
+            input_directory: sprites.clone(),
+            output_directory: tmp.join("out"),
+            ..ProjectConfig::default()
+        };
+        let texto = cfg.to_toml().expect("serializa el proyecto");
+        let texto = texto
+            .replace(&sprites.display().to_string(), "sprites")
+            .replace(&tmp.join("out").display().to_string(), "out");
+        assert!(
+            texto.contains("input_directory = \"sprites\""),
+            "el paso a relativo no cuadró: {texto}"
+        );
+        std::fs::write(&proyecto, texto).expect("escribe el .tpproj");
+
+        let cargado = load_project_arg(&proyecto, true).expect("el proyecto debe cargar");
+
+        assert_eq!(
+            cargado.input_directory, sprites,
+            "la ruta relativa debe resolverse contra la carpeta del .tpproj"
+        );
+        assert_eq!(cargado.output_directory, tmp.join("out"));
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
