@@ -159,9 +159,11 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     }
     if zoom_reset {
         app.zoom = 1.0;
+        app.auto_fit = false;
     }
     if zoom_fit {
         app.fit_zoom();
+        app.auto_fit = false;
     }
 
     // Esc cierra la ventana flotante activa (convención estándar) y, de

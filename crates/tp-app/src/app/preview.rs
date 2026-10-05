@@ -85,16 +85,20 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
         if ui.button("−").on_hover_text(t!("Alejar")).clicked() {
             zoom_step(app, -1);
         }
-        ui.add(
+        let zoom_slider = ui.add(
             egui::Slider::new(&mut app.zoom, 0.05..=8.0)
                 .logarithmic(true)
                 .text("Zoom"),
         );
+        if zoom_slider.changed() {
+            app.auto_fit = false;
+        }
         if ui.button("+").on_hover_text(t!("Acercar")).clicked() {
             zoom_step(app, 1);
         }
         if ui.button("1:1").on_hover_text(t!("Zoom al 100% (tamaño real)")).clicked() {
             app.zoom = 1.0;
+            app.auto_fit = false;
         }
         if ui
             .button(t!("Ajustar"))
@@ -102,6 +106,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
             .clicked()
         {
             app.fit_zoom();
+            app.auto_fit = false;
         }
 
         ui.separator();
@@ -201,6 +206,8 @@ fn ghost_rect(px: i32, py: i32, w: i32, h: i32, zoom: f32, rect: egui::Rect) -> 
 }
 
 pub(super) fn zoom_step(app: &mut App, dir: i32) {
+    // El usuario toma el control del zoom: nada vuelve a encuadrar solo.
+    app.auto_fit = false;
     if dir > 0 {
         app.zoom = ZOOM_STEPS
             .iter()
@@ -278,6 +285,15 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     app.preview_size = ui.available_size();
     app.canvas_rect = None;
     app.preview_zoom = app.zoom;
+
+    // Encuadre automático: la primera vez que hay resultado y el lienzo ya
+    // está medido, la hoja se enmarca entera en lugar de quedar pegada a la
+    // esquina a zoom 1:1 (el usuario debe pulsar «Ajustar» o F para verla).
+    // La bandera se apaga aquí y en cada punto donde el usuario toca el zoom.
+    if app.auto_fit && app.result.is_some() {
+        app.fit_zoom();
+        app.auto_fit = false;
+    }
 
     let Some(out) = &app.result else {
         let (hovered, _dropped) =
@@ -905,6 +921,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
 
     if let Some(factor) = zoom_delta {
         app.zoom = (app.zoom * factor).clamp(0.05, 8.0);
+        app.auto_fit = false;
     }
     if let Some((id, nx, ny)) = pivot_drag {
         let index = app
@@ -1328,5 +1345,113 @@ mod pivot_tests {
             (0.0, 1.0),
             "arrastre fuera del marco: clampado a los bordes"
         );
+    }
+}
+
+/// Encuadre automático (review UI/UX I1): la primera vista previa enmarca la
+/// hoja entera y, a partir de ahí, la vista es del usuario.
+#[cfg(test)]
+mod auto_fit_tests {
+    use super::*;
+    use crate::app::run_headless;
+    use crate::testing::create_example_project;
+    use std::path::PathBuf;
+    use std::time::{Duration, Instant};
+
+    /// App headless arrancada con un proyecto de ejemplo (13 sprites) y la
+    /// geometría de ventana real (1360×860).
+    fn app_con_proyecto(tag: &str) -> (App, egui::Context, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_autofit_{tag}_{}_{}",
+            std::process::id(),
+            Instant::now().elapsed().as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("crea el directorio de sprites");
+        let project = create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        let ctx = egui::Context::default();
+        let app = App::new_for_testing(ctx.clone(), Some(project));
+        (app, ctx, tmp)
+    }
+
+    /// Un frame real (con la geometría de la ventana) y una pausa corta para
+    /// que la hebra de la vista previa pueda terminar.
+    fn bombea(app: &mut App, ctx: &egui::Context, frames: usize) {
+        for _ in 0..frames {
+            run_headless(app, ctx, 1);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    fn hasta_resultado(app: &mut App, ctx: &egui::Context) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while app.result.is_none() && Instant::now() < deadline {
+            run_headless(app, ctx, 1);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.result.is_some(), "la vista previa no llegó en 10 s");
+    }
+
+    #[test]
+    fn la_primera_vista_previa_encuadra_la_hoja() {
+        let (mut app, ctx, tmp) = app_con_proyecto("encuadre");
+        assert_eq!(app.zoom, 1.0, "el zoom arranca a 1:1");
+        hasta_resultado(&mut app, &ctx);
+
+        let out = app.result.as_ref().expect("hay resultado");
+        let page = out.pages.first().expect("la hoja tiene página");
+        let avail = app.preview_size - egui::vec2(32.0, 32.0);
+        let ancho = page.width as f32 * app.zoom;
+        let alto = page.height as f32 * app.zoom;
+
+        assert!(
+            app.zoom > 1.0,
+            "la hoja de ejemplo ({}×{}) debe encuadrarse a más de 1:1, zoom={}",
+            page.width,
+            page.height,
+            app.zoom
+        );
+        assert!(
+            ancho <= avail.x + 0.5 && alto <= avail.y + 0.5,
+            "la hoja no cabe en el lienzo: {ancho:.0}×{alto:.0} frente a {avail:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn el_zoom_del_usuario_no_se_pisa_con_el_encuadre() {
+        let (mut app, ctx, tmp) = app_con_proyecto("manual");
+        assert!(
+            app.auto_fit,
+            "al arrancar hay un encuadre pendiente de hacer"
+        );
+
+        // El usuario da un paso de zoom ANTES de que haya resultado: eso
+        // apaga el encuadre automático, porque a partir de ese momento la
+        // vista es suya y la app no debe moverla nunca más sola.
+        zoom_step(&mut app, 1);
+        let zoom_usuario = app.zoom;
+        assert!(
+            !app.auto_fit,
+            "tocar el zoom debe apagar el encuadre automático"
+        );
+
+        // La vista previa llega después y no debe devolver la vista al
+        // encuadre ni pisar el zoom elegido.
+        hasta_resultado(&mut app, &ctx);
+        assert_eq!(
+            app.zoom, zoom_usuario,
+            "la primera vista previa no debe encuadrar si el usuario ya hizo zoom"
+        );
+
+        // Tampoco las vistas previas de los cambios posteriores.
+        app.config.padding = 5;
+        app.after_workspace_change();
+        bombea(&mut app, &ctx, 200); // 2 s: la vista previa tarda ~45 ms
+        assert_eq!(
+            app.zoom, zoom_usuario,
+            "una vista previa posterior no debe pisar el zoom del usuario"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

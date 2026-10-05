@@ -56,6 +56,7 @@ impl App {
             running: None,
             selected_page: 0,
             zoom: 1.0,
+            auto_fit: true,
             show_outlines: true,
             show_pivots: true,
             show_borders: true,

@@ -114,6 +114,10 @@ pub struct App {
     running: Option<Receiver<RunMessage>>,
     selected_page: usize,
     zoom: f32,
+    /// Encuadrar la hoja en cuanto haya resultado y lienzo medido. Se apaga
+    /// solo al primer encuadre y en cuanto el usuario toca el zoom, para que
+    /// la vista nunca se mueva por su cuenta dos veces seguidas.
+    auto_fit: bool,
     show_outlines: bool,
     show_pivots: bool,
     show_borders: bool,

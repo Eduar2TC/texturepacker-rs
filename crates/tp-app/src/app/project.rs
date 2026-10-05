@@ -73,6 +73,9 @@ impl App {
                         self.selection_anchor = None;
                         self.list_cursor = None;
                         self.tree_kb_focus = false;
+                        // Proyecto nuevo, vista nueva: el encuadre se vuelve
+                        // a hacer solo con la primera vista previa.
+                        self.auto_fit = true;
                         self.start_watcher();
                         self.project_path = Some(path.clone());
                         self.log(LogKind::Info, t!("Proyecto cargado: {}", path.display()));
