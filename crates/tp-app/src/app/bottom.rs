@@ -28,7 +28,7 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
             ui.separator();
             ui.label(
                 egui::RichText::new(t!(
-                    "{} sprites · {} aliases · {} página(s)",
+                    "{} sprite(s) · {} alias(es) · {} página(s)",
                     out.result.total_sprites,
                     out.result.alias_count,
                     out.pages.len()

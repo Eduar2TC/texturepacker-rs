@@ -270,7 +270,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 };
                 app.log(
                     LogKind::Info,
-                    t!("{} sprite(s) movidos a «{}».", moved, shown),
+                    t!("{} sprite(s) movido(s) a «{}».", moved, shown),
                 );
             }
         }
@@ -293,7 +293,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 };
                 app.log(
                     LogKind::Info,
-                    t!("{} sprite(s) movidos a «{}».", moved, shown),
+                    t!("{} sprite(s) movido(s) a «{}».", moved, shown),
                 );
             }
         }
@@ -312,7 +312,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             if moved > 0 {
                 app.log(
                     LogKind::Info,
-                    t!("{} sprite(s) movidos al grupo «{}».", moved, group),
+                    t!("{} sprite(s) movido(s) al grupo «{}».", moved, group),
                 );
             }
         }
@@ -341,7 +341,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                     app.log(
                         LogKind::Info,
                         t!(
-                            "{} sprite(s) movidos al grupo «{}».",
+                            "{} sprite(s) movido(s) al grupo «{}».",
                             drag.ids.len(),
                             target
                         ),
@@ -1135,7 +1135,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                     let name = app.config.folder_groups[i].name.clone();
                     app.log(
                         LogKind::Info,
-                        t!("{} sprite(s) movidos al grupo «{}».", moved, name),
+                        t!("{} sprite(s) movido(s) al grupo «{}».", moved, name),
                     );
                 }
             }

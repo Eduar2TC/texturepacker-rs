@@ -609,7 +609,7 @@ fn run_pack_pipeline(cfg: &ProjectConfig, flags: &[String], quiet: bool) -> CmdR
         println!(
             "{}",
             tp_i18n::tr(&format!(
-                "✔ Empaquetado en {} ms: {} sprites ({} aliases), {} página(s)",
+                "✔ Empaquetado en {} ms: {} sprite(s) ({} alias(es)), {} página(s)",
                 started.elapsed().as_millis(),
                 result.total_sprites,
                 result.alias_count,

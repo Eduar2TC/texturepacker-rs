@@ -51,7 +51,7 @@ pub(super) fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
         let text = if hovered.len() == 1 {
             t!("Suelta para añadir al workspace").to_string()
         } else {
-            t!("Suelta para añadir {} elementos", hovered.len())
+            t!("Suelta para añadir {} elemento(s)", hovered.len())
         };
         painter.text(
             screen.center() + egui::vec2(0.0, -16.0),

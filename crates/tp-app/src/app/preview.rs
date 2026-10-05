@@ -525,7 +525,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     let label = if drag.ids.len() == 1 {
                         t!("Soltar para colocar aquí").to_string()
                     } else {
-                        t!("Soltar {} sprites aquí", drag.ids.len())
+                        t!("Soltar {} sprite(s) aquí", drag.ids.len())
                     };
                     painter.text(
                         egui::pos2(g.center().x, g.max.y + 14.0),
@@ -1046,7 +1046,7 @@ fn select_sprites_in_rect(app: &mut App, x0: i32, y0: i32, x1: i32, y1: i32) {
     }
     app.log(
         super::LogKind::Info,
-        t!("{} sprite(s) seleccionados por rectángulo.", ids.len()),
+        t!("{} sprite(s) seleccionado(s) por rectángulo.", ids.len()),
     );
 }
 

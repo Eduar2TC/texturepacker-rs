@@ -61,8 +61,8 @@ pub static EN_CLI: &[(&str, &str)] = &[
      "· input: {} · output: {} · base name: {}"),
     ("· textura: {} · píxeles: {} · datos: {} · hasta {} px · padding {} + {}",
      "· texture: {} · pixels: {} · data: {} · up to {} px · padding {} + {}"),
-    ("✔ Empaquetado en {} ms: {} sprites ({} aliases), {} página(s)",
-     "✔ Packed in {} ms: {} sprites ({} aliases), {} sheet(s)"),
+    ("✔ Empaquetado en {} ms: {} sprite(s) ({} alias(es)), {} página(s)",
+     "✔ Packed in {} ms: {} sprite(s) ({} alias(es)), {} sheet(s)"),
     // decrypt (commands.rs).
     ("decrypt necesita un archivo .tpenc", "decrypt needs a .tpenc file"),
     ("decrypt necesita --key CLAVE", "decrypt needs --key PASSPHRASE"),

@@ -467,7 +467,7 @@ pub static EN: &[(&str, &str)] = &[
         "Secuencia: selección ({} sprite(s)). Quita la selección para ver todos.",
         "Sequence: selection ({} sprite(s)). Clear the selection to see all.",
     ),
-    ("{} sprites · {} aliases · {} página(s)", "{} sprites · {} aliases · {} page(s)"),
+    ("{} sprite(s) · {} alias(es) · {} página(s)", "{} sprite(s) · {} alias(es) · {} page(s)"),
     ("Página {}: {}x{} · relleno {}% · {}", "Page {}: {}x{} · fill {}% · {}"),
     ("Malla de «{}»", "Mesh of «{}»"),
     (
@@ -484,12 +484,12 @@ pub static EN: &[(&str, &str)] = &[
         "Could not read folder {}: some of its sprites will not make it into the workspace",
     ),
     (
-        "{} sprite(s) colocados en ({}, {}): se reempaqueta al instante.",
+        "{} sprite(s) colocado(s) en ({}, {}): se reempaqueta al instante.",
         "{} sprite(s) placed at ({}, {}): repacking right away.",
     ),
     (
-        "Publicación completa: {} sprites ({} aliases), {} página(s).",
-        "Publish complete: {} sprites ({} aliases), {} page(s).",
+        "Publicación completa: {} sprite(s) ({} alias(es)), {} página(s).",
+        "Publish complete: {} sprite(s) ({} alias(es)), {} page(s).",
     ),
     ("Carpeta inteligente quitada: {}", "Smart folder removed: {}"),
     (
@@ -512,7 +512,7 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("Proyecto guardado en {}", "Project saved in {}"),
     ("Proyecto cargado: {}", "Project loaded: {}"),
-    ("Suelta para añadir {} elementos", "Drop to add {} items"),
+    ("Suelta para añadir {} elemento(s)", "Drop to add {} item(s)"),
 
     ("{} posición(es) manual(es) eliminada(s).", "{} manual position(s) cleared."),
     ("{}, +{} más", "{}, +{} more"),
@@ -520,24 +520,24 @@ pub static EN: &[(&str, &str)] = &[
         "{} elemento(s) en el workspace · la vista previa se calcula sola",
         "{} item(s) in the workspace · the preview computes itself",
     ),
-    ("Soltar {} sprites aquí", "Drop {} sprites here"),
+    ("Soltar {} sprite(s) aquí", "Drop {} sprite(s) here"),
     ("frame ({}, {}) {}x{} · página {}", "frame ({}, {}) {}x{} · page {}"),
     (
         "Posición manual fijada{} (se guarda con el proyecto).",
         "Manual position set{} (stored with the project).",
     ),
     (
-        "{} sprite(s) seleccionados por rectángulo.",
+        "{} sprite(s) seleccionado(s) por rectángulo.",
         "{} sprite(s) selected by rectangle.",
     ),
     (" · rotado 90°", " · rotated 90°"),
     ("{} celda(s) de {} px", "{} cell(s) of {} px"),
     ("fijo", "fixed"),
-    ("{} sprite(s) escritos en {}.", "{} sprite(s) written to {}."),
+    ("{} sprite(s) escrito(s) en {}.", "{} sprite(s) written to {}."),
     ("Hoja original excluida: {}", "Original sheet excluded: {}"),
     ("Carpeta añadida: {}", "Folder added: {}"),
-    ("{} sprite(s) movidos a «{}».", "{} sprite(s) moved to «{}»."),
-    ("{} sprite(s) movidos al grupo «{}».", "{} sprite(s) moved to group «{}»."),
+    ("{} sprite(s) movido(s) a «{}».", "{} sprite(s) moved to «{}»."),
+    ("{} sprite(s) movido(s) al grupo «{}».", "{} sprite(s) moved to group «{}»."),
 
     ("Clave global «{}» guardada.", "Global key «{}» saved."),
     ("Clave global «{}» borrada.", "Global key «{}» deleted."),
@@ -582,7 +582,7 @@ pub static EN: &[(&str, &str)] = &[
     ("  [{}] {} ms", "  [{}] {} ms"),
     ("  ➡ {}", "  ➡ {}"),
     ("· {}/{}", "· {}/{}"),
-    ("{} sprites · {} aliases", "{} sprites · {} aliases"),
+    ("{} sprite(s) · {} alias(es)", "{} sprite(s) · {} alias(es)"),
     ("- {}", "- {}"),
     ("cols ", "cols "),
 

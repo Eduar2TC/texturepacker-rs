@@ -568,7 +568,7 @@ impl App {
                 self.log(
                     LogKind::Info,
                     t!(
-                        "Publicación completa: {} sprites ({} aliases), {} página(s).",
+                        "Publicación completa: {} sprite(s) ({} alias(es)), {} página(s).",
                         total,
                         aliases,
                         pages

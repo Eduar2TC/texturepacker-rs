@@ -291,7 +291,7 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
             app.log(
                 LogKind::Info,
                 t!(
-                    "{} sprite(s) escritos en {}.",
+                    "{} sprite(s) escrito(s) en {}.",
                     files.len(),
                     out_dir.display()
                 ),

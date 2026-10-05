@@ -147,7 +147,7 @@ impl App {
             self.log(
                 LogKind::Info,
                 t!(
-                    "{} sprite(s) colocados en ({}, {}): se reempaqueta al instante.",
+                    "{} sprite(s) colocado(s) en ({}, {}): se reempaqueta al instante.",
                     n,
                     px,
                     py

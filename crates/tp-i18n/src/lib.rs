@@ -134,23 +134,34 @@ pub fn translate(es: &str) -> &str {
 /// No usa `format!` porque la plantilla traducida no es un literal en tiempo
 /// de compilación; los marcadores con relleno o con nombre (`{:.2}`, `{n}`)
 /// se dejan tal cual: las claves con formato de verdad no se traducen.
+///
+/// El texto puede marcar el plural con la notación `palabra(s)` o
+/// `palabra(es)`: el **último** hueco sustituido decide
+/// ([`expandir_plural`]), de modo que un solo mensaje sirve para «1 página»
+/// y «2 páginas» en los dos idiomas (review UI/UX I8: «1 page(s)»,
+/// «1 aliases»…). Los marcadores que no van detrás de un número se quedan en
+/// plural, que es lo que se espera de un recuento.
 pub fn translate_with(es: &str, args: &[&dyn std::fmt::Display]) -> String {
     let plantilla = translate(es);
     let mut out = String::with_capacity(plantilla.len() + 16 * args.len());
     let mut rest = plantilla;
     let mut usados = 0;
+    // ¿El hueco anterior valía 1? Eso decide los marcadores que siguen.
+    let mut uno = false;
     while let Some(ini) = rest.find('{') {
         let cuerpo = &rest[ini + 1..];
         let Some(fin) = cuerpo.find('}') else {
-            out.push_str(rest);
+            out.push_str(&expandir_plural(rest, uno));
             return out;
         };
-        out.push_str(&rest[..ini]);
+        out.push_str(&expandir_plural(&rest[..ini], uno));
         let spec = &cuerpo[..fin];
         if spec.is_empty() {
             match args.get(usados) {
                 Some(arg) => {
-                    out.push_str(&arg.to_string());
+                    let texto = arg.to_string();
+                    uno = texto == "1";
+                    out.push_str(&texto);
                     usados += 1;
                 }
                 None => out.push_str("{}"),
@@ -161,6 +172,45 @@ pub fn translate_with(es: &str, args: &[&dyn std::fmt::Display]) -> String {
             out.push('}');
         }
         rest = &cuerpo[fin + 1..];
+    }
+    out.push_str(&expandir_plural(rest, uno));
+    out
+}
+
+/// Abre o quita los marcadores de plural `palabra(s)` / `palabra(es)`.
+///
+/// `1 celda(s)` ⇒ «1 celda» y `2 celda(s)` ⇒ «2 celdas»; `posición(es)`
+/// hace lo propio con «es». Sólo se mira el texto literal, así que un
+/// paréntesis de verdad («(ejemplo)») no se toca.
+fn expandir_plural(texto: &str, uno: bool) -> String {
+    if !texto.contains("(s)") && !texto.contains("(es)") {
+        return texto.to_string();
+    }
+    let mut out = String::with_capacity(texto.len() + 4);
+    let mut rest = texto;
+    loop {
+        // El más a la izquierda de los dos marcadores: «(es)» no contiene
+        // «(s)», pero ambos pueden convivir en la misma frase.
+        let pos_es = rest.find("(es)");
+        let pos_s = rest.find("(s)");
+        let (ini, largo) = match (pos_es, pos_s) {
+            (Some(a), Some(b)) if a <= b => (a, 4),
+            (_, Some(b)) => (b, 3),
+            (Some(a), None) => (a, 4),
+            (None, None) => break,
+        };
+        out.push_str(&rest[..ini]);
+        if !uno {
+            // Español: los sustantivos en -ón/-ción/-sión pierden la tilde en
+            // el plural («posición» ⇒ «posiciones», nunca «posiciónes»).
+            if largo == 4 && out.ends_with("ón") {
+                out.truncate(out.len() - "ón".len());
+                out.push_str("on");
+            }
+            // «(s)» ⇒ «s», «(es)» ⇒ «es»: entre los paréntesis está la letra.
+            out.push_str(&rest[ini + 1..ini + largo - 1]);
+        }
+        rest = &rest[ini + largo..];
     }
     out.push_str(rest);
     out
@@ -342,8 +392,25 @@ fn substitute(plantilla: &str, vuetecos: &[String]) -> String {
     let chars: Vec<char> = plantilla.chars().collect();
     let mut out = String::with_capacity(plantilla.len());
     let mut usados = 0;
+    // Mismo criterio que `translate_with`: el último hueco relleno decide si
+    // los marcadores `(s)`/`(es)` que vienen detrás se quedan en plural.
+    let mut uno = false;
     let mut i = 0;
     while i < chars.len() {
+        if chars[i..].starts_with(&['(', 'e', 's', ')']) {
+            if !uno {
+                out.push_str("es");
+            }
+            i += 4;
+            continue;
+        }
+        if chars[i..].starts_with(&['(', 's', ')']) {
+            if !uno {
+                out.push('s');
+            }
+            i += 3;
+            continue;
+        }
         match chars[i] {
             '{' if chars.get(i + 1) == Some(&'{') => {
                 out.push('{');
@@ -351,6 +418,7 @@ fn substitute(plantilla: &str, vuetecos: &[String]) -> String {
             }
             '{' if chars.get(i + 1) == Some(&'}') => match vuetecos.get(usados) {
                 Some(v) => {
+                    uno = v == "1";
                     out.push_str(v);
                     usados += 1;
                     i += 2;
@@ -471,6 +539,112 @@ mod tests {
             "clave sin traducir"
         );
         assert_eq!(translate_in(Lang::Es, "whatever"), "whatever");
+    }
+
+    /// Un marcador de plural decide con el **último** lleno que se sustituyó:
+    /// así «1 página(s)» sale «1 página» y «2 página(s)» sale «2 páginas»,
+    /// sin tener que mantener dos claves por mensaje (review UI/UX I8).
+    ///
+    /// Claves inventadas: no están en la tabla, así que el literal vuelve
+    /// igual en los dos idiomas y el test no toca el idioma global (los
+    /// tests corren en paralelo).
+    #[test]
+    fn el_marcador_de_plural_sigue_al_ultimo_lleno() {
+        assert_eq!(translate_with("{} página(s)", &[&1]), "1 página");
+        assert_eq!(translate_with("{} página(s)", &[&2]), "2 páginas");
+        // Todos los marcadores detrás del mismo recuento van a la par.
+        assert_eq!(
+            translate_with("{} fichero(s) soltado(s)", &[&1]),
+            "1 fichero soltado"
+        );
+        assert_eq!(
+            translate_with("{} fichero(s) soltado(s)", &[&3]),
+            "3 ficheros soltados"
+        );
+        // «(es)» hace lo propio con la e.
+        assert_eq!(translate_with("{} posición(es)", &[&1]), "1 posición");
+        assert_eq!(translate_with("{} posición(es)", &[&2]), "2 posiciones");
+        // Cada hueco manda sólo detrás de sí: el resto sigue al anterior.
+        assert_eq!(
+            translate_with("{} ms: {} sprite(s)", &[&45, &2]),
+            "45 ms: 2 sprites"
+        );
+        assert_eq!(
+            translate_with("{} ms: {} sprite(s)", &[&45, &1]),
+            "45 ms: 1 sprite"
+        );
+        // Un lleno que no es recuento no da singular: el plural es el
+        // valor por defecto de un mensaje que no sabemos contar.
+        assert_eq!(
+            translate_with("{} archivo(s)", &[&"pepe.png"]),
+            "pepe.png archivos"
+        );
+        // Los paréntesis que no son marcador se quedan como están.
+        assert_eq!(translate_with("(p. ej. {})", &[&1]), "(p. ej. 1)");
+        assert_eq!(translate_with("sin lleno(s)", &[]), "sin llenos");
+    }
+
+    /// El CLI no traduce con `t!`: formatea en español y pasa el mensaje
+    /// entero por `tr`, que lo encaja en la plantilla y rellena la
+    /// inglesa. Ese camino (`substitute`) tiene que abrir los mismos
+    /// marcadores o la CLI seguiría imprimiendo «1 sheet(s)».
+    #[test]
+    fn el_tr_del_cli_tambien_abre_los_marcadores() {
+        assert_eq!(
+            tr_in(
+                Lang::En,
+                "✔ Empaquetado en 45 ms: 1 sprite(s) (1 alias(es)), 1 página(s)"
+            ),
+            "✔ Packed in 45 ms: 1 sprite (1 alias), 1 sheet"
+        );
+        assert_eq!(
+            tr_in(
+                Lang::En,
+                "✔ Empaquetado en 45 ms: 3 sprite(s) (2 alias(es)), 2 página(s)"
+            ),
+            "✔ Packed in 45 ms: 3 sprites (2 aliases), 2 sheets"
+        );
+        // En español el mensaje ya viene formateado y `tr` no lo toca.
+        assert_eq!(
+            tr_in(
+                Lang::Es,
+                "✔ Empaquetado en 45 ms: 1 sprite(s) (1 alias(es)), 1 página(s)"
+            ),
+            "✔ Empaquetado en 45 ms: 1 sprite(s) (1 alias(es)), 1 página(s)"
+        );
+    }
+
+    /// Un marcador que no vaya detrás de un `{}` no se puede decidir: saldría
+    /// impreso tal cual («palabra(s)»), que es justo lo que queremos evitar.
+    #[test]
+    fn ningún_marcador_de_plural_viene_antes_de_un_lleno() {
+        let mut malas = Vec::new();
+        for (es, en) in en::EN
+            .iter()
+            .chain(en_core::EN_CORE.iter())
+            .chain(en_cli::EN_CLI.iter())
+        {
+            for (lado, texto) in [("es", *es), ("en", *en)] {
+                if !texto.contains("(s)") && !texto.contains("(es)") {
+                    continue;
+                }
+                let Some(lleno) = texto.find('{') else {
+                    // Sin ningún lleno no hay recuento que lo mande: el
+                    // marcador se imprimiría tal cual.
+                    malas.push(format!("{lado}: {texto}"));
+                    continue;
+                };
+                let antes = &texto[..lleno];
+                if antes.contains("(s)") || antes.contains("(es)") {
+                    malas.push(format!("{lado}: {texto}"));
+                }
+            }
+        }
+        assert!(
+            malas.is_empty(),
+            "marcador(s) de plural sin lleno delante que lo decida:\n  {}",
+            malas.join("\n  ")
+        );
     }
 
     #[test]

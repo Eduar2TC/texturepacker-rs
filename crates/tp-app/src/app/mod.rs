@@ -313,7 +313,7 @@ impl eframe::App for App {
                         ui.separator();
                         ui.label(
                             egui::RichText::new(t!(
-                                "{} sprites · {} aliases",
+                                "{} sprite(s) · {} alias(es)",
                                 out.result.total_sprites,
                                 out.result.alias_count
                             ))
