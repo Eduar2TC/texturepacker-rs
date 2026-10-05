@@ -424,6 +424,19 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
+            // Límite de la página. El fondo de la hoja es gris 30 fijo
+            // (`from_gray(30)`) y el del lienzo en tema oscuro es gris 27:
+            // difieren en 3 niveles, así que la hoja parecía no tener borde y
+            // no se veía dónde acaba el atlas (review C1). El trazo se pinta
+            // FUERA de la hoja, sobre el lienzo, para que el contraste sea
+            // siempre contra el fondo del lienzo (y no contra la propia hoja)
+            // y funcione igual en tema claro y oscuro.
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(1.0_f32, ui.visuals().strong_text_color()),
+                egui::StrokeKind::Outside,
+            );
             let panel_drag = crate::app::SpriteDrag::payload(ui.ctx());
             if panel_drag.is_some() && ui.rect_contains_pointer(rect) {
                 // Resalte del lienzo como zona de destino válida.
