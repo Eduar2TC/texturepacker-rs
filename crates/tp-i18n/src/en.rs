@@ -35,8 +35,17 @@ pub static EN: &[(&str, &str)] = &[
         "Save project (.tpproj or .tps) — Ctrl+S",
     ),
     (
-        "Restablecer la configuración por defecto",
-        "Reset settings to their defaults",
+        "Restablecer todos los ajustes del proyecto a los valores por defecto",
+        "Reset all project settings to their defaults",
+    ),
+    ("Restablecer la configuración", "Reset settings"),
+    (
+        "Se descartarán los ajustes actuales y volverán a los valores por defecto. Los sprites no se tocan.",
+        "Current settings will be discarded and reset to their defaults. Sprites are not touched.",
+    ),
+    (
+        "Configuración restablecida a los valores por defecto.",
+        "Settings reset to their defaults.",
     ),
     ("➕ Añadir", "➕ Add"),
     (

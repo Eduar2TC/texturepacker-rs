@@ -29,12 +29,18 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             {
                 app.save_project();
             }
+            // «↺» tira toda la configuración: separado de «Guardar» para que
+            // no se pueda golpear por reflejo y con confirmación previa
+            // (review UI/UX C5).
+            ui.separator();
             if ui
                 .button("↺")
-                .on_hover_text(t!("Restablecer la configuración por defecto"))
+                .on_hover_text(t!(
+                    "Restablecer todos los ajustes del proyecto a los valores por defecto"
+                ))
                 .clicked()
             {
-                app.reset_defaults();
+                confirm_reset(app);
             }
             ui.separator();
 
@@ -209,6 +215,23 @@ pub(super) fn add_smart_folder_dialog(app: &mut App) {
             LogKind::Warning,
             t!("La carpeta ya está en el proyecto.").into(),
         );
+    }
+}
+
+/// «↺» tira toda la configuración del proyecto: se pregunta con el diálogo
+/// nativo del sistema y sólo si el usuario acepta se toca nada. El registro
+/// de la app deja constancia del cambio en `reset_defaults` (review UI/UX C5).
+pub(super) fn confirm_reset(app: &mut App) {
+    let respuesta = rfd::MessageDialog::new()
+        .set_title(t!("Restablecer la configuración"))
+        .set_description(t!(
+            "Se descartarán los ajustes actuales y volverán a los valores por defecto. Los sprites no se tocan."
+        ))
+        .set_level(rfd::MessageLevel::Warning)
+        .set_buttons(rfd::MessageButtons::OkCancel)
+        .show();
+    if respuesta == rfd::MessageDialogResult::Ok {
+        app.reset_defaults();
     }
 }
 

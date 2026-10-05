@@ -103,6 +103,42 @@ impl App {
         self.list_cursor = None;
         self.tree_kb_focus = false;
         self.start_watcher();
+        self.log(
+            LogKind::Info,
+            t!("Configuración restablecida a los valores por defecto.").into(),
+        );
         self.after_workspace_change();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Restablecer es destructivo y hasta ahora silencioso: sin este registro
+    /// el usuario no tendría forma de saber que la app le acaba de tirar la
+    /// configuración entera (review UI/UX C5).
+    #[test]
+    fn reset_deja_constancia_en_el_registro() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.config.padding = 7;
+        assert_ne!(
+            app.config.padding,
+            ProjectConfig::default().padding,
+            "el ajuste debe estar cambiado para que el test signifique algo"
+        );
+
+        app.reset_defaults();
+
+        assert_eq!(
+            app.config.padding,
+            ProjectConfig::default().padding,
+            "reset_defaults debe restaurar los valores por defecto"
+        );
+        assert!(
+            app.logs.iter().any(|e| e.text.contains("restablecida")),
+            "reset_defaults debe dejar constancia en el registro"
+        );
     }
 }
