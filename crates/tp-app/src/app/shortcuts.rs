@@ -102,27 +102,7 @@ fn seccion(ui: &mut egui::Ui, titulo: &str, filas: &[Fila]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Texto que el frame dejó pintado: las ventanas no tienen estado que
-    /// leer, así que la prueba mira las formas que egui devuelve. Los
-    /// contenedores anidan, de ahí el barrido recursivo.
-    fn pintado(output: &egui::FullOutput) -> String {
-        fn recorre<'a>(shapes: impl IntoIterator<Item = &'a egui::Shape>, texto: &mut String) {
-            for shape in shapes {
-                match shape {
-                    egui::Shape::Text(t) => {
-                        texto.push_str(&t.galley.job.text);
-                        texto.push('\n');
-                    }
-                    egui::Shape::Vec(hijos) => recorre(hijos, texto),
-                    _ => {}
-                }
-            }
-        }
-        let mut texto = String::new();
-        recorre(output.shapes.iter().map(|c| &c.shape), &mut texto);
-        texto
-    }
+    use crate::testing::texto_pintado;
 
     fn frame(
         app: &mut App,
@@ -195,14 +175,14 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::new_for_testing(ctx.clone(), None);
 
-        let cerrado = pintado(&frame(&mut app, &ctx, egui::Modifiers::NONE, vec![]));
+        let cerrado = texto_pintado(&frame(&mut app, &ctx, egui::Modifiers::NONE, vec![]));
         assert!(
             !cerrado.contains("Ctrl + O"),
             "sin abrir no debe pintarse la ayuda: {cerrado}"
         );
 
         press(&mut app, &ctx, egui::Key::F1);
-        let texto = pintado(&frame(&mut app, &ctx, egui::Modifiers::NONE, vec![]));
+        let texto = texto_pintado(&frame(&mut app, &ctx, egui::Modifiers::NONE, vec![]));
         for atajo in [
             "Ctrl + O",
             "Ctrl + S",

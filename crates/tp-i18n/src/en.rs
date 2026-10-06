@@ -665,6 +665,20 @@ pub static EN: &[(&str, &str)] = &[
         "Mientras escribes en un campo, las teclas de la lista no se usan.",
         "List keys are ignored while you type in a field.",
     ),
+
+    // Menú de app y «Acerca de» (M5).
+    ("Archivo", "File"),
+    ("Ayuda", "Help"),
+    ("Salir", "Quit"),
+    ("Acerca de", "About"),
+    ("Versión", "Version"),
+    ("Repositorio", "Repository"),
+    ("Documentación", "Documentation"),
+    ("Licencia MIT", "MIT License"),
+    (
+        "Una aplicación de escritorio en Rust para generar atlas de texturas: se maneja desde la CLI, desde la interfaz o desde un archivo de proyecto.",
+        "A desktop application in Rust to build texture atlases: driven from the CLI, the GUI or a project file.",
+    ),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

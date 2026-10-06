@@ -154,3 +154,25 @@ pub fn pump_on_demand(
         }
     }
 }
+
+/// Texto que un frame dejó pintado. Las ventanas flotantes no guardan
+/// estado que leer —lo único que hacen es pintar—, así que las pruebas
+/// miran las formas que egui devuelve en el `FullOutput`. Los contenedores
+/// anidan formas dentro de formas, de ahí el barrido recursivo.
+pub fn texto_pintado(output: &eframe::egui::FullOutput) -> String {
+    fn recorre<'a>(shapes: impl IntoIterator<Item = &'a eframe::egui::Shape>, texto: &mut String) {
+        for shape in shapes {
+            match shape {
+                eframe::egui::Shape::Text(t) => {
+                    texto.push_str(&t.galley.job.text);
+                    texto.push('\n');
+                }
+                eframe::egui::Shape::Vec(hijos) => recorre(hijos, texto),
+                _ => {}
+            }
+        }
+    }
+    let mut texto = String::new();
+    recorre(output.shapes.iter().map(|c| &c.shape), &mut texto);
+    texto
+}

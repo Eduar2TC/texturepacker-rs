@@ -75,6 +75,7 @@ impl App {
             show_split: false,
             split: split_sheet::SplitState::default(),
             show_shortcuts: false,
+            show_about: false,
             bottom_tab: BottomTab::Log,
             logs: Vec::new(),
             unreadable_dirs: Vec::new(),

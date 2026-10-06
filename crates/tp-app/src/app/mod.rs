@@ -19,6 +19,7 @@ mod animation;
 mod bottom;
 mod drag;
 mod events;
+mod menubar;
 mod pipeline;
 mod preview;
 mod project;
@@ -154,6 +155,8 @@ pub struct App {
     /// Ayuda de atajos de teclado abierta (F1, «?» o el botón «?» de la
     /// barra; review UI/UX I2).
     show_shortcuts: bool,
+    /// Ventana «Acerca de» abierta (menú de app; review UI/UX M5).
+    show_about: bool,
     bottom_tab: BottomTab,
     logs: Vec<LogEntry>,
     /// Directorios que ya se avisó que no se pudieron leer: evita repetir el
@@ -273,6 +276,7 @@ impl eframe::App for App {
         // paneles, barra): comportamiento estándar de las apps del estilo.
         handle_global_file_drop(self, ctx);
 
+        menubar::menubar(self, ctx);
         toolbar::toolbar(self, ctx);
 
         // Barra de estado (abajo del todo, declarada primero): datos del
@@ -388,6 +392,7 @@ impl eframe::App for App {
         animation::animation_window(self, ctx);
         split_sheet::split_window(self, ctx);
         shortcuts::shortcuts_window(self, ctx);
+        menubar::about_window(self, ctx);
 
         // El diálogo de cierre puede haber guardado el proyecto, así que la
         // huella se vuelve a mirar justo antes de componer el título.

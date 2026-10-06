@@ -184,7 +184,9 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if esc {
         app.tree_kb_focus = false;
-        if app.show_shortcuts {
+        if app.show_about {
+            app.show_about = false;
+        } else if app.show_shortcuts {
             app.show_shortcuts = false;
         } else if app.show_animation {
             app.show_animation = false;
