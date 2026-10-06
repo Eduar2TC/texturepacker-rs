@@ -143,6 +143,9 @@ pub struct App {
     /// Instante de la última adición: el resaltado se apaga solo.
     just_added_at: Option<std::time::Instant>,
     advanced_settings: bool,
+    /// Texto del buscador de Ajustes: estrecha el panel a las secciones
+    /// que coinciden (review UI/UX I3).
+    settings_filter: String,
     show_sprite_settings: bool,
     /// Whether the animation preview window is open.
     show_animation: bool,

@@ -160,19 +160,43 @@ pub fn pump_on_demand(
 /// miran las formas que egui devuelve en el `FullOutput`. Los contenedores
 /// anidan formas dentro de formas, de ahí el barrido recursivo.
 pub fn texto_pintado(output: &eframe::egui::FullOutput) -> String {
-    fn recorre<'a>(shapes: impl IntoIterator<Item = &'a eframe::egui::Shape>, texto: &mut String) {
+    let mut texto = String::new();
+    for (t, _, _) in textos_pintados(output) {
+        texto.push_str(&t);
+        texto.push('\n');
+    }
+    texto
+}
+
+/// Cada texto que un frame dejó pintado, con su rectángulo en pantalla y
+/// el recorte que lo limita: `(texto, rectángulo, recorte)`.
+///
+/// Hace falta cuando lo que se prueba es de geometría. Un botón que egui
+/// empuja fuera de su panel sigue *pintado* —`texto_pintado` lo daría por
+/// bueno—, pero el usuario no lo ve: sólo se descubre comparando su
+/// rectángulo con el recorte que el `ClippedShape` le asigna. Los hijos de
+/// una forma enmascarada (`Shape::Vec`) heredan su recorte.
+pub fn textos_pintados(
+    output: &eframe::egui::FullOutput,
+) -> Vec<(String, eframe::egui::Rect, eframe::egui::Rect)> {
+    fn recorre<'a>(
+        shapes: impl IntoIterator<Item = &'a eframe::egui::Shape>,
+        recorte: eframe::egui::Rect,
+        fuera: &mut Vec<(String, eframe::egui::Rect, eframe::egui::Rect)>,
+    ) {
         for shape in shapes {
             match shape {
                 eframe::egui::Shape::Text(t) => {
-                    texto.push_str(&t.galley.job.text);
-                    texto.push('\n');
+                    fuera.push((t.galley.job.text.clone(), t.visual_bounding_rect(), recorte))
                 }
-                eframe::egui::Shape::Vec(hijos) => recorre(hijos, texto),
+                eframe::egui::Shape::Vec(hijos) => recorre(hijos, recorte, fuera),
                 _ => {}
             }
         }
     }
-    let mut texto = String::new();
-    recorre(output.shapes.iter().map(|c| &c.shape), &mut texto);
-    texto
+    let mut fuera = Vec::new();
+    for forma in &output.shapes {
+        recorre([&forma.shape], forma.clip_rect, &mut fuera);
+    }
+    fuera
 }

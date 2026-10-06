@@ -10,6 +10,253 @@ use tp_core::config::{
     SizeConstraint, SortOrder, TemplateFormat, TrimMode, VariantOptions,
 };
 
+/// Índice de búsqueda del panel de Ajustes (review UI/UX I3).
+///
+/// Los 59 controles del panel no se pueden esconder uno a uno: egui es
+/// inmediato, y cuando un control ya se pinta no queda nada que quitarle.
+/// El buscador estrecha en cambio la vista a las **secciones** que
+/// coinciden, y lo hace con las etiquetas que cada una pinta de verdad —
+/// nombres de control, valores de desplegable y ayudas —, es decir, con lo
+/// que sale de `t!(…)` en su propia función (más las de los colapsables
+/// anidados en «Datos», que se apuntan a mano). Los textos con marcas de
+/// posición no cuentan: son mensajes, no ajustes.
+///
+/// Cada entrada se guarda como en el fuente (sólo se colapsan los saltos
+/// de línea) y se traduce al comparar, de modo que en inglés se busca con
+/// las palabras inglesas. Dos tests la mantienen honesta:
+/// `el_indice_cubre_lo_que_pinta_cada_seccion` no deja nada sin indexar y
+/// `el_indice_solo_usa_claves_reales` no deja nada inventado.
+const INDICE: &[(&str, &[&str])] = &[
+    (
+        "Interfaz",
+        &[
+            "Interfaz",
+            "Idioma",
+            "Sistema (idioma del equipo)",
+            "Tema",
+            "Sistema",
+            "Claro",
+            "Oscuro",
+            "Se guarda en tu equipo, no en el proyecto.",
+        ],
+    ),
+    (
+        "Datos",
+        &[
+            "Datos",
+            "Directorio de entrada",
+            "Directorio de salida",
+            "Nombre base de los archivos",
+            "Ficheros extra por framework",
+            "Vacío = no escribir. Alias CLI: --class-file, --header-file, --source-file y --spriteids-file.",
+            "Extras del data format",
+            "Cache busting (?v= en la textura citada)",
+            "Añade ?v=<hash del fichero> a la imagen que los metadatos referencian, como los data formats de Pixi/Phaser.",
+            "Shape debug (contornos en la hoja)",
+            "Dibuja el rectángulo visible y los polígonos de cada sprite sobre la hoja, en magenta.",
+            "Buscar en subdirectorios",
+            "Quitar la extensión de los nombres",
+            "hero/idle_00.png pasa a llamarse hero/idle_00",
+            "Anteponer el nombre de la carpeta inteligente",
+            "Solo aplica a carpetas añadidas fuera del directorio de entrada",
+            "Auto-detectar animaciones",
+            "Agrupa sprites como walk_001..walk_003 en una animación walk y la expone en los metadatos (auto-detectar animaciones)",
+            "Ruta de la textura en los metadatos (p. ej. /assets)",
+            "vacío = sin prefijo",
+            "Escalado de variantes (p. ej. 2, 0.5 ➡ @2x, -hd)",
+            "Plantilla Mustache personalizada (opcional)",
+            "Clave de cifrado AES-256-GCM (opcional)",
+            "Clave global (guardada una vez y reutilizable)",
+            "— ninguna —",
+            "Usa esta clave en el proyecto",
+            "Guardar",
+            "Guarda la clave escrita arriba con este nombre",
+            "Borrar",
+            "Borra la clave global seleccionada",
+            "nombre de la clave global",
+            "Formato de metadatos",
+            "Valores recomendados",
+            "Aplica la rotación, el algoritmo y la auto-detección de animaciones recomendados para el formato seleccionado.",
+            "Exportadores propios",
+            "Carpeta con plantillas <id>.hbs propias; elegir una no cambia la familia ni la extensión del fichero de datos.",
+            "Directorio de exportadores",
+            "vacío = ninguno",
+            "— ninguno —",
+            "Sin <id>.hbs seleccionables: revisa el directorio de arriba.",
+            "Propiedades de la plantilla",
+            "Prefijo de clase CSS (--css-sprite-prefix)",
+            "vacío = ninguno (p. ej. icon-)",
+            "Media query de la variante 2× (--css-media-query-2x)",
+            "sólo envuelve la hoja de las variantes >1×",
+            "El prefijo de clase y la media query 2× sólo aplican al formato CSS.",
+            "string_property de la plantilla (--plain-string-property)",
+            "vacío = no escribir",
+            "bool_property de la plantilla (--plain-bool-property)",
+            "Presets de variantes",
+            "Aplicar",
+            "Sobrescribe las variantes actuales por las del preset, igual que el botón Apply del original.",
+            "Opciones por variante",
+            "«Reutiliza la base» = la hoja empaquetada a escala 1.0 llevada a esta escala (rápido, mismo layout y mismos frames). Con filtro o tope, esa variante se empaqueta sola y sus archivos pueden diferir.",
+            "escala",
+            "filtro de sprites",
+            "máx. px",
+            "idéntico",
+            "fracc.",
+            "qué hace",
+            "vacío = todos",
+            "Patrones separados por comas con comodines * y ? sobre el nombre del sprite (p. ej. hero*, coin). Solo lo que coincide entra en esta variante.",
+            "0 = el tamaño máximo del proyecto. Con un valor distinto, esta variante se empaqueta sola respetando ese tope.",
+            "Sin marcar, la variante se empaqueta de nuevo con su escala en vez de reutilizar la hoja base.",
+            "«Accept fractional values»: la variante queda fuera del común divisor, así que su hoja idéntica se redondea al píxel y no obliga a estirar las demás para caber en su denominador.",
+            "JSON (lista)",
+            "Cabecera C++",
+            "Texto plano",
+            "Solo hoja de sprites",
+            "— no escribir",
+        ],
+    ),
+    (
+        "Composición",
+        &[
+            "Composición",
+            "Tamaño máximo",
+            "Multipack (varias hojas)",
+            "Si los sprites no caben en una hoja se generan varias; con la opción desactivada el empaquetado falla",
+            "Separación entre sprites (px)",
+            "Extrusión (px)",
+            "Permitir rotación 90°",
+            "Voltear verticalmente (flip Y)",
+            "Solo formatos de hardware (ASTC/ETC2/ETC1/PVRTC); las coordenadas de los frames no cambian",
+            "Algoritmo",
+            "Rejilla (Grid)",
+            "Básico (Basic)",
+            "Manual (arrastrar en la vista)",
+            "Arrastra los sprites en la vista previa para fijar su posición",
+            "Heurística",
+            "Best (probar todas)",
+            "Modo de empaquetado",
+            "Fast (recorte simple)",
+            "Good (búsqueda rápida)",
+            "Best (búsqueda intensiva)",
+            "Trim (recortar transparencia)",
+            "Margen de borde (px)",
+            "Margen transparente entre los sprites y el borde del atlas",
+            "Restricción de tamaño",
+            "Cualquiera",
+            "POT (potencia de 2)",
+            "Múltiplo de 4",
+            "Alineado a palabra",
+            "Atlas cuadrado (force squared)",
+            "Tamaño fijo (0 = automático)",
+            "Fija las dimensiones del atlas (tamaño fijo)",
+            "Ordenar por (Basic)",
+            "Nombre",
+            "Ancho",
+            "Alto",
+            "Área",
+            "Perímetro (circumference)",
+            "Orden (Basic)",
+            "Ascendente",
+            "Descendente",
+            "Divisor común",
+            "Estira los sprites con transparencia hasta ser divisibles",
+            "Alinear a rejilla (0 = off)",
+            "Coloca las esquinas de los sprites en coordenadas múltiplos",
+            "Umbral de recorte (1-255)",
+            "Modo de recorte",
+            "None (sin recorte)",
+            "Crop, conservar posición",
+            "Crop, fijar en 0/0",
+            "Margen de recorte (px)",
+            "Polygon activa el empaquetado por contorno y exporta la malla.",
+            "Detección de duplicados (alias)",
+            "Empaquetar mapas de normales",
+            "Sufijo",
+            "Filtro de ruta",
+            "Detectar por color (auto-detect)",
+            "Hoja de normales (vacío = <imagen>_normal)",
+            "Modo polígono (mallas)",
+            "Tolerancia (RDP)",
+            "Empaqueta sprites por su contorno (Marching Squares ➡ RDP ➡ Earcut). Activo por el modo de recorte Polígono.",
+            "Pivot por defecto (normalizado 0..1)",
+        ],
+    ),
+    (
+        "Procesamiento",
+        &[
+            "Procesamiento",
+            "Profundidad de color",
+            "Ninguno",
+            "Conservar píxeles",
+            "Premultiplicar alpha",
+            "Escalado de variantes",
+            "Suave (bilineal)",
+            "Rápido (vecino más cercano)",
+            "Formato de publicación",
+            "PNG-8 (indexado)",
+            "ETC1 en KTX (ktx)",
+            "KTX con zlib (zktx)",
+            "KTX2 sin comprimir (ktx2)",
+            "PVR3 en gzip (pvr.gz)",
+            "PVR3 en CCZ (pvr.ccz)",
+            "Formato de píxel",
+            "Optimización PNG (0-7)",
+            "Se aplicará al Publicar (nivel de optimización PNG).",
+            "Calidad JPG (0-100)",
+            "Se aplicará al Publicar (calidad JPG).",
+            "WebP sin pérdidas",
+            "Calidad WebP (0-100)",
+            "Se aplicará al Publicar (calidad WebP).",
+            "Calidad PVRTC (0-7)",
+            "Calidad ETC1 (0-100)",
+            "Calidad ETC2 (0-100)",
+            "Calidad ASTC (0-4, 4 = exhaustivo)",
+            "Calidad Basis ETC1S (0-100)",
+            "DXT_LINEAR (error uniforme)",
+            "DXT_PERCEPTUAL (pondera la luminancia)",
+        ],
+    ),
+];
+
+/// Minúsculas, sin acentos y con los espacios de más colapsados: para que
+/// «extrusion» encuentre «Extrusión (px)» y «tamaño    maximo» dé el mismo
+/// resultado que «Tamaño máximo».
+fn normaliza(texto: &str) -> String {
+    let sin_acentos: String = texto
+        .to_lowercase()
+        .chars()
+        .map(|c| match c {
+            'á' | 'à' | 'ä' | 'â' => 'a',
+            'é' | 'è' | 'ë' | 'ê' => 'e',
+            'í' | 'ì' | 'ï' | 'î' => 'i',
+            'ó' | 'ò' | 'ö' | 'ô' => 'o',
+            'ú' | 'ù' | 'ü' | 'û' => 'u',
+            'ñ' => 'n',
+            'ç' => 'c',
+            _ => c,
+        })
+        .collect();
+    sin_acentos.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// ¿El texto contiene lo que se está buscando? `filtro` llega ya normalizado.
+fn contiene(filtro: &str, texto: &str) -> bool {
+    !filtro.is_empty() && normaliza(texto).contains(filtro)
+}
+
+/// ¿Se ve la sección `clave` (su nombre en español, el mismo que usa su
+/// `t!(…)`)? Basta con que coincida su nombre traducido o cualquiera de sus
+/// etiquetas; sin filtro se ve todo, como hasta ahora.
+fn seccion_visible(clave: &str, filtro: &str) -> bool {
+    if filtro.is_empty() {
+        return true;
+    }
+    let Some((_, palabras)) = INDICE.iter().find(|(k, _)| *k == clave) else {
+        return true;
+    };
+    contiene(filtro, crate::i18n::translate(clave)) || palabras.iter().any(|p| contiene(filtro, p))
+}
+
 /// Panel derecho de Ajustes. Los controles no avisan uno a uno: mutan
 /// `config` y el sondeo por frame (`poll_changes`) detecta el cambio por
 /// huella, repinta y reempaqueta en el frame siguiente. Para notificar en
@@ -24,13 +271,54 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
         });
     });
     ui.separator();
+
+    // Buscador (I3): estrecha el panel a las secciones que coinciden. Los
+    // avisos no se esconden nunca: si el atlas va a fallar al publicar, se
+    // ve aunque se esté buscando otra cosa.
+    let hay_filtro = !app.settings_filter.is_empty();
+    // La fila va de derecha a izquierda para que «Limpiar» quede pegado al
+    // borde y la caja se quede con lo que sobra. Al revés, el ancho
+    // infinito de la caja empuja el botón fuera del panel: se pinta, pero
+    // el usuario no lo ve. El `horizontal` de fuera no es adorno: sin él,
+    // `with_layout` hereda la altura que sobra y la fila se estira hasta
+    // comerse el `ScrollArea` de debajo.
+    ui.horizontal(|ui| {
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if hay_filtro && ui.button(t!("Limpiar")).clicked() {
+                app.settings_filter.clear();
+            }
+            ui.add(
+                egui::TextEdit::singleline(&mut app.settings_filter)
+                    .hint_text(t!("Buscar ajuste…"))
+                    .desired_width(f32::INFINITY),
+            );
+        });
+    });
+
+    let filtro = normaliza(app.settings_filter.trim());
+    if !filtro.is_empty()
+        && !["Interfaz", "Datos", "Composición", "Procesamiento"]
+            .iter()
+            .any(|clave| seccion_visible(clave, &filtro))
+    {
+        ui.label(egui::RichText::new(t!("Ningún ajuste coincide con la búsqueda.")).weak());
+    }
+
     egui::ScrollArea::vertical()
         .id_salt("settings_scroll")
         .show(ui, |ui| {
-            interface_section(app, ui);
-            data_section(app, ui);
-            layout_section(app, ui);
-            processing_section(app, ui);
+            if seccion_visible("Interfaz", &filtro) {
+                interface_section(app, ui);
+            }
+            if seccion_visible("Datos", &filtro) {
+                data_section(app, ui);
+            }
+            if seccion_visible("Composición", &filtro) {
+                layout_section(app, ui);
+            }
+            if seccion_visible("Procesamiento", &filtro) {
+                processing_section(app, ui);
+            }
             warnings_section(app, ui);
         });
 }
@@ -1769,5 +2057,235 @@ mod tests {
                 });
             });
         }
+    }
+
+    /// Un frame con el panel de Ajustes montado como lo monta la app: un
+    /// `SidePanel` derecho de 330 px sobre una ventana de 1360×860. Con el
+    /// panel a pantalla entera la fila del buscador tiene holgura de
+    /// sobra y los apretujones que el usuario ve en una ventana normal
+    /// no salen.
+    fn ajustes_frame(app: &mut App, ctx: &egui::Context) -> eframe::egui::FullOutput {
+        let pantalla = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        ctx.run(pantalla, |ctx| {
+            egui::SidePanel::right("settings_panel")
+                .resizable(true)
+                .default_width(330.0)
+                .show(ctx, |ui| settings_ui(app, ui));
+        })
+    }
+
+    /// El texto que ese frame dejó en pantalla: el buscador no tiene estado
+    /// que leer, sólo lo que se ve.
+    fn pintar_ajustes(app: &mut App, ctx: &egui::Context) -> String {
+        crate::testing::texto_pintado(&ajustes_frame(app, ctx))
+    }
+
+    /// Recorta de `src` el cuerpo de una función de primer nivel de este
+    /// fichero, sin comentarios — igual que los tests de i18n leen el fuente.
+    fn funcion_de(src: &str, nombre: &str) -> String {
+        let buscador = format!("fn {nombre}(");
+        let mut lineas = Vec::new();
+        let mut dentro = false;
+        for linea in src.lines() {
+            let codigo = linea.split("//").next().unwrap_or_default();
+            if dentro {
+                if codigo.starts_with("fn ")
+                    || codigo.starts_with("pub(super) fn ")
+                    || codigo.starts_with("mod ")
+                {
+                    break;
+                }
+                lineas.push(codigo);
+            } else if codigo.starts_with(&buscador) {
+                dentro = true;
+                lineas.push(codigo);
+            }
+        }
+        assert!(
+            dentro,
+            "no encuentro `{buscador}` en settings.rs: ¿se renombró la sección?"
+        );
+        lineas.join("\n")
+    }
+
+    /// I3: el buscador estrecha el panel a las secciones cuyas etiquetas
+    /// coinciden y deja un botón para limpiarlo.
+    #[test]
+    fn el_buscador_deja_solo_las_secciones_que_coinciden() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        let todo = pintar_ajustes(&mut app, &ctx);
+        assert!(
+            todo.contains("Composición"),
+            "sin filtro se ve todo: {todo}"
+        );
+        assert!(
+            todo.contains("Procesamiento"),
+            "sin filtro se ve todo: {todo}"
+        );
+
+        app.settings_filter = "extrusión".into();
+        let filtrado = pintar_ajustes(&mut app, &ctx);
+        assert!(
+            filtrado.contains("Composición"),
+            "«Extrusión (px)» vive en Composición: {filtrado}"
+        );
+        assert!(
+            !filtrado.contains("Procesamiento"),
+            "Procesamiento no habla de extrusión: {filtrado}"
+        );
+        assert!(
+            !filtrado.contains("Interfaz"),
+            "Interfaz tampoco: {filtrado}"
+        );
+        assert!(
+            filtrado.contains("Limpiar"),
+            "con filtro puesto se puede limpiar: {filtrado}"
+        );
+
+        app.settings_filter.clear();
+        let otra_vez = pintar_ajustes(&mut app, &ctx);
+        assert!(
+            otra_vez.contains("Procesamiento"),
+            "limpiado el filtro vuelve todo: {otra_vez}"
+        );
+    }
+
+    /// I3: si no coincide nada lo dice en el panel, que no se queda en blanco.
+    #[test]
+    fn el_buscador_sin_coincidencias_lo_dice() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.settings_filter = "zzzzzz".into();
+
+        let texto = pintar_ajustes(&mut app, &ctx);
+        assert!(
+            texto.contains("Ningún ajuste coincide con la búsqueda."),
+            "el panel no se queda mudo: {texto}"
+        );
+        assert!(!texto.contains("Composición"), "nada coincide: {texto}");
+        assert!(!texto.contains("Procesamiento"), "nada coincide: {texto}");
+        assert!(texto.contains("Limpiar"), "queda la salida: {texto}");
+    }
+
+    /// I3: «Limpiar» no sirve de nada si no está donde se pueda tocar: en
+    /// la misma fila que la caja, a su derecha y sin salirse del panel.
+    /// El texto pintado no lo delata —se pinta igual, hasta debajo de otra
+    /// cosa y tapado por ella—, así que el test compara rectángulos y
+    /// recortes. Sin este mirador, un `TextEdit` con ancho infinito empuja
+    /// el botón fuera de la fila y el test sigue en verde.
+    #[test]
+    fn el_boton_de_limpiar_esta_en_la_fila_de_la_busqueda() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.settings_filter = "extrusión".into();
+
+        let salida = ajustes_frame(&mut app, &ctx);
+        let pintados = crate::testing::textos_pintados(&salida);
+        let (_, rect, recorte) = pintados
+            .iter()
+            .find(|(t, _, _)| t.trim() == "Limpiar")
+            .expect("con filtro puesto se pinta el botón «Limpiar»");
+        // La caja se lleva su propio recorte, que es su rectángulo interior.
+        let (_, _, caja) = pintados
+            .iter()
+            .find(|(t, _, _)| t.trim() == "extrusión")
+            .expect("la caja del buscador pinta lo que se escribe");
+
+        assert!(
+            recorte.contains(rect.min) && recorte.contains(rect.max),
+            "«Limpiar» se sale del panel y no se puede tocar: \
+             botón={rect:?} recorte={recorte:?}"
+        );
+        assert!(
+            rect.min.x >= caja.max.x - 1.0 && rect.min.y < caja.max.y && rect.max.y > caja.min.y,
+            "«Limpiar» no queda en la fila de la caja, a su derecha: \
+             botón={rect:?} caja={caja:?}"
+        );
+    }
+
+    /// I3: el filtro no se cae con mayúsculas, acentos o espacios de más,
+    /// y sin filtro se ve todo (que es como estaba antes).
+    #[test]
+    fn el_filtro_normaliza_lo_que_escribe_el_usuario() {
+        assert!(seccion_visible("Composición", ""));
+        assert!(seccion_visible("Composición", &normaliza("Extrusion")));
+        assert!(seccion_visible(
+            "Composición",
+            &normaliza("  Tamaño   maximo  ")
+        ));
+        assert!(seccion_visible("Interfaz", &normaliza("IDIOMA")));
+        assert!(!seccion_visible("Composición", &normaliza("idioma")));
+    }
+
+    /// I3: si alguien añade un control y no apunta su etiqueta en el
+    /// índice, ese control deja de ser buscable. Recorre `settings.rs` y
+    /// exige que lo que pinta cada sección esté en su parte del índice
+    /// (los avisos no: no se filtran).
+    #[test]
+    fn el_indice_cubre_lo_que_pinta_cada_seccion() {
+        let ruta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/settings.rs");
+        let src = std::fs::read_to_string(&ruta).expect("settings.rs legible");
+        let casos = [
+            ("interface_section", "Interfaz"),
+            ("data_section", "Datos"),
+            ("layout_section", "Composición"),
+            ("processing_section", "Procesamiento"),
+        ];
+        let mut faltan = Vec::new();
+        for (funcion, clave) in casos {
+            let cuerpo = funcion_de(&src, funcion);
+            let palabras = INDICE
+                .iter()
+                .find(|(k, _)| *k == clave)
+                .map(|(_, p)| *p)
+                .unwrap_or_else(|| panic!("«{clave}» no está en el índice"));
+            for pintada in crate::i18n::t_keys_in(&cuerpo) {
+                if pintada.contains('{') {
+                    continue; // mensaje con marcas de posición, no un ajuste
+                }
+                if !palabras.iter().any(|p| normaliza(p) == normaliza(&pintada)) {
+                    faltan.push(format!("{clave}: {pintada}"));
+                }
+            }
+        }
+        assert!(
+            faltan.is_empty(),
+            "etiquetas que el buscador no encontraría (apúntalas en INDICE):\n  {}",
+            faltan.join("\n  ")
+        );
+    }
+
+    /// I3: y todo lo que apunta el índice es algo que la app pinta de
+    /// verdad: una etiqueta inventada no la encontraría nadie nunca.
+    #[test]
+    fn el_indice_solo_usa_claves_reales() {
+        let usadas: std::collections::HashSet<String> =
+            crate::i18n::used_keys().into_iter().collect();
+        let mut inventadas = Vec::new();
+        for (clave, palabras) in INDICE {
+            if !usadas.contains(*clave) {
+                inventadas.push((*clave).to_string());
+            }
+            for palabra in *palabras {
+                if !usadas.contains(*palabra) {
+                    inventadas.push((*palabra).to_string());
+                }
+            }
+        }
+        inventadas.sort();
+        inventadas.dedup();
+        assert!(
+            inventadas.is_empty(),
+            "palabras del buscador que la app no escribe en ningún sitio:\n  {}",
+            inventadas.join("\n  ")
+        );
     }
 }

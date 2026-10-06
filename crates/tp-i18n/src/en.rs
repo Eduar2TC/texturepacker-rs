@@ -679,6 +679,11 @@ pub static EN: &[(&str, &str)] = &[
         "Una aplicación de escritorio en Rust para generar atlas de texturas: se maneja desde la CLI, desde la interfaz o desde un archivo de proyecto.",
         "A desktop application in Rust to build texture atlases: driven from the CLI, the GUI or a project file.",
     ),
+
+    // Buscador de Ajustes (I3).
+    ("Buscar ajuste…", "Search settings…"),
+    ("Limpiar", "Clear"),
+    ("Ningún ajuste coincide con la búsqueda.", "No settings match the search."),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

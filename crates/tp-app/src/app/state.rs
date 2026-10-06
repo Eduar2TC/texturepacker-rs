@@ -69,6 +69,7 @@ impl App {
             just_added: Vec::new(),
             just_added_at: None,
             advanced_settings: false,
+            settings_filter: String::new(),
             show_sprite_settings: false,
             show_animation: false,
             anim: animation::AnimState::default(),

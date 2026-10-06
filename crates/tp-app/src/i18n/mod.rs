@@ -10,7 +10,7 @@
 pub use tp_i18n::*;
 
 #[cfg(test)]
-fn t_keys_in(src: &str) -> Vec<String> {
+pub(crate) fn t_keys_in(src: &str) -> Vec<String> {
     let chars: Vec<char> = src.chars().collect();
     let mut keys = Vec::new();
     let mut i = 0;
@@ -69,7 +69,7 @@ fn t_keys_in(src: &str) -> Vec<String> {
 
 /// Todas las claves `t!("…")` de `tp-app/src` (los binarios no pinta la UI).
 #[cfg(test)]
-fn used_keys() -> Vec<String> {
+pub(crate) fn used_keys() -> Vec<String> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files: Vec<std::path::PathBuf> = Vec::new();
     crate::glyph_guard::walk(&root, &mut files);
