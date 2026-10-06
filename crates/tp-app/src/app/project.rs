@@ -103,6 +103,7 @@ impl App {
     }
 
     pub(super) fn reset_defaults(&mut self) {
+        self.anotar_deshacer();
         self.config = ProjectConfig::default();
         self.sync_variants();
         self.sync_paths();

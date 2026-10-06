@@ -139,6 +139,12 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     if consume(ctx, egui::Key::P) && app.running.is_none() {
         app.start_pack(false);
     }
+    // Ctrl+Z deshace el último gesto (C6). Mientras se escribe en un
+    // campo la tecla es del campo: deshacer la configuración a mitad de
+    // escribir una ruta sería un desastre.
+    if consume(ctx, egui::Key::Z) && !ctx.wants_keyboard_input() {
+        app.deshacer();
+    }
 
     // Zoom de teclado (sin modificadores, como en Figma/Photoshop):
     // +/- acercan y alejan, 0 restaura 1:1 y F encuadra.

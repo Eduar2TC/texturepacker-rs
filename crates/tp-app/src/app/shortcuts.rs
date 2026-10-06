@@ -40,6 +40,11 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
             );
             seccion(
                 ui,
+                t!("Edición"),
+                &[(t!("Deshacer el último cambio"), "Ctrl + Z")],
+            );
+            seccion(
+                ui,
                 t!("Vista"),
                 &[
                     (t!("Acercar"), "+"),
@@ -187,6 +192,7 @@ mod tests {
             "Ctrl + O",
             "Ctrl + S",
             "Ctrl + P",
+            "Ctrl + Z",
             "Ctrl + A",
             "Mayús + flechas",
             "Esc",
@@ -198,6 +204,7 @@ mod tests {
             "Abrir proyecto",
             "Guardar proyecto",
             "Publicar",
+            "Deshacer el último cambio",
             "Ajustar",
             "Seleccionar todo",
             "Esta ayuda",

@@ -686,6 +686,22 @@ mod on_demand_tests {
             .count()
     }
 
+    /// Un frame con los eventos del puntero dados (la ventana real los
+    /// recibe uno por frame: pulsar, mover, soltar).
+    fn puntero(app: &mut App, ctx: &egui::Context, eventos: Vec<egui::Event>) {
+        let _ = app.run_frame(
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1360.0, 860.0),
+                )),
+                events: eventos,
+                ..egui::RawInput::default()
+            },
+        );
+    }
+
     /// Conduce hasta que el preview vuelve a estar al día (sin Publicar).
     fn pump_until_fresh(app: &mut App, ctx: &egui::Context) -> crate::testing::PumpOutcome {
         pump_on_demand(
@@ -826,6 +842,131 @@ mod on_demand_tests {
         assert!(
             preview_updates(&app) > before,
             "el drop debe reempaquetar al instante"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// C6: soltar sprites en el lienzo fija posiciones manuales —y activa
+    /// el algoritmo Manual—; el gesto entero cabe en un solo paso de
+    /// deshacer.
+    #[test]
+    fn el_drop_en_el_lienzo_es_deshacible() {
+        let (mut app, ctx, tmp) = demo("undo_drop");
+        let boot = pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(app.result().is_some(), "preview de arranque: {boot:?}");
+        let posiciones_antes = app.config.manual_positions.clone();
+        let algoritmo_antes = app.config.algorithm;
+
+        let ids: Vec<String> = app
+            .result()
+            .unwrap()
+            .result
+            .sprites
+            .iter()
+            .filter(|s| !s.is_alias)
+            .map(|s| s.id.clone())
+            .take(1)
+            .collect();
+        begin_sprite_drag(&app, &ctx, ids);
+        assert_eq!(
+            app.drop_sprites_on_canvas(egui::pos2(120.0, 80.0)),
+            1,
+            "el drop debe colocar el sprite"
+        );
+        assert_ne!(
+            app.config.manual_positions, posiciones_antes,
+            "el drop fija la posición manual del sprite"
+        );
+
+        app.deshacer();
+
+        assert_eq!(
+            app.config.manual_positions, posiciones_antes,
+            "Ctrl+Z devuelve el lienzo a como estaba"
+        );
+        assert!(
+            app.config.algorithm == algoritmo_antes,
+            "…incluido el algoritmo que el drop activó"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// C6: arrastrar un sprite ya en el lienzo es también un paso, y se
+    /// anota al empezar el gesto (no en cada frame en que la posición se
+    /// reescribe, que vaciaría la pila en un segundo de arrastre).
+    #[test]
+    fn arrastrar_un_sprite_en_el_lienzo_es_deshacible() {
+        let (mut app, ctx, tmp) = demo("undo_drag");
+        let boot = pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(app.result().is_some(), "preview de arranque: {boot:?}");
+
+        // Sólo el lienzo en modo Manual mueve posiciones.
+        app.config.algorithm = tp_core::config::PackingAlgorithm::Manual;
+        let posiciones_antes = app.config.manual_positions.clone();
+
+        let frame = {
+            let out = app.result().unwrap();
+            out.result
+                .sprites
+                .iter()
+                .find(|s| !s.is_alias)
+                .expect("el proyecto de ejemplo tiene sprites")
+                .visible_frame
+        };
+        let rect = app.canvas_rect.expect("el lienzo se dibujó");
+        let zoom = app.zoom.max(0.0001);
+        let desde = egui::pos2(
+            rect.min.x + (frame.x + frame.width / 2) as f32 * zoom,
+            rect.min.y + (frame.y + frame.height / 2) as f32 * zoom,
+        );
+        assert!(
+            rect.contains(desde) && desde.x < 1360.0 && desde.y < 860.0,
+            "el sprite debe caer a la vista: {desde:?} dentro de {rect:?}"
+        );
+        let hasta = egui::pos2(desde.x + 60.0, desde.y + 40.0);
+
+        // Pulsar sobre el sprite, arrastrar más allá del umbral y soltar.
+        puntero(&mut app, &ctx, vec![egui::Event::PointerMoved(desde)]);
+        puntero(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: desde,
+                button: egui::PointerButton::Primary,
+                pressed: true,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+        puntero(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(egui::pos2(
+                desde.x + 30.0,
+                desde.y,
+            ))],
+        );
+        puntero(&mut app, &ctx, vec![egui::Event::PointerMoved(hasta)]);
+        assert_ne!(
+            app.config.manual_positions, posiciones_antes,
+            "el arrastre debe haber fijado la posición nueva"
+        );
+
+        puntero(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: hasta,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        app.deshacer();
+
+        assert_eq!(
+            app.config.manual_positions, posiciones_antes,
+            "Ctrl+Z devuelve la posición de antes del arrastre"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

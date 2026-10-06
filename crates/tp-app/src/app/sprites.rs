@@ -168,6 +168,7 @@ impl App {
         if selected.is_empty() {
             return;
         }
+        self.anotar_deshacer();
         // Posición del lote en la lista antes de quitarlo (para el «siguiente»).
         let first = order.iter().position(|p| selected.contains(p));
         let last = order.iter().rposition(|p| selected.contains(p));

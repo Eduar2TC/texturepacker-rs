@@ -47,6 +47,7 @@ pub static EN: &[(&str, &str)] = &[
         "Configuración restablecida a los valores por defecto.",
         "Settings reset to their defaults.",
     ),
+    ("Cambio deshecho.", "Change undone."),
     ("Hay cambios sin guardar", "Unsaved changes"),
     (
         "¿Guardar los cambios antes de salir?",
@@ -666,6 +667,8 @@ pub static EN: &[(&str, &str)] = &[
     ("AvPág / RePág", "PgUp / PgDn"),
     ("Seleccionar todo", "Select all"),
     ("Supr", "Del"),
+    ("Edición", "Edit"),
+    ("Deshacer el último cambio", "Undo the last change"),
     ("General", "General"),
     ("Cerrar la ventana", "Close the window"),
     ("Esta ayuda", "This help"),

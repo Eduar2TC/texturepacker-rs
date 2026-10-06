@@ -166,15 +166,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                     .on_hover_text(t!("Borra todas las posiciones manuales: los sprites vuelven al flujo automático"))
                     .clicked()
                 {
-                    let cleared = app.config.manual_positions.len();
-                    app.config.manual_positions.clear();
-                    if cleared > 0 {
-                        app.aviso(
-                            super::LogKind::Info,
-                            t!("{} posición(es) manual(es) eliminada(s).", cleared),
-                        );
-                        app.after_workspace_change();
-                    }
+                    app.limpiar_posiciones_manuales();
                     ui.close();
                 }
             });
@@ -223,6 +215,26 @@ pub(super) fn zoom_step(app: &mut App, dir: i32) {
             .copied()
             .find(|&z| z < app.zoom - 1e-3)
             .unwrap_or(app.zoom);
+    }
+}
+
+impl App {
+    /// «Limpiar posiciones manuales» del menú del lienzo: borra el mapa
+    /// entero para que los sprites vuelvan al flujo automático. El paso se
+    /// anota antes de tocar nada (C6), que es lo que hace deshacible el
+    /// botón.
+    pub(super) fn limpiar_posiciones_manuales(&mut self) {
+        if self.config.manual_positions.is_empty() {
+            return;
+        }
+        self.anotar_deshacer();
+        let cleared = self.config.manual_positions.len();
+        self.config.manual_positions.clear();
+        self.aviso(
+            super::LogKind::Info,
+            t!("{} posición(es) manual(es) eliminada(s).", cleared),
+        );
+        self.after_workspace_change();
     }
 }
 
@@ -423,6 +435,10 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     // Arrastre manual (algoritmo Manual): (id, x, y) destino del sprite.
     let mut manual_moved: Option<(String, i32, i32)> = None;
     let mut manual_stopped = false;
+    // C6: se anota un paso de deshacer al empezar un arrastre manual; el
+    // cierre sólo puede leer `app.config`, así que la orden sale como
+    // bandera y se ejecuta al terminar el frame, antes de escribir nada.
+    let mut arrastre_manual = false;
     // Arrastre de un sprite (cualquier modo): (id, frame original).
     let mut drag_source: Option<(String, tp_core::types::Rect)> = None;
     // Vista fantasma del arrastre fuera del modo Manual.
@@ -809,6 +825,11 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         .map(|s| (s.id.clone(), s.visible_frame));
                     if drag_source.is_none() {
                         marquee_origin = Some(p);
+                    } else if manual_mode {
+                        // C6: el arrastre entero es un paso de deshacer, y
+                        // se anota al empezar, no en cada frame en que la
+                        // posición se vuelve a escribir.
+                        arrastre_manual = true;
                     }
                 }
             }
@@ -946,6 +967,9 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             }
         });
 
+    if arrastre_manual {
+        app.anotar_deshacer();
+    }
     if let Some(factor) = zoom_delta {
         app.zoom = (app.zoom * factor).clamp(0.05, 8.0);
         app.auto_fit = false;

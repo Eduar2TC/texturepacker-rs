@@ -18,6 +18,7 @@
 mod animation;
 mod aviso;
 mod bottom;
+mod deshacer;
 mod drag;
 mod events;
 mod menubar;
@@ -222,6 +223,10 @@ pub struct App {
     /// fallo pendiente). El lienzo lo enseña con «Reintentar» para no
     /// quedarse en «Preparando…» con el spinner girando (C4).
     preview_error: Option<String>,
+    /// Instantáneas de la configuración previa a cada operación
+    /// deshacible —reset, posiciones manuales, sprites quitados— para
+    /// `Ctrl+Z` (C6). El tope lo pone [`deshacer::MAXIMO`].
+    deshacer: Vec<ProjectConfig>,
     /// Panel inferior plegado (gana espacio para la vista del atlas).
     bottom_collapsed: bool,
     /// Última altura abierta del panel inferior (se restaura al desplegar).

@@ -108,8 +108,20 @@ impl App {
             return 0;
         }
 
+        // Fantasma y drop comparten el plan: lo que se ve es lo que queda.
+        // Se calcula antes de tocar la configuración —el plan no depende
+        // del algoritmo—, de modo que el paso de deshacer (C6) guarda el
+        // «antes» entero: algoritmo y posiciones.
+        let placed_list =
+            Self::plan_canvas_drop(&ids, &frames, first_frame, atlas_pos, &self.config);
+        let activa_manual =
+            self.config.effective_algorithm() != tp_core::config::PackingAlgorithm::Manual;
+        if !placed_list.is_empty() || activa_manual {
+            self.anotar_deshacer();
+        }
+
         // Activar Manual si no lo está: el usuario está componiendo a mano.
-        if self.config.effective_algorithm() != tp_core::config::PackingAlgorithm::Manual {
+        if activa_manual {
             self.config.algorithm = tp_core::config::PackingAlgorithm::Manual;
             self.log(
                 LogKind::Info,
@@ -117,9 +129,6 @@ impl App {
             );
         }
 
-        // Fantasma y drop comparten el plan: lo que se ve es lo que queda.
-        let placed_list =
-            Self::plan_canvas_drop(&ids, &frames, first_frame, atlas_pos, &self.config);
         for (id, (px, py)) in &placed_list {
             self.config.manual_positions.insert(id.clone(), (*px, *py));
         }
