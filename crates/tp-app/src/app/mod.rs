@@ -218,6 +218,10 @@ pub struct App {
     /// Cached result of the last snapshot freshness check (for the zoom-bar
     /// indicator between polls).
     preview_stale: bool,
+    /// Motivo del último intento de vista previa que falló (`None` = sin
+    /// fallo pendiente). El lienzo lo enseña con «Reintentar» para no
+    /// quedarse en «Preparando…» con el spinner girando (C4).
+    preview_error: Option<String>,
     /// Panel inferior plegado (gana espacio para la vista del atlas).
     bottom_collapsed: bool,
     /// Última altura abierta del panel inferior (se restaura al desplegar).

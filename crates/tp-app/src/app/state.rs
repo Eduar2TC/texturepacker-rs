@@ -101,6 +101,7 @@ impl App {
             egui_ctx: cc.egui_ctx.clone(),
             last_snapshot_poll: std::time::Instant::now(),
             preview_stale: false,
+            preview_error: None,
             bottom_collapsed: false,
             last_title: String::new(),
             preview_retry_used: false,

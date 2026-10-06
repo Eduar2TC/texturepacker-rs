@@ -140,6 +140,8 @@ pub static EN: &[(&str, &str)] = &[
 
     ("Publicando…", "Publishing…"),
     ("Actualizando…", "Updating…"),
+    ("No se pudo calcular la vista previa", "Could not compute the preview"),
+    ("Reintentar", "Retry"),
     ("⚠ Desactualizado", "⚠ Stale"),
     ("Alejar", "Zoom out"),
     ("Acercar", "Zoom in"),

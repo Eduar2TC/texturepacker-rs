@@ -307,6 +307,31 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         // cálculo («se está haciendo»), no el vacío: el vacío solo es
         // honesto cuando el workspace está de verdad vacío.
         if app.has_inputs() {
+            // C4: si el último intento falló, el centro no puede quedarse
+            // en «Preparando…» con el spinner girando: enseña el motivo y
+            // permite reintentarlo. Mientras hay un trabajo en marcha manda
+            // el cálculo, no el fallo anterior.
+            let en_marcha = matches!(
+                app.preview_state(),
+                PreviewState::Publishing | PreviewState::Updating
+            );
+            if let Some(motivo) = app.preview_error.clone().filter(|_| !en_marcha) {
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(40.0);
+                        ui.heading(t!("No se pudo calcular la vista previa"));
+                        ui.label(
+                            egui::RichText::new(t!("Vista previa: {}", crate::i18n::tr(&motivo)))
+                                .color(ui.visuals().error_fg_color),
+                        );
+                        ui.add_space(12.0);
+                        if ui.button(t!("Reintentar")).clicked() {
+                            app.reintentar_preview();
+                        }
+                    });
+                });
+                return;
+            }
             let elems = app.config.extra_inputs.len()
                 + usize::from(!app.config.input_directory.as_os_str().is_empty());
             let frescos = app.just_added_names();
@@ -1492,6 +1517,166 @@ mod ayuda_tests {
                 .map(usize::to_string)
                 .collect::<Vec<_>>()
                 .join(", ")
+        );
+    }
+}
+
+/// C4: si el último intento de la vista previa falló, el centro enseña el
+/// motivo y un «Reintentar» en vez de quedarse en «Preparando…» con el
+/// spinner girando.
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+    use crate::app::{RunMessage, WorkspaceSnapshot};
+    use crate::testing::{idle_input, texto_pintado};
+    use std::sync::mpsc;
+
+    fn salida_vacia() -> tp_core::pipeline::PipelineOutput {
+        tp_core::pipeline::PipelineOutput {
+            result: tp_core::types::PackResult {
+                config: tp_core::config::ProjectConfig::default(),
+                sprites: Vec::new(),
+                pages: Vec::new(),
+                warnings: Vec::new(),
+                stage_times_ms: Vec::new(),
+                total_sprites: 0,
+                alias_count: 0,
+                output_files: Vec::new(),
+            },
+            pages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn el_lienzo_enseña_el_fallo_en_vez_del_spinner() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        // Hay entrada de trabajo y ningún atlas a la vista: es justo el
+        // estado en el que el centro se quedaba girando para siempre.
+        app.config.input_directory = std::path::PathBuf::from("/tmp/tp_c4/sin_imagenes");
+        app.preview_error = Some("Error de E/S: no existe".into());
+
+        let salida = ctx.run(idle_input(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| preview_area(&mut app, ui));
+        });
+
+        let pintado = texto_pintado(&salida);
+        assert!(
+            pintado.contains("No se pudo calcular la vista previa"),
+            "el lienzo debe decir que falló:\n{pintado}"
+        );
+        assert!(
+            pintado.contains("Error de E/S: no existe"),
+            "…y enseñar el motivo tal cual:\n{pintado}"
+        );
+        assert!(
+            pintado.contains("Reintentar"),
+            "…con su botón de reintento:\n{pintado}"
+        );
+        assert!(
+            !pintado.contains("Preparando el sprite sheet"),
+            "no debe seguir enseñando el spinner:\n{pintado}"
+        );
+    }
+
+    /// Un fallo en marcha no tapa el cálculo: mientras hay trabajo, manda
+    /// el trabajo.
+    #[test]
+    fn con_un_trabajo_en_marcha_manda_el_cálculo_no_el_fallo() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.config.input_directory = std::path::PathBuf::from("/tmp/tp_c4/sin_imagenes");
+        app.preview_error = Some("Error de E/S: no existe".into());
+        // Trabajo en marcha: así lo deja `request_preview` al soltar el
+        // trabajo en el hilo.
+        let (_tx, rx) = mpsc::channel();
+        app.pending = Some(rx);
+
+        let salida = ctx.run(idle_input(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| preview_area(&mut app, ui));
+        });
+
+        let pintado = texto_pintado(&salida);
+        assert!(
+            pintado.contains("Preparando el sprite sheet"),
+            "con un cálculo en marcha debe verse el spinner:\n{pintado}"
+        );
+        assert!(
+            !pintado.contains("No se pudo calcular la vista previa"),
+            "…y no el fallo anterior:\n{pintado}"
+        );
+    }
+
+    /// El motivo vive donde nace: en el resultado del hilo. Y se borra en
+    /// cuanto un intento triunfa, que es lo que apaga el panel de error.
+    #[test]
+    fn el_fallo_se_guarda_para_el_lienzo_y_el_exito_lo_borra() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        // Con entrada de trabajo la rama de «workspace vacío» no puede
+        // limpiar el error por su cuenta: éste se debe al resultado.
+        app.config.input_directory = std::path::PathBuf::from("/tmp/tp_c4/sin_imagenes");
+        assert!(app.preview_error.is_none(), "arranca sin fallos");
+
+        let (tx, rx) = mpsc::channel();
+        app.pending = Some(rx);
+        tx.send(RunMessage {
+            elapsed_ms: 3,
+            result: Err(tp_core::TpError::Aead("fallo de prueba".into())),
+        })
+        .expect("el canal sigue abierto");
+        app.poll_pending(&ctx);
+        assert_eq!(
+            app.preview_error.as_deref(),
+            Some("Error de cifrado: fallo de prueba"),
+            "el fallo tiene que quedarse para el lienzo"
+        );
+        assert!(
+            app.preview_stale,
+            "y el atlas en pantalla deja de reflejar el workspace"
+        );
+        assert!(app.pending.is_none(), "el trabajo terminó");
+
+        // El workspace ya está recogido en el snapshot: así el éxito no
+        // programa otro trabajo que pudiera despacharse con el error.
+        app.packed_snapshot = Some(app.workspace_snapshot());
+        let (tx, rx) = mpsc::channel();
+        app.pending = Some(rx);
+        tx.send(RunMessage {
+            elapsed_ms: 3,
+            result: Ok(salida_vacia()),
+        })
+        .expect("el canal sigue abierto");
+        app.poll_pending(&ctx);
+        assert!(
+            app.preview_error.is_none(),
+            "un éxito borra el fallo anterior"
+        );
+    }
+
+    /// C4: el botón vuelve a lanzar el trabajo, que es lo que la cuenta de
+    /// reintentos automáticos ya no haría por su cuenta.
+    #[test]
+    fn reintentar_vuelve_a_lanzar_el_trabajo() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.config.input_directory = std::path::PathBuf::from("/tmp/tp_c4/sin_imagenes");
+        app.preview_retry_used = true;
+        app.packed_snapshot = Some(WorkspaceSnapshot {
+            sprites: Vec::new(),
+            config_toml: String::new(),
+            files: Vec::new(),
+        });
+
+        app.reintentar_preview();
+
+        assert!(
+            !app.preview_retry_used,
+            "el reintento levanta la cuenta de reintentos automáticos"
+        );
+        assert!(
+            app.pending.is_some(),
+            "y vuelve a lanzar el trabajo de la vista previa"
         );
     }
 }

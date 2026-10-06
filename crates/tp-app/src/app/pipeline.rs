@@ -42,6 +42,7 @@ impl App {
             if self.result.is_some() {
                 self.result = None;
             }
+            self.preview_error = None;
             self.pending_seq = None;
             return;
         }
@@ -100,6 +101,15 @@ impl App {
             .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
     }
 
+    /// Reintento manual del fallo de la vista previa (C4): levanta la
+    /// cuenta de reintentos automáticos —que ya no volverá a intentarlo
+    /// por su cuenta— y vuelve a lanzar el trabajo.
+    pub(super) fn reintentar_preview(&mut self) {
+        self.preview_retry_used = false;
+        self.packed_snapshot = None;
+        self.request_preview(false);
+    }
+
     /// Estado de la vista previa para el indicador de la barra de zoom:
     /// reempaquetando, actualizando, desactualizada o al día.
     pub(crate) fn preview_state(&self) -> PreviewState {
@@ -133,6 +143,7 @@ impl App {
                 self.pending = None;
                 match msg.result {
                     Ok(out) => {
+                        self.preview_error = None;
                         self.apply_output(ctx, out, false);
                         self.log(
                             LogKind::Info,
@@ -149,6 +160,10 @@ impl App {
                         }
                     }
                     Err(e) => {
+                        // El motivo se guarda para el lienzo: sin él, el
+                        // centro seguiría en «Preparando…» con el spinner
+                        // girando un fallo que ya nadie veía (C4).
+                        self.preview_error = Some(e.to_string());
                         self.log(
                             LogKind::Error,
                             t!("Vista previa: {}", crate::i18n::tr(&e.to_string())),
