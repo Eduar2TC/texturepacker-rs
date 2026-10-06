@@ -79,6 +79,7 @@ impl App {
             show_about: false,
             bottom_tab: BottomTab::Log,
             logs: Vec::new(),
+            aviso: None,
             unreadable_dirs: Vec::new(),
             project_path: None,
             saved_config: String::new(),

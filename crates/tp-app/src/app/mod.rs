@@ -11,11 +11,12 @@
 //!
 //! El estado (`App`), los tipos con los que habla el resto de la app y el
 //! bucle de frames (`eframe::App`) viven en este módulo; el resto del
-//! comportamiento está repartido en submódulos hermanos (`theme`, `drag`,
-//! `state`, `pipeline`, `sprites`, `sidecar`, `project`, `events`),
+//! comportamiento está repartido en submódulos hermanos (`aviso`, `theme`,
+//! `drag`, `state`, `pipeline`, `sprites`, `sidecar`, `project`, `events`),
 //! re-exportados abajo para que las rutas `crate::app::X` no cambien.
 
 mod animation;
+mod aviso;
 mod bottom;
 mod drag;
 mod events;
@@ -162,6 +163,9 @@ pub struct App {
     show_about: bool,
     bottom_tab: BottomTab,
     logs: Vec<LogEntry>,
+    /// Aviso in-situ que se está enseñando junto al último gesto (review
+    /// UI/UX I4): se apaga solo. Véase el módulo [`aviso`].
+    aviso: Option<aviso::Aviso>,
     /// Directorios que ya se avisó que no se pudieron leer: evita repetir el
     /// mismo aviso en cada repaso del snapshot (se olvidan al recuperarse).
     unreadable_dirs: Vec<PathBuf>,
@@ -414,6 +418,10 @@ impl eframe::App for App {
             self.last_title = title.clone();
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title));
         }
+
+        // El aviso in-situ va el último: así queda por encima de todo lo
+        // demás y ve el frame completo (reloj, puntero y repintado).
+        aviso::pintar(ctx, &mut self.aviso);
     }
 }
 

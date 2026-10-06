@@ -101,7 +101,7 @@ impl App {
         // Se necesitan frames conocidos: sin resultado previo no hay nada
         // que colocar (los sprites recién añadidos se empaquetan solos).
         if self.result.is_none() {
-            self.log(
+            self.aviso(
                 LogKind::Warning,
                 t!("Espera a que la vista se calcule antes de colocar sprites.").into(),
             );
@@ -144,7 +144,7 @@ impl App {
                 .iter()
                 .find(|id| self.config.manual_positions.contains_key(*id))
                 .cloned();
-            self.log(
+            self.aviso(
                 LogKind::Info,
                 t!(
                     "{} sprite(s) colocado(s) en ({}, {}): se reempaqueta al instante.",

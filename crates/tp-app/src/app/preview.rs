@@ -167,7 +167,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                     let cleared = app.config.manual_positions.len();
                     app.config.manual_positions.clear();
                     if cleared > 0 {
-                        app.log(
+                        app.aviso(
                             super::LogKind::Info,
                             t!("{} posición(es) manual(es) eliminada(s).", cleared),
                         );

@@ -261,7 +261,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         Some(TreeAction::Remove(path)) => {
             let removed = app.remove_path(&path);
             app.selected_paths.remove(&path);
-            app.log(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
+            app.aviso(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
             app.after_workspace_change();
         }
         Some(TreeAction::RemoveSmart(dir)) => app.remove_smart_folder(&dir),
@@ -279,7 +279,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     name
                 };
-                app.log(
+                app.aviso(
                     LogKind::Info,
                     t!("{} sprite(s) movido(s) a «{}».", moved, shown),
                 );
@@ -302,7 +302,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 } else {
                     name
                 };
-                app.log(
+                app.aviso(
                     LogKind::Info,
                     t!("{} sprite(s) movido(s) a «{}».", moved, shown),
                 );
@@ -321,7 +321,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             };
             let moved = app.move_sprites_to_group(&ids, index);
             if moved > 0 {
-                app.log(
+                app.aviso(
                     LogKind::Info,
                     t!("{} sprite(s) movido(s) al grupo «{}».", moved, group),
                 );
@@ -329,7 +329,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         }
         Some(TreeAction::CopyPath(path)) => {
             ui.ctx().copy_text(path.display().to_string());
-            app.log(LogKind::Info, t!("Ruta copiada: {}", path.display()));
+            app.aviso(LogKind::Info, t!("Ruta copiada: {}", path.display()));
         }
         None => {}
     }
@@ -349,7 +349,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             {
                 let moved = app.move_sprites_to_group(&drag.ids, index);
                 if moved > 0 {
-                    app.log(
+                    app.aviso(
                         LogKind::Info,
                         t!(
                             "{} sprite(s) movido(s) al grupo «{}».",
@@ -1148,7 +1148,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
             if let Some(i) = remove {
                 let name = app.config.folder_groups[i].name.clone();
                 app.config.folder_groups.remove(i);
-                app.log(LogKind::Info, t!("Grupo «{}» eliminado.", name));
+                app.aviso(LogKind::Info, t!("Grupo «{}» eliminado.", name));
                 app.after_workspace_change();
             }
             if let Some(i) = clear {
@@ -1159,7 +1159,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                 let moved = app.assign_selected_to_group(i);
                 if moved > 0 {
                     let name = app.config.folder_groups[i].name.clone();
-                    app.log(
+                    app.aviso(
                         LogKind::Info,
                         t!("{} sprite(s) movido(s) al grupo «{}».", moved, name),
                     );
@@ -1187,7 +1187,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                     name: name.clone(),
                     sprites: Vec::new(),
                 });
-                app.log(LogKind::Info, t!("Hoja «{}» creada.", name));
+                app.aviso(LogKind::Info, t!("Hoja «{}» creada.", name));
             }
             ui.weak(t!(
                 "Arrastra sprites del árbol (o entre hojas) para moverlos; cada \

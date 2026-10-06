@@ -97,14 +97,14 @@ pub(super) fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
         }
     }
     if added > 0 {
-        app.log(LogKind::Info, t!("{} sprite(s) añadido(s).", added));
+        app.aviso(LogKind::Info, t!("{} sprite(s) añadido(s).", added));
         // Empaqueta ya, sin esperar al debounce: el lienzo arranca a
         // calcular en el mismo gesto y no en el siguiente round-trip.
         app.request_preview(false);
         // Programa el frame que apagará el resaltado «recién añadido».
         ctx.request_repaint_after(JUST_ADDED_HL);
     } else {
-        app.log(
+        app.aviso(
             LogKind::Warning,
             t!(
                 "Nada nuevo en el workspace ({} fichero(s) soltado(s): \

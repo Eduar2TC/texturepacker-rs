@@ -23,7 +23,7 @@ impl App {
             match self.config.to_toml() {
                 Ok(text) => Some(text),
                 Err(e) => {
-                    self.log(
+                    self.aviso(
                         LogKind::Error,
                         t!("Config inválida: {}", crate::i18n::tr(&e.to_string())),
                     );
@@ -38,9 +38,9 @@ impl App {
                     // A partir de aquí lo que hay en memoria es lo que hay en
                     // disco: no quedan cambios pendientes (C2).
                     self.saved_config = self.config.to_toml().unwrap_or_default();
-                    self.log(LogKind::Info, t!("Proyecto guardado en {}", path.display()));
+                    self.aviso(LogKind::Info, t!("Proyecto guardado en {}", path.display()));
                 }
-                Err(e) => self.log(LogKind::Error, t!("No se pudo guardar: {}", e)),
+                Err(e) => self.aviso(LogKind::Error, t!("No se pudo guardar: {}", e)),
             }
         }
     }
@@ -87,18 +87,18 @@ impl App {
                         self.auto_fit = true;
                         self.start_watcher();
                         self.project_path = Some(path.clone());
-                        self.log(LogKind::Info, t!("Proyecto cargado: {}", path.display()));
+                        self.aviso(LogKind::Info, t!("Proyecto cargado: {}", path.display()));
                         for warning in warnings {
                             self.log(LogKind::Warning, crate::i18n::tr(&warning));
                         }
                     }
-                    Err(e) => self.log(
+                    Err(e) => self.aviso(
                         LogKind::Error,
                         t!("Proyecto inválido: {}", crate::i18n::tr(&e.to_string())),
                     ),
                 }
             }
-            Err(e) => self.log(LogKind::Error, t!("No se pudo leer: {}", e)),
+            Err(e) => self.aviso(LogKind::Error, t!("No se pudo leer: {}", e)),
         }
     }
 
@@ -112,7 +112,7 @@ impl App {
         self.list_cursor = None;
         self.tree_kb_focus = false;
         self.start_watcher();
-        self.log(
+        self.aviso(
             LogKind::Info,
             t!("Configuración restablecida a los valores por defecto.").into(),
         );

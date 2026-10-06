@@ -119,7 +119,7 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 .clicked()
             {
                 ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
-                app.log(
+                app.aviso(
                     LogKind::Info,
                     t!("Abriendo la documentación en el navegador.").into(),
                 );
@@ -204,9 +204,9 @@ pub(super) fn add_sprites_dialog(app: &mut App) {
         }
     }
     if added > 0 {
-        app.log(LogKind::Info, t!("{} sprite(s) añadido(s).", added));
+        app.aviso(LogKind::Info, t!("{} sprite(s) añadido(s).", added));
     } else {
-        app.log(
+        app.aviso(
             LogKind::Warning,
             t!("No se añadieron sprites nuevos.").into(),
         );
@@ -218,9 +218,9 @@ pub(super) fn add_smart_folder_dialog(app: &mut App) {
         return;
     };
     if app.add_input(dir) {
-        app.log(LogKind::Info, t!("Carpeta inteligente añadida.").into());
+        app.aviso(LogKind::Info, t!("Carpeta inteligente añadida.").into());
     } else {
-        app.log(
+        app.aviso(
             LogKind::Warning,
             t!("La carpeta ya está en el proyecto.").into(),
         );

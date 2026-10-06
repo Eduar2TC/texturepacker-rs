@@ -230,7 +230,7 @@ pub(super) fn apply_pivot(app: &mut App, indices: &[usize], x: f32, y: f32) {
             }
         }
     } else {
-        app.log(
+        app.aviso(
             LogKind::Warning,
             t!("Publica el atlas antes de editar pivots.").into(),
         );
@@ -255,7 +255,7 @@ fn apply_border(app: &mut App, indices: &[usize], border: [i32; 4]) {
             }
         }
     } else {
-        app.log(
+        app.aviso(
             LogKind::Warning,
             t!("Publica el atlas antes de editar bordes 9-patch.").into(),
         );

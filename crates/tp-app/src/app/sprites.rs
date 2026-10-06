@@ -194,7 +194,7 @@ impl App {
             self.selected_paths.insert(p);
             self.sync_selected_sprite();
         }
-        self.log(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
+        self.aviso(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
         self.change_seq += 1;
         self.request_preview(true);
     }
@@ -240,7 +240,7 @@ impl App {
     pub(super) fn remove_smart_folder(&mut self, dir: &Path) {
         let norm = tp_core::ingest::normalize_path(dir);
         if tp_core::ingest::normalize_path(&self.config.input_directory) == norm {
-            self.log(
+            self.aviso(
                 LogKind::Warning,
                 t!("Ese directorio es el de entrada principal; quítalo en Ajustes > Datos.").into(),
             );
@@ -256,7 +256,7 @@ impl App {
         // Stale exclusions under the removed folder are meaningless now.
         self.config.excluded_inputs.retain(|p| !p.starts_with(dir));
         self.selected_paths.retain(|p| !p.starts_with(dir));
-        self.log(
+        self.aviso(
             LogKind::Info,
             t!("Carpeta inteligente quitada: {}", dir.display()),
         );
@@ -284,7 +284,7 @@ impl App {
             return;
         }
         self.config.excluded_inputs.clear();
-        self.log(LogKind::Info, t!("{} sprite(s) restaurado(s).", count));
+        self.aviso(LogKind::Info, t!("{} sprite(s) restaurado(s).", count));
         self.change_seq += 1;
         self.request_preview(true);
     }

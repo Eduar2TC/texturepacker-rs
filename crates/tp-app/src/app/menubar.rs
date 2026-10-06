@@ -70,7 +70,7 @@ fn ayuda(app: &mut App, ui: &mut egui::Ui) {
         if ui.button(t!("Tutorial")).clicked() {
             ui.close();
             ui.ctx().open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
-            app.log(
+            app.aviso(
                 LogKind::Info,
                 t!("Abriendo la documentación en el navegador.").into(),
             );

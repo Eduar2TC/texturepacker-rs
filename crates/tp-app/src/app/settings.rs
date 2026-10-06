@@ -597,12 +597,12 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     match tp_core::keys::put(&name, &key) {
                         Ok(()) => {
                             app.config.encryption_key_name = Some(name.clone());
-                            app.log(
+                            app.aviso(
                                 super::LogKind::Info,
                                 t!("Clave global «{}» guardada.", name),
                             );
                         }
-                        Err(e) => app.log(super::LogKind::Warning, e.to_string()),
+                        Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
                     }
                 }
                 if ui
@@ -614,10 +614,10 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     match tp_core::keys::remove(&name) {
                         Ok(true) => {
                             app.config.encryption_key_name = None;
-                            app.log(super::LogKind::Info, t!("Clave global «{}» borrada.", name));
+                            app.aviso(super::LogKind::Info, t!("Clave global «{}» borrada.", name));
                         }
                         Ok(false) => {}
-                        Err(e) => app.log(super::LogKind::Warning, e.to_string()),
+                        Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
                     }
                 }
             });

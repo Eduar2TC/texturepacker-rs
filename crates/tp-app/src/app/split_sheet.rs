@@ -271,9 +271,9 @@ fn pick_sheet(app: &mut App, ctx: &egui::Context) {
             app.split.img_w = w;
             app.split.img_h = h;
             app.split.source = Some(path.clone());
-            app.log(LogKind::Info, t!("Hoja cargada: {}", path.display()));
+            app.aviso(LogKind::Info, t!("Hoja cargada: {}", path.display()));
         }
-        Err(e) => app.log(
+        Err(e) => app.aviso(
             LogKind::Error,
             t!(
                 "No se pudo cargar la hoja: {}",
@@ -288,7 +288,7 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
     match tp_core::split::slice_to_dir(spec, &out_dir) {
         Ok(files) => {
             debug_assert_eq!(files.len(), expected);
-            app.log(
+            app.aviso(
                 LogKind::Info,
                 t!(
                     "{} sprite(s) escrito(s) en {}.",
@@ -315,7 +315,7 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
                 app.start_pack(false);
             }
         }
-        Err(e) => app.log(
+        Err(e) => app.aviso(
             LogKind::Error,
             t!(
                 "No se pudo dividir la hoja: {}",
