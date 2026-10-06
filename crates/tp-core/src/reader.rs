@@ -1101,11 +1101,41 @@ mod tests {
     use super::*;
 
     /// Writes `bytes` to a temp file whose name carries a real extension, so
-    /// the dispatch by extension is exercised end to end.
+    /// the dispatch by extension is exercised end to end. The counter keeps
+    /// parallel tests apart: they run inside this same process (same pid), so
+    /// a plain name let one of them delete the file another was reading.
     fn temp(file: &str, bytes: &[u8]) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!("tp_reader_{}_{}", std::process::id(), file));
+        static ORDINAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = ORDINAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path =
+            std::env::temp_dir().join(format!("tp_reader_{}_{}_{}", std::process::id(), n, file));
         std::fs::write(&path, bytes).unwrap();
         path
+    }
+
+    /// Two calls for the same name must not share a path: `sprite.pvrtc`,
+    /// `sprite.pvr` and `basis.basis` are written by more than one test, and
+    /// the loser of the race used to find the file gone (macOS CI).
+    #[test]
+    fn temp_gives_each_caller_its_own_file() {
+        let a = temp("sprite.pvrtc", b"primero");
+        let b = temp("sprite.pvrtc", b"segundo");
+        assert_ne!(
+            a, b,
+            "dos llamadas al mismo nombre deben dar rutas distintas: {a:?}"
+        );
+        assert_eq!(
+            std::fs::read(&a).unwrap(),
+            b"primero".to_vec(),
+            "el primer fichero sigue intacto"
+        );
+        assert_eq!(
+            std::fs::read(&b).unwrap(),
+            b"segundo".to_vec(),
+            "…y el segundo no lo ha pisado"
+        );
+        let _ = std::fs::remove_file(a);
+        let _ = std::fs::remove_file(b);
     }
 
     /// Four-quadrant 8x8 image (same shape the export round-trip uses).
