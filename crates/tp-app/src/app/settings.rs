@@ -441,8 +441,8 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                         .weak(),
                     );
                     for (label, value) in extra_fields {
+                        ui.label(label);
                         ui.horizontal(|ui| {
-                            ui.label(label);
                             ui.add(egui::TextEdit::singleline(value).desired_width(200.0));
                         });
                     }
@@ -644,7 +644,8 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
         .default_open(true)
         .show(ui, |ui| {
             let sizes = [256i32, 512, 1024, 2048, 4096, 8192, 16384];
-            egui::ComboBox::from_label(t!("Tamaño máximo"))
+            ui.label(t!("Tamaño máximo"));
+            egui::ComboBox::from_id_salt(t!("Tamaño máximo"))
                 .selected_text(app.config.max_texture_size.to_string())
                 .show_ui(ui, |ui| {
                     for s in sizes {
@@ -658,13 +659,10 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                     t!("Si los sprites no caben en una hoja se generan varias; con la opción \
                      desactivada el empaquetado falla"),
                 );
-            ui
-                .add(
-                    egui::Slider::new(&mut app.config.padding, 0..=16)
-                        .text(t!("Separación entre sprites (px)")),
-                );
-            ui
-                .add(egui::Slider::new(&mut app.config.extrude, 0..=16).text(t!("Extrusión (px)")));
+            ui.label(t!("Separación entre sprites (px)"));
+            ui.add(egui::Slider::new(&mut app.config.padding, 0..=16));
+            ui.label(t!("Extrusión (px)"));
+            ui.add(egui::Slider::new(&mut app.config.extrude, 0..=16));
             ui
                 .checkbox(&mut app.config.allow_rotation, t!("Permitir rotación 90°"));
             ui
@@ -755,11 +753,9 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             if !advanced {
                 return;
             }
+            ui.label(t!("Margen de borde (px)"));
             ui
-                .add(
-                    egui::Slider::new(&mut app.config.border_padding, 0..=64)
-                        .text(t!("Margen de borde (px)")),
-                )
+                .add(egui::Slider::new(&mut app.config.border_padding, 0..=64))
                 .on_hover_text(t!("Margen transparente entre los sprites y el borde del atlas"));
             enum_combo(
                 ui,
@@ -775,8 +771,8 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             );
             ui
                 .checkbox(&mut app.config.force_squared, t!("Atlas cuadrado (force squared)"));
+            ui.label(t!("Tamaño fijo (0 = automático)"));
             ui.horizontal(|ui| {
-                ui.label(t!("Tamaño fijo (0 = automático)"));
                 ui
                     .add(
                         egui::DragValue::new(&mut app.config.fixed_width)
@@ -823,8 +819,8 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                     &mut app.config.basic_order,
                 );
             }
+            ui.label(t!("Divisor común"));
             ui.horizontal(|ui| {
-                ui.label(t!("Divisor común"));
                 ui.label(egui::RichText::new("x").weak());
                 ui
                     .add(
@@ -842,20 +838,17 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             })
             .response
             .on_hover_text(t!("Estira los sprites con transparencia hasta ser divisibles"));
+            ui.label(t!("Alinear a rejilla (0 = off)"));
             ui
-                .add(
-                    egui::Slider::new(&mut app.config.align_to_grid, 0..=64)
-                        .text(t!("Alinear a rejilla (0 = off)")),
-                )
+                .add(egui::Slider::new(&mut app.config.align_to_grid, 0..=64))
                 .on_hover_text(t!("Coloca las esquinas de los sprites en coordenadas múltiplos"));
-            ui
-                .add_enabled(
-                    app.config.enable_trim,
-                    egui::Slider::new(&mut app.config.trim_threshold, 1..=255)
-                        .text(t!("Umbral de recorte (1-255)")),
-                );
             ui.add_enabled_ui(app.config.enable_trim, |ui| {
-                egui::ComboBox::from_label(t!("Modo de recorte"))
+                ui.label(t!("Umbral de recorte (1-255)"));
+                ui.add(egui::Slider::new(&mut app.config.trim_threshold, 1..=255));
+            });
+            ui.add_enabled_ui(app.config.enable_trim, |ui| {
+                ui.label(t!("Modo de recorte"));
+                egui::ComboBox::from_id_salt(t!("Modo de recorte"))
                     .selected_text(trim_mode_name(app.config.trim_mode))
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
@@ -882,10 +875,8 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                     });
             });
             if app.config.enable_trim && app.config.trim_mode.trims() {
-                ui.add(
-                    egui::Slider::new(&mut app.config.trim_margin, 0..=16)
-                        .text(t!("Margen de recorte (px)")),
-                );
+                ui.label(t!("Margen de recorte (px)"));
+                ui.add(egui::Slider::new(&mut app.config.trim_margin, 0..=16));
             }
             if app.config.trim_mode == TrimMode::Polygon {
                 ui.label(
@@ -904,30 +895,26 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 t!("Empaquetar mapas de normales"),
             );
             if app.config.enable_normal_maps {
-                ui.horizontal(|ui| {
-                    ui.label(t!("Sufijo"));
-                    ui
-                        .add(
-                            egui::TextEdit::singleline(&mut app.config.normal_map_suffix)
-                                .desired_width(110.0),
-                        );
-                    ui.label(t!("Filtro de ruta"));
-                    ui
-                        .add(
-                            egui::TextEdit::singleline(&mut app.config.normal_map_filter)
-                                .desired_width(130.0),
-                        );
-                });
+                ui.label(t!("Sufijo"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.config.normal_map_suffix)
+                        .desired_width(110.0),
+                );
+                ui.label(t!("Filtro de ruta"));
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.config.normal_map_filter)
+                        .desired_width(130.0),
+                );
                 ui
                     .checkbox(
                         &mut app.config.normal_map_auto_detect,
                         t!("Detectar por color (auto-detect)"),
                     );
+                ui.label(
+                    egui::RichText::new(t!("Hoja de normales (vacío = <imagen>_normal)"))
+                        .weak(),
+                );
                 ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new(t!("Hoja de normales (vacío = <imagen>_normal)"))
-                            .weak(),
-                    );
                     ui
                         .add(
                             egui::TextEdit::singleline(&mut app.config.normal_map_sheet)
@@ -938,12 +925,10 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             ui.add_enabled_ui(!polygon_auto, |ui| {
                 ui.checkbox(&mut app.config.enable_polygon, t!("Modo polígono (mallas)"));
             });
-            ui
-                .add_enabled(
-                    polygon_auto,
-                    egui::Slider::new(&mut app.config.polygon_tolerance, 0.0..=10.0)
-                        .text(t!("Tolerancia (RDP)")),
-                );
+            ui.add_enabled_ui(polygon_auto, |ui| {
+                ui.label(t!("Tolerancia (RDP)"));
+                ui.add(egui::Slider::new(&mut app.config.polygon_tolerance, 0.0..=10.0));
+            });
             if polygon_auto {
                 ui.label(
                     egui::RichText::new(
@@ -1113,8 +1098,8 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
             );
             match app.config.gpu_format {
                 GpuFormat::Png | GpuFormat::Png8 => {
+                    ui.label(t!("Optimización PNG (0-7)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Optimización PNG (0-7)"));
                         if ui
                             .add(egui::DragValue::new(&mut app.config.png_opt_level).range(0..=7))
                             .changed()
@@ -1128,8 +1113,8 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     });
                 }
                 GpuFormat::Jpg => {
+                    ui.label(t!("Calidad JPG (0-100)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Calidad JPG (0-100)"));
                         if ui
                             .add(egui::DragValue::new(&mut app.config.jpg_quality).range(0..=100))
                             .changed()
@@ -1150,8 +1135,8 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                         app.config.webp_quality = if lossless { 101 } else { 100 };
                     }
                     if app.config.webp_quality <= 100 {
+                        ui.label(t!("Calidad WebP (0-100)"));
                         ui.horizontal(|ui| {
-                            ui.label(t!("Calidad WebP (0-100)"));
                             if ui
                                 .add(
                                     egui::DragValue::new(&mut app.config.webp_quality)
@@ -1172,32 +1157,32 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
             // Calidades por formato de textura.
             match app.config.gpu_format {
                 GpuFormat::Pvrtc4Bpp | GpuFormat::Pvr3Gz | GpuFormat::Pvr3Ccz => {
+                    ui.label(t!("Calidad PVRTC (0-7)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Calidad PVRTC (0-7)"));
                         ui.add(egui::DragValue::new(&mut app.config.pvr_quality).range(0..=7));
                     });
                 }
                 GpuFormat::Etc1 | GpuFormat::Etc1Ktx => {
+                    ui.label(t!("Calidad ETC1 (0-100)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Calidad ETC1 (0-100)"));
                         ui.add(egui::DragValue::new(&mut app.config.etc1_quality).range(0..=100));
                     });
                 }
                 GpuFormat::Etc2Rgba => {
+                    ui.label(t!("Calidad ETC2 (0-100)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Calidad ETC2 (0-100)"));
                         ui.add(egui::DragValue::new(&mut app.config.etc2_quality).range(0..=100));
                     });
                 }
                 GpuFormat::Astc4x4 => {
+                    ui.label(t!("Calidad ASTC (0-4, 4 = exhaustivo)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Calidad ASTC (0-4, 4 = exhaustivo)"));
                         ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
                     });
                 }
                 GpuFormat::Basis => {
+                    ui.label(t!("Calidad Basis ETC1S (0-100)"));
                     ui.horizontal(|ui| {
-                        ui.label(t!("Calidad Basis ETC1S (0-100)"));
                         ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
                     });
                 }
@@ -1390,8 +1375,8 @@ fn variant_presets_ui(app: &mut App, ui: &mut egui::Ui) {
         .ctx()
         .data(|d| d.get_temp::<String>(id))
         .unwrap_or_else(|| tp_core::config::VARIANT_PRESETS[0].name.to_string());
+    ui.label(t!("Presets de variantes"));
     ui.horizontal(|ui| {
-        ui.label(t!("Presets de variantes"));
         egui::ComboBox::from_id_salt("variant_preset")
             .selected_text(selected.clone())
             .show_ui(ui, |ui| {
@@ -1586,7 +1571,11 @@ fn enum_combo<T>(
 ) {
     // No se comprueba aquí si cambió: mutar `config` basta para que el
     // sondeo por frame lo detecte y notifique (ver `settings_ui`).
-    egui::ComboBox::from_label(label)
+    // La etiqueta va encima del desplegable: es el patrón único del panel
+    // (I3b). El id no cambia, `from_label` deriva exactamente el mismo del
+    // texto de la etiqueta.
+    ui.label(label);
+    egui::ComboBox::from_id_salt(label)
         .selected_text(selected_text)
         .show_ui(ui, |ui| items(ui, value));
 }
@@ -1647,7 +1636,8 @@ fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
         Some(preset) => preset.label,
         None => template_name(app.config.template_format),
     };
-    egui::ComboBox::from_label(t!("Formato de metadatos"))
+    ui.label(t!("Formato de metadatos"));
+    egui::ComboBox::from_id_salt(t!("Formato de metadatos"))
         .selected_text(crate::i18n::tr(selected))
         .show_ui(ui, |ui| {
             let mut sel = app.config.data_format.clone();
@@ -2286,6 +2276,100 @@ mod tests {
             inventadas.is_empty(),
             "palabras del buscador que la app no escribe en ningún sitio:\n  {}",
             inventadas.join("\n  ")
+        );
+    }
+
+    /// I3b: el panel tiene un solo patrón de etiqueta y es «encima y a la
+    /// izquierda». El review señalaba justamente lo contrario: «Datos» la
+    /// ponía arriba y «Composición» a la derecha, y dentro de egui
+    /// `ComboBox::from_label` y `Slider::text` pintan la etiqueta después
+    /// del control. Se mide con rectángulos, porque el texto pintado no
+    /// dice dónde está nada: la etiqueta de un desplegable por encima de su
+    /// valor, y las de los tres tipos de control (desplegable propio,
+    /// `enum_combo` y slider) empezando todas en el mismo margen.
+    #[test]
+    fn las_etiquetas_van_encima_y_alineadas_a_la_izquierda() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let valor_escrito = app.config.max_texture_size.to_string();
+        let salida = ajustes_frame(&mut app, &ctx);
+        let pintados = crate::testing::textos_pintados(&salida);
+
+        let busca = |texto: &str| {
+            pintados
+                .iter()
+                .find(|(t, _, _)| t.trim() == texto)
+                .map(|(_, rect, _)| *rect)
+                .unwrap_or_else(|| panic!("«{texto}» no se pinta"))
+        };
+
+        let etiqueta = busca("Tamaño máximo");
+        let valor = busca(&valor_escrito);
+        assert!(
+            etiqueta.max.y <= valor.min.y,
+            "«Tamaño máximo» debe ir encima del desplegable, no a su derecha: \
+             etiqueta={etiqueta:?} valor={valor:?}"
+        );
+        assert!(
+            etiqueta.min.x <= valor.min.x,
+            "…y antes que su valor: etiqueta={etiqueta:?} valor={valor:?}"
+        );
+
+        for clave in ["Extrusión (px)", "Algoritmo"] {
+            let otra = busca(clave);
+            assert!(
+                (otra.min.x - etiqueta.min.x).abs() <= 1.0,
+                "«{clave}» debe empezar donde «Tamaño máximo», en el mismo margen \
+                 izquierdo: {otra:?} frente a {etiqueta:?}"
+            );
+        }
+    }
+
+    /// I3b: y el patrón sigue ahí mirando el fuente. `ComboBox::from_label`
+    /// y `Slider::text` son las dos formas egui de pintar la etiqueta a la
+    /// derecha del control, y una etiqueta como primera instrucción de una
+    /// fila es la de apilar los dos en la misma línea. Los separadores
+    /// «x»/«y» de las filas de dos campos van con `RichText` y no cuentan:
+    /// ellos sí van dentro, son la marca de la multiplicación.
+    #[test]
+    fn el_fuente_no_vuelve_a_pintar_etiquetas_a_la_derecha() {
+        let ruta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/settings.rs");
+        let src = std::fs::read_to_string(&ruta).expect("settings.rs legible");
+        let lineas: Vec<&str> = src
+            .lines()
+            .map(|l| l.split("//").next().unwrap_or_default())
+            .collect();
+
+        // Las agujas se arman con `concat!` y no como cadenas sueltas: el
+        // escáner de literales cree ver un `.label(` o un `.text(` a pelo
+        // dentro de una cadena y el test i18n se negaría a pasar.
+        let abre_etiqueta = concat!("ui.", "label(");
+        let cierra_slider = concat!(".text", "(t!", "(");
+        let desde_label = ["ComboBox", "from_label"].join("::");
+
+        let mut malas = Vec::new();
+        for (i, linea) in lineas.iter().enumerate() {
+            if linea.contains(&desde_label) {
+                malas.push(format!("{}: etiqueta de combo a la derecha", i + 1));
+            }
+            if linea.contains(cierra_slider) {
+                malas.push(format!("{}: etiqueta de slider con .text", i + 1));
+            }
+            if linea.contains("ui.horizontal(|ui| {") {
+                let mut j = i + 1;
+                while j < lineas.len() && lineas[j].trim().is_empty() {
+                    j += 1;
+                }
+                let primera = lineas.get(j).copied().unwrap_or_default().trim();
+                if primera.starts_with(abre_etiqueta) && !primera.contains("egui::RichText") {
+                    malas.push(format!("{j}: etiqueta de control dentro de la fila"));
+                }
+            }
+        }
+        assert!(
+            malas.is_empty(),
+            "etiquetas que no van encima del control:\n  {}",
+            malas.join("\n  ")
         );
     }
 }
