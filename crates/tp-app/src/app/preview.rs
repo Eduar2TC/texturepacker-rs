@@ -72,11 +72,13 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
         ui.separator();
         let pages = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
         if pages > 1 {
-            if ui.button("◀").clicked() && app.selected_page > 0 {
+            let anterior = ui.button("◀").on_hover_text(t!("Página anterior"));
+            if anterior.clicked() && app.selected_page > 0 {
                 app.selected_page -= 1;
             }
             ui.label(t!("Página {}/{}", app.selected_page + 1, pages));
-            if ui.button("▶").clicked() && app.selected_page + 1 < pages {
+            let siguiente = ui.button("▶").on_hover_text(t!("Página siguiente"));
+            if siguiente.clicked() && app.selected_page + 1 < pages {
                 app.selected_page += 1;
             }
             ui.separator();
@@ -1453,5 +1455,43 @@ mod auto_fit_tests {
             "una vista previa posterior no debe pisar el zoom del usuario"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+}
+
+/// I7: las flechas de página son dos triángulos de doce píxeles sin
+/// etiqueta; aquí se exige que las dos lleven ayuda.
+#[cfg(test)]
+mod ayuda_tests {
+    #[test]
+    fn las_flechas_de_pagina_tienen_ayuda() {
+        let ruta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/preview.rs");
+        let src = std::fs::read_to_string(&ruta).expect("preview.rs legible");
+        let mut sin_ayuda = Vec::new();
+        for boton in ["button(\"◀\")", "button(\"▶\")"] {
+            let mut desde = 0;
+            while let Some(p) = src[desde..].find(boton) {
+                let ini = desde + p;
+                let linea = src[..ini].matches('\n').count() + 1;
+                let mut fin = src.len().min(ini + 300);
+                while !src.is_char_boundary(fin) {
+                    fin += 1;
+                }
+                let trozo = &src[ini..fin];
+                let hasta = trozo.find(".clicked()").unwrap_or(trozo.len());
+                if !trozo[..hasta].contains(".on_hover_text(") {
+                    sin_ayuda.push(linea);
+                }
+                desde = ini + 1;
+            }
+        }
+        assert!(
+            sin_ayuda.is_empty(),
+            "flechas de página sin ayuda en preview.rs, línea(s): {}",
+            sin_ayuda
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     }
 }

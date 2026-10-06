@@ -45,7 +45,9 @@ const INDICE: &[(&str, &[&str])] = &[
         &[
             "Datos",
             "Directorio de entrada",
+            "Elegir la carpeta de entrada",
             "Directorio de salida",
+            "Elegir la carpeta de salida",
             "Nombre base de los archivos",
             "Ficheros extra por framework",
             "Vacío = no escribir. Alias CLI: --class-file, --header-file, --source-file y --spriteids-file.",
@@ -65,6 +67,7 @@ const INDICE: &[(&str, &[&str])] = &[
             "vacío = sin prefijo",
             "Escalado de variantes (p. ej. 2, 0.5 ➡ @2x, -hd)",
             "Plantilla Mustache personalizada (opcional)",
+            "Elegir la plantilla Mustache",
             "Clave de cifrado AES-256-GCM (opcional)",
             "Clave global (guardada una vez y reutilizable)",
             "— ninguna —",
@@ -393,7 +396,11 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             ui.label(t!("Directorio de entrada"));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut app.input_dir_text).desired_width(190.0));
-                if ui.button("…").clicked() {
+                if ui
+                    .button("…")
+                    .on_hover_text(t!("Elegir la carpeta de entrada"))
+                    .clicked()
+                {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         app.input_dir_text = dir.display().to_string();
                         app.config.input_directory = dir;
@@ -404,7 +411,11 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             ui.label(t!("Directorio de salida"));
             ui.horizontal(|ui| {
                 ui.add(egui::TextEdit::singleline(&mut app.output_dir_text).desired_width(190.0));
-                if ui.button("…").clicked() {
+                if ui
+                    .button("…")
+                    .on_hover_text(t!("Elegir la carpeta de salida"))
+                    .clicked()
+                {
                     if let Some(dir) = rfd::FileDialog::new().pick_folder() {
                         app.output_dir_text = dir.display().to_string();
                         app.config.output_directory = dir;
@@ -529,7 +540,11 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                     .map(|p| p.display().to_string())
                     .unwrap_or_default();
                 ui.add(egui::TextEdit::singleline(&mut path).desired_width(160.0));
-                if ui.button("…").clicked() {
+                if ui
+                    .button("…")
+                    .on_hover_text(t!("Elegir la plantilla Mustache"))
+                    .clicked()
+                {
                     if let Some(f) = rfd::FileDialog::new().pick_file() {
                         app.config.export_template = Some(f);
                     }
@@ -1721,7 +1736,11 @@ fn custom_exporters_body(app: &mut App, ui: &mut egui::Ui) -> bool {
             };
             changed = true;
         }
-        if ui.button("…").clicked() {
+        if ui
+            .button("…")
+            .on_hover_text(t!("Elegir la carpeta de exportadores"))
+            .clicked()
+        {
             if let Some(d) = rfd::FileDialog::new().pick_folder() {
                 app.config.custom_exporters_directory = Some(d);
                 changed = true;
@@ -2370,6 +2389,43 @@ mod tests {
             malas.is_empty(),
             "etiquetas que no van encima del control:\n  {}",
             malas.join("\n  ")
+        );
+    }
+    /// I7: un botón «…» no se explica solo —treinta píxeles sin etiqueta
+    /// junto a un campo de ruta—. Recorre `settings.rs` y exige que cada
+    /// uno lleve su `on_hover_text` antes del `.clicked()`, de modo que el
+    /// que aparezca nuevo tampoco se quede sin ayuda. Que la ayuda pase
+    /// por `t!` lo exige el escáner de literales de i18n.
+    #[test]
+    fn los_botones_de_exploracion_tienen_ayuda() {
+        let ruta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/settings.rs");
+        let src = std::fs::read_to_string(&ruta).expect("settings.rs legible");
+        let mut sin_ayuda = Vec::new();
+        let mut desde = 0;
+        while let Some(p) = src[desde..].find("button(\"…\")") {
+            let ini = desde + p;
+            let linea = src[..ini].matches('\n').count() + 1;
+            // La llamada puede partirse en varias líneas: se mira desde el
+            // botón hasta su `.clicked()`.
+            let mut fin = src.len().min(ini + 300);
+            while !src.is_char_boundary(fin) {
+                fin += 1;
+            }
+            let trozo = &src[ini..fin];
+            let hasta = trozo.find(".clicked()").unwrap_or(trozo.len());
+            if !trozo[..hasta].contains(".on_hover_text(") {
+                sin_ayuda.push(linea);
+            }
+            desde = ini + 1;
+        }
+        assert!(
+            sin_ayuda.is_empty(),
+            "botones «…» sin ayuda en settings.rs, línea(s): {}",
+            sin_ayuda
+                .iter()
+                .map(usize::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
 }
