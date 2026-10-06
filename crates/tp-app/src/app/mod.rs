@@ -23,6 +23,7 @@ mod pipeline;
 mod preview;
 mod project;
 mod settings;
+mod shortcuts;
 mod sidecar;
 mod split_sheet;
 mod sprite_settings;
@@ -150,6 +151,9 @@ pub struct App {
     show_split: bool,
     /// Session state of the split-sheet window.
     split: split_sheet::SplitState,
+    /// Ayuda de atajos de teclado abierta (F1, «?» o el botón «?» de la
+    /// barra; review UI/UX I2).
+    show_shortcuts: bool,
     bottom_tab: BottomTab,
     logs: Vec<LogEntry>,
     /// Directorios que ya se avisó que no se pudieron leer: evita repetir el
@@ -383,6 +387,7 @@ impl eframe::App for App {
         sprite_settings::sprite_settings_window(self, ctx);
         animation::animation_window(self, ctx);
         split_sheet::split_window(self, ctx);
+        shortcuts::shortcuts_window(self, ctx);
 
         // El diálogo de cierre puede haber guardado el proyecto, así que la
         // huella se vuelve a mirar justo antes de componer el título.

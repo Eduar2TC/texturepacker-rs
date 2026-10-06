@@ -166,12 +166,27 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
         app.auto_fit = false;
     }
 
+    // F1 o «?» conmutan la ayuda de atajos: la única forma de descubrir el
+    // teclado desde dentro de la app (I2). «?» no se atiende mientras se
+    // escribe en un campo, para no dejar un «?» huérfano en el texto.
+    let (ayuda, ayuda_tecla) = ctx.input(|i| {
+        (
+            i.key_pressed(egui::Key::F1),
+            i.key_pressed(egui::Key::Questionmark),
+        )
+    });
+    if ayuda || (ayuda_tecla && !ctx.wants_keyboard_input()) {
+        app.show_shortcuts = !app.show_shortcuts;
+    }
+
     // Esc cierra la ventana flotante activa (convención estándar) y, de
     // paso, devuelve el foco de teclado de la lista de sprites al ratón.
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if esc {
         app.tree_kb_focus = false;
-        if app.show_animation {
+        if app.show_shortcuts {
+            app.show_shortcuts = false;
+        } else if app.show_animation {
             app.show_animation = false;
         } else if app.show_split {
             app.show_split = false;

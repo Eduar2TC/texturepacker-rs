@@ -636,6 +636,35 @@ pub static EN: &[(&str, &str)] = &[
     // Editor de pivots: vista y arrastre.
     ("Arrastra para colocar el pivot.", "Drag to place the pivot."),
     ("Imagen de {} × {} px", "{} × {} px image"),
+
+    // Ayuda de atajos de teclado (I2). Las teclas casi no se traducen:
+    // son lo que hay escrito en el teclado; sólo cambian las que tienen
+    // nombre propio («Supr», «AvPág»…).
+    ("Atajos de teclado", "Keyboard shortcuts"),
+    ("Abrir proyecto", "Open project"),
+    ("Guardar proyecto", "Save project"),
+    ("Zoom con la rueda", "Zoom with the wheel"),
+    ("Ctrl + rueda", "Ctrl + wheel"),
+    ("Lista de sprites", "Sprite list"),
+    ("Mover el cursor", "Move the cursor"),
+    ("Flechas", "Arrow keys"),
+    ("Mayús + flechas", "Shift + arrows"),
+    ("Ctrl + flechas", "Ctrl + arrows"),
+    ("Extender la selección", "Extend the selection"),
+    ("Acumular la selección", "Add to the selection"),
+    ("Primera o última fila", "First or last row"),
+    ("Inicio / Fin", "Home / End"),
+    ("Página arriba o abajo", "Page up or down"),
+    ("AvPág / RePág", "PgUp / PgDn"),
+    ("Seleccionar todo", "Select all"),
+    ("Supr", "Del"),
+    ("General", "General"),
+    ("Cerrar la ventana", "Close the window"),
+    ("Esta ayuda", "This help"),
+    (
+        "Mientras escribes en un campo, las teclas de la lista no se usan.",
+        "List keys are ignored while you type in a field.",
+    ),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

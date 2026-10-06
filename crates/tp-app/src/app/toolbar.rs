@@ -124,6 +124,15 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                     t!("Abriendo la documentación en el navegador.").into(),
                 );
             }
+            // «?» abre la ayuda de atajos (I2): los atajos que no viven en
+            // un botón no eran descubribles desde la propia app.
+            if ui
+                .add(egui::Button::new("?").selected(app.show_shortcuts))
+                .on_hover_text(format!("{} — F1", t!("Atajos de teclado")))
+                .clicked()
+            {
+                app.show_shortcuts = !app.show_shortcuts;
+            }
 
             // --- Acción principal, destacada a la derecha ---
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

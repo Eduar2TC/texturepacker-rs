@@ -243,6 +243,17 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             // poder desplazar la vista hasta la fila que mueve el cursor.
             handle_list_keys(app, ui, &walk.rows, panel_hovered, filter_focused);
         });
+    // El aro de foco va fuera del ScrollArea para no competir con las
+    // filas, y se pinta con las filas ya registradas (handle_list_keys
+    // puede haber movido el cursor justo antes).
+    if let Some(rect) = anillo_foco(&walk.rows, app.list_cursor.as_ref(), app.tree_kb_focus) {
+        ui.painter().rect_stroke(
+            rect,
+            3.0,
+            egui::Stroke::new(1.5_f32, ui.visuals().strong_text_color()),
+            egui::StrokeKind::Outside,
+        );
+    }
     app.sprite_rows = walk.rows;
 
     match walk.action {
@@ -788,6 +799,21 @@ fn apply_selection(app: &mut App, path: PathBuf, mode: SelectMode) {
     app.sync_selected_sprite();
 }
 
+/// Aro de foco de teclado (I2): el rectángulo de la fila que marcan las
+/// flechas mientras la lista tiene el foco. El puntero ya se distingue con
+/// el hover y la selección con su color; el cursor de teclado, no, y sin
+/// esto la navegación por teclado es a ciegas.
+fn anillo_foco(
+    filas: &[(PathBuf, egui::Rect)],
+    cursor: Option<&PathBuf>,
+    foco: bool,
+) -> Option<egui::Rect> {
+    if !foco {
+        return None;
+    }
+    cursor.and_then(|c| filas.iter().find(|(p, _)| p == c).map(|(_, r)| *r))
+}
+
 /// Teclado de la lista de sprites, atendido dentro del ScrollArea con las
 /// filas visibles del propio frame:
 ///
@@ -1203,6 +1229,36 @@ mod tests {
             out.extend(nombres(&n.children));
         }
         out
+    }
+
+    /// I2: el aro de foco señala la fila del cursor sólo mientras la lista
+    /// tiene el foco de teclado; sin foco o sin cursor no hay nada que
+    /// pintar, y un cursor fuera del registro no dibuja una fila ajena.
+    #[test]
+    fn el_aro_de_foco_marca_solo_la_fila_del_cursor_con_foco() {
+        let a = PathBuf::from("a.png");
+        let b = PathBuf::from("b.png");
+        let rect_a = egui::Rect::from_min_size(egui::Pos2::new(0.0, 0.0), egui::vec2(10.0, 10.0));
+        let rect_b = egui::Rect::from_min_size(egui::Pos2::new(0.0, 10.0), egui::vec2(10.0, 10.0));
+        let filas = [(a.clone(), rect_a), (b.clone(), rect_b)];
+
+        assert_eq!(anillo_foco(&filas, Some(&b), true), Some(rect_b));
+        assert_eq!(anillo_foco(&filas, Some(&a), true), Some(rect_a));
+        assert_eq!(
+            anillo_foco(&filas, Some(&b), false),
+            None,
+            "sin foco de teclado no hay aro: el hover y la selección ya se ven"
+        );
+        assert_eq!(
+            anillo_foco(&filas, None, true),
+            None,
+            "sin cursor no hay fila que señalar"
+        );
+        assert_eq!(
+            anillo_foco(&filas, Some(&PathBuf::from("fuera.png")), true),
+            None,
+            "un cursor que no está en el registro no dibuja una fila ajena"
+        );
     }
 
     /// M14: el árbol construido se reutiliza (no se releen las carpetas) y
