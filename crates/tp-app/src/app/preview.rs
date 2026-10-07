@@ -259,7 +259,7 @@ fn drop_target(ui: &mut egui::Ui, hovering: bool) {
         rect.center(),
         egui::Align2::CENTER_CENTER,
         t!("⤵  Arrastra aquí imágenes o carpetas"),
-        egui::FontId::proportional(16.0),
+        crate::ui_prefs::font_id(16.0, ui.ctx()),
         if hovering {
             super::muted_hover_color(ui.visuals())
         } else {
@@ -286,7 +286,7 @@ fn drop_strip(ui: &mut egui::Ui, hovering: bool) {
         } else {
             t!("⤵  Sigue soltando imágenes o carpetas")
         },
-        egui::FontId::proportional(14.0),
+        crate::ui_prefs::font_id(14.0, ui.ctx()),
         if hovering {
             super::muted_hover_color(ui.visuals())
         } else {
@@ -574,7 +574,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         egui::pos2(g.center().x, g.max.y + 14.0),
                         egui::Align2::CENTER_CENTER,
                         label,
-                        egui::FontId::proportional(12.0),
+                        crate::ui_prefs::font_id(12.0, ui.ctx()),
                         egui::Color32::from_rgba_unmultiplied(200, 235, 255, 240),
                     );
                 }
@@ -706,7 +706,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                             to_screen(f.x + 1, f.y + 10),
                             egui::Align2::LEFT_TOP,
                             &sprite.id,
-                            egui::FontId::proportional(9.0),
+                            crate::ui_prefs::font_id(9.0, ui.ctx()),
                             color,
                         );
                     }
@@ -933,7 +933,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                     g.left_top() + egui::vec2(0.0, -6.0),
                     egui::Align2::LEFT_BOTTOM,
                     t!("Algoritmo «Manual» para fijar posición"),
-                    egui::FontId::proportional(11.0),
+                    crate::ui_prefs::font_id(11.0, ui.ctx()),
                     egui::Color32::from_rgba_unmultiplied(255, 255, 255, 185),
                 );
             }

@@ -19,6 +19,11 @@ pub static EN: &[(&str, &str)] = &[
     ("Sistema", "System"),
     ("Claro", "Light"),
     ("Oscuro", "Dark"),
+    ("Tamaño de la letra", "Font size"),
+    ("Pequeña", "Small"),
+    ("Normal", "Normal"),
+    ("Grande", "Large"),
+    ("Muy grande", "Very large"),
     (
         "Se guarda en tu equipo, no en el proyecto.",
         "Stored on this machine, not in the project.",

@@ -115,6 +115,7 @@ impl App {
             prefs_path,
         };
         apply_theme(&egui_ctx, app.prefs.theme());
+        app.prefs.font_scale().apply(&egui_ctx);
         app.log(
             LogKind::Info,
             t!("Bienvenido a TexturePacker-RS. Añade sprites y pulsa «Publicar».").into(),
@@ -171,6 +172,14 @@ impl App {
         self.prefs.theme = theme.id().to_string();
         theme.apply(&self.egui_ctx);
         self.persist_prefs();
+    }
+
+    /// Cambia el tamaño de la letra, lo aplica al vuelo y lo guarda.
+    pub fn set_font_scale(&mut self, escala: crate::ui_prefs::FontScale) {
+        self.prefs.font_scale = escala.id().to_string();
+        escala.apply(&self.egui_ctx);
+        self.persist_prefs();
+        self.egui_ctx.request_repaint();
     }
 
     /// Guarda `ui.toml`; si falla se avisa en el log en lugar de romper.

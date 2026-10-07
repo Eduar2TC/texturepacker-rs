@@ -37,6 +37,11 @@ const INDICE: &[(&str, &[&str])] = &[
             "Sistema",
             "Claro",
             "Oscuro",
+            "Tamaño de la letra",
+            "Pequeña",
+            "Normal",
+            "Grande",
+            "Muy grande",
             "Se guarda en tu equipo, no en el proyecto.",
         ],
     ),
@@ -326,12 +331,12 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
         });
 }
 
-/// Preferencias del usuario: idioma y tema de la ventana. Se guardan en
-/// `ui.toml` (al lado de `keys.toml`), no en el proyecto, porque acompañan a
-/// la app en cualquier `.tpproj`.
+/// Preferencias del usuario: idioma, tema y tamaño de la letra. Se guardan
+/// en `ui.toml` (al lado de `keys.toml`), no en el proyecto, porque
+/// acompañan a la app en cualquier `.tpproj`.
 fn interface_section(app: &mut App, ui: &mut egui::Ui) {
     use crate::i18n::{t, LangChoice};
-    use crate::ui_prefs::Theme;
+    use crate::ui_prefs::{FontScale, Theme};
 
     egui::CollapsingHeader::new(t!("Interfaz"))
         .default_open(true)
@@ -366,6 +371,20 @@ fn interface_section(app: &mut App, ui: &mut egui::Ui) {
                 app.set_theme(theme);
             }
 
+            ui.label(t!("Tamaño de la letra"));
+            let mut escala = app.prefs().font_scale();
+            egui::ComboBox::from_id_salt("ui_font_scale")
+                .selected_text(font_scale_label(escala))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut escala, FontScale::Small, t!("Pequeña"));
+                    ui.selectable_value(&mut escala, FontScale::Normal, t!("Normal"));
+                    ui.selectable_value(&mut escala, FontScale::Large, t!("Grande"));
+                    ui.selectable_value(&mut escala, FontScale::Larger, t!("Muy grande"));
+                });
+            if escala != app.prefs().font_scale() {
+                app.set_font_scale(escala);
+            }
+
             ui.label(egui::RichText::new(t!("Se guarda en tu equipo, no en el proyecto.")).weak());
         });
 }
@@ -385,6 +404,17 @@ fn theme_label(theme: crate::ui_prefs::Theme) -> &'static str {
         crate::ui_prefs::Theme::System => crate::i18n::t!("Sistema"),
         crate::ui_prefs::Theme::Light => crate::i18n::t!("Claro"),
         crate::ui_prefs::Theme::Dark => crate::i18n::t!("Oscuro"),
+    }
+}
+
+/// Nombre del tamaño de letra en el combo (también etiqueta: se traduce).
+fn font_scale_label(escala: crate::ui_prefs::FontScale) -> &'static str {
+    use crate::ui_prefs::FontScale;
+    match escala {
+        FontScale::Small => crate::i18n::t!("Pequeña"),
+        FontScale::Normal => crate::i18n::t!("Normal"),
+        FontScale::Large => crate::i18n::t!("Grande"),
+        FontScale::Larger => crate::i18n::t!("Muy grande"),
     }
 }
 
@@ -2231,6 +2261,10 @@ mod tests {
             &normaliza("  Tamaño   maximo  ")
         ));
         assert!(seccion_visible("Interfaz", &normaliza("IDIOMA")));
+        assert!(seccion_visible(
+            "Interfaz",
+            &normaliza("Tamaño de la letra")
+        ));
         assert!(!seccion_visible("Composición", &normaliza("idioma")));
     }
 

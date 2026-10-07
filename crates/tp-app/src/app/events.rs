@@ -57,14 +57,14 @@ pub(super) fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
             screen.center() + egui::vec2(0.0, -16.0),
             egui::Align2::CENTER_CENTER,
             text,
-            egui::FontId::proportional(22.0),
+            crate::ui_prefs::font_id(22.0, ctx),
             egui::Color32::from_rgba_unmultiplied(230, 245, 255, 255),
         );
         painter.text(
             screen.center() + egui::vec2(0.0, 14.0),
             egui::Align2::CENTER_CENTER,
             t!("(sprites, carpetas o proyectos; los sprites se empaquetan al instante)"),
-            egui::FontId::proportional(13.0),
+            crate::ui_prefs::font_id(13.0, ctx),
             egui::Color32::from_rgba_unmultiplied(180, 210, 235, 220),
         );
         // El overlay solo existe si hay frames: el hover no pasa por

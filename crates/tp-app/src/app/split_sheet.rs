@@ -120,7 +120,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             rect.center(),
             egui::Align2::CENTER_CENTER,
             t!("Sin hoja seleccionada"),
-            egui::FontId::proportional(13.0),
+            crate::ui_prefs::font_id(13.0, ui.ctx()),
             egui::Color32::from_gray(120),
         );
         return;
