@@ -23,25 +23,11 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Output, t!("Salida"));
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Sprites, "Sprites");
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Mesh, t!("Malla"));
-        // Estado resumido siempre visible, incluso con el panel plegado.
-        // Empieza por los ficheros del panel izquierdo: entre ellos y los
-        // sprites hay diferencia —un fichero descartado, un mapa de
-        // normales— y sin esa cifra los dos recuentos se leían en conflicto
-        // (M2).
-        let ficheros = app.input_file_count();
-        if let Some(out) = &app.result {
-            ui.separator();
-            ui.label(
-                egui::RichText::new(t!(
-                    "{} ficheros · {} sprite(s) · {} alias(es) · {} página(s)",
-                    ficheros,
-                    out.result.total_sprites,
-                    out.result.alias_count,
-                    out.pages.len()
-                ))
-                .weak(),
-            );
-        }
+        // Los recuentos viven sólo en la tira de estado (fase 3): aquí se
+        // repetían con 120 px de diferencia y el mismo dato se leía dos
+        // veces (E1/H3). La tira no se esconde ni con el panel plegado, así
+        // que no se pierde nada y la barra de pestañas queda sólo pestañas.
+        //
         // Punto de error visible aunque el Log esté plegado o en otra pestaña.
         let has_errors = app.logs.iter().any(|e| matches!(e.kind, LogKind::Error));
         if has_errors {
@@ -137,7 +123,9 @@ fn output_view(app: &App, ui: &mut egui::Ui) {
             for p in &result.pages {
                 ui.label(t!(
                     "Página {}: {}x{} · relleno {}% · {}",
-                    p.index,
+                    // El índice del motor es 0-based; aquí y en la tira la
+                    // página se numera desde 1 («Página 0» no es una página).
+                    p.index + 1,
                     p.width,
                     p.height,
                     format!("{:.1}", p.fill_ratio * 100.0),
@@ -348,15 +336,13 @@ mod tests {
         );
     }
 
-    /// M2: la cabecera del panel izquierdo contaba ficheros —«Sprites (13)»—
-    /// y la barra de estado contaba sprites —«12 sprites · 1 alias»—, con la
-    /// diferencia sin explicar en ninguna parte. Las dos barras de estado
-    /// empiezan ahora por los ficheros que lista el panel: los dos números se
-    /// leen juntos y se ve qué fichero no llega a ser sprite.
-    #[test]
-    fn las_barras_de_estado_empiezan_por_los_ficheros_del_panel() {
+    /// Un proyecto ya empaquetado: los cinco ficheros de ejemplo más uno roto
+    /// que el panel lista pero el motor descarta —la diferencia que señalaba
+    /// la review (M2). Devuelve también el directorio temporal para que la
+    /// prueba lo limpie.
+    fn app_empaquetada(prefijo: &str) -> (egui::Context, App, std::path::PathBuf) {
         let tmp = std::env::temp_dir().join(format!(
-            "tp_m2_{}_{}",
+            "tp_{prefijo}_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -367,8 +353,6 @@ mod tests {
         std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
         let proyecto =
             crate::testing::create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
-        // Un fichero que el motor no puede leer: está en el panel y no llega
-        // a ser sprite —es justo la diferencia que señalaba la review.
         std::fs::write(sprites.join("roto.png"), b"esto no es una imagen").expect("el roto");
 
         let ctx = egui::Context::default();
@@ -381,6 +365,18 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         assert!(app.result().is_some(), "el proyecto debe empaquetarse");
+        (ctx, app, tmp)
+    }
+
+    /// M2 + fase 3 (E1/H3): la cabecera del panel izquierdo contaba ficheros
+    /// —«Sprites (13)»— y las dos barras de estado repetían el mismo resumen
+    /// con 120 px de diferencia. La tira empieza por los ficheros que lista el
+    /// panel —los dos números se leen juntos y se ve qué fichero no llega a ser
+    /// sprite— y es la **única** que cuenta: la barra de pestañas se quedó sin
+    /// resumen.
+    #[test]
+    fn la_tira_empieza_por_los_ficheros_del_panel_y_es_la_unica_que_cuenta() {
+        let (ctx, mut app, tmp) = app_empaquetada("m2");
         let out = app.run_frame(&ctx, idle_input());
 
         let mut cabecera = None;
@@ -403,23 +399,50 @@ mod tests {
         );
         assert_eq!(
             barras.len(),
-            2,
-            "las dos barras de estado deben llevar el recuento de ficheros: {barras:?}"
+            1,
+            "el recuento sólo puede estar una vez, en la tira de estado: {barras:?}"
         );
-        for barra in &barras {
-            let al_mando: usize = barra
-                .split_whitespace()
-                .next()
-                .and_then(|n| n.parse().ok())
-                .unwrap_or_else(|| panic!("la barra no empieza por un recuento: {barra}"));
-            assert_eq!(
-                al_mando, ficheros,
-                "«{barra}» no empieza por los ficheros del panel"
-            );
-        }
+        let barra = &barras[0];
+        let al_mando: usize = barra
+            .split_whitespace()
+            .next()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or_else(|| panic!("la tira no empieza por un recuento: {barra}"));
+        assert_eq!(
+            al_mando, ficheros,
+            "«{barra}» no empieza por los ficheros del panel"
+        );
         assert!(
-            barras.iter().any(|b| b.contains("5 sprites")),
-            "…y por los cinco que sí son sprites: {barras:?}"
+            barra.contains("5 sprites"),
+            "…y por los cinco que sí son sprites: {barra}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Fase 3: la página se numera desde 1 en todas partes. La tira dice
+    /// «Página 1» y la pestaña Salida imprimía el índice del motor, que empieza
+    /// en 0 («Página 0»): el mismo dato con dos números distintos.
+    #[test]
+    fn la_salida_numera_las_paginas_como_la_tira() {
+        let (ctx, app, tmp) = app_empaquetada("salida");
+        // Se pinta la pestaña sola y a pantalla completa: dentro de la barra
+        // inferior (120 px) su listado de páginas va el último y queda bajo el
+        // pliegue, ni siquiera pintado.
+        let out = ctx.run(idle_input(), |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| output_view(&app, ui));
+        });
+
+        let paginas: Vec<String> = textos_pintados(&out)
+            .into_iter()
+            .filter_map(|(texto, _, _)| texto.trim().strip_prefix("Página ").map(str::to_string))
+            .collect();
+        assert!(
+            paginas.iter().any(|p| p.starts_with("1:")),
+            "la pestaña Salida debe empezar la numeración en 1: {paginas:?}"
+        );
+        assert!(
+            !paginas.iter().any(|p| p.starts_with("0:")),
+            "ninguna página se llama 0: {paginas:?}"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

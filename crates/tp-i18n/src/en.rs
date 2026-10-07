@@ -487,9 +487,6 @@ pub static EN: &[(&str, &str)] = &[
         "Secuencia: selección ({} sprite(s)). Quita la selección para ver todos.",
         "Sequence: selection ({} sprite(s)). Clear the selection to see all.",
     ),
-    ("{} ficheros · {} sprite(s) · {} alias(es) · {} página(s)",
-        "{} file(s) · {} sprite(s) · {} alias(es) · {} page(s)",
-    ),
     ("Página {}: {}x{} · relleno {}% · {}", "Page {}: {}x{} · fill {}% · {}"),
     ("Malla de «{}»", "Mesh of «{}»"),
     (
