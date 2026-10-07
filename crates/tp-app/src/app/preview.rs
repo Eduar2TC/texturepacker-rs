@@ -1703,4 +1703,64 @@ mod error_tests {
             "y vuelve a lanzar el trabajo de la vista previa"
         );
     }
+
+    /// M6: el reintento automático volvía a fallar con el mismo motivo y el
+    /// registro se quedaba con la línea dos veces seguidas. Un error idéntico
+    /// al del puesto inmediatamente anterior no se repite: esa línea sigue a
+    /// la vista y el motivo también lo guarda el lienzo.
+    #[test]
+    fn el_reintento_que_vuelve_a_fallar_igual_no_duplica_el_registro() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        // Entrada no vacía, para que la vista previa arranque, y una
+        // configuración que el motor rechaza siempre por el mismo motivo:
+        // cada intento acaba en el error exactamente igual. Los textos de las
+        // rutas van también: `commit_paths` los copia a `config` antes de
+        // lanzar el trabajo y con la cadena vacía cancelaría la vista previa.
+        app.input_dir_text = "/tmp/tp_m6/sin_imagenes".into();
+        app.output_dir_text = "/tmp/tp_m6/salida".into();
+        app.config.input_directory = std::path::PathBuf::from("/tmp/tp_m6/sin_imagenes");
+        app.config.max_texture_size = 3;
+
+        // Primer intento: falla y deja el motivo en el lienzo (C4). Se lanza
+        // a mano, como hace `poll_changes`, para no depender del sonda.
+        app.request_preview(false);
+        crate::testing::pump_on_demand(
+            &mut app,
+            &ctx,
+            |a| a.pending.is_none() && a.preview_error.is_some(),
+            std::time::Duration::from_secs(30),
+        );
+        assert!(
+            app.preview_error.is_some(),
+            "el primer intento debe fallar para que el test signifique algo"
+        );
+
+        // El reintento es lo que dispara `poll_changes` tras `packed_snapshot
+        // = None`; aquí se lanza a mano para no depender del sonda de 150 ms.
+        app.request_preview(false);
+        crate::testing::pump_on_demand(
+            &mut app,
+            &ctx,
+            |a| a.pending.is_none() && a.preview_error.is_some(),
+            std::time::Duration::from_secs(30),
+        );
+
+        let vistas: Vec<&str> = app
+            .logs
+            .iter()
+            .filter(|l| l.text.starts_with("Vista previa: "))
+            .map(|l| l.text.as_str())
+            .collect();
+        assert_eq!(
+            vistas.len(),
+            1,
+            "el mismo error dos veces seguidas en el registro: {vistas:?}"
+        );
+        assert!(
+            app.preview_error.is_some(),
+            "el motivo sigue a la vista en el lienzo; registro: {:?}",
+            app.log_texts()
+        );
+    }
 }

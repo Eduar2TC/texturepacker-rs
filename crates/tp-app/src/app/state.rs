@@ -292,6 +292,21 @@ impl App {
         if matches!(kind, LogKind::Error) {
             self.bottom_tab = BottomTab::Log;
         }
+        // M6: el reintento automático de la vista previa vuelve a fallar con
+        // el mismo motivo y la línea salía dos veces seguidas. Un error
+        // idéntico al que está justo encima no añade nada: esa línea sigue a
+        // la vista y el motivo también lo guarda el lienzo (C4). Sólo se
+        // dupe el registro; los errores separados por otro mensaje —y los
+        // que llegan tras una acción del usuario con lo anterior ya lejos—
+        // siguen entrando.
+        if matches!(kind, LogKind::Error)
+            && self
+                .logs
+                .last()
+                .is_some_and(|l| matches!(l.kind, LogKind::Error) && l.text == text)
+        {
+            return;
+        }
         self.logs.push(LogEntry { kind, text });
         if self.logs.len() > 2000 {
             self.logs.drain(0..self.logs.len() - 2000);
