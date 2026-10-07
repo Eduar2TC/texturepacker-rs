@@ -24,11 +24,17 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Sprites, "Sprites");
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Mesh, t!("Malla"));
         // Estado resumido siempre visible, incluso con el panel plegado.
+        // Empieza por los ficheros del panel izquierdo: entre ellos y los
+        // sprites hay diferencia —un fichero descartado, un mapa de
+        // normales— y sin esa cifra los dos recuentos se leían en conflicto
+        // (M2).
+        let ficheros = app.input_file_count();
         if let Some(out) = &app.result {
             ui.separator();
             ui.label(
                 egui::RichText::new(t!(
-                    "{} sprite(s) · {} alias(es) · {} página(s)",
+                    "{} ficheros · {} sprite(s) · {} alias(es) · {} página(s)",
+                    ficheros,
                     out.result.total_sprites,
                     out.result.alias_count,
                     out.pages.len()
@@ -340,5 +346,81 @@ mod tests {
             "{hueco:.0} px de hueco bajo el log: la altura de arranque \
              (BOTTOM_OPEN_HEIGHT) no corresponde con lo que escribe"
         );
+    }
+
+    /// M2: la cabecera del panel izquierdo contaba ficheros —«Sprites (13)»—
+    /// y la barra de estado contaba sprites —«12 sprites · 1 alias»—, con la
+    /// diferencia sin explicar en ninguna parte. Las dos barras de estado
+    /// empiezan ahora por los ficheros que lista el panel: los dos números se
+    /// leen juntos y se ve qué fichero no llega a ser sprite.
+    #[test]
+    fn las_barras_de_estado_empiezan_por_los_ficheros_del_panel() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_m2_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("el reloj va hacia delante")
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
+        let proyecto =
+            crate::testing::create_example_project(&tmp, &sprites).expect("proyecto de ejemplo");
+        // Un fichero que el motor no puede leer: está en el panel y no llega
+        // a ser sprite —es justo la diferencia que señalaba la review.
+        std::fs::write(sprites.join("roto.png"), b"esto no es una imagen").expect("el roto");
+
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        for _ in 0..4000 {
+            if app.result().is_some() {
+                break;
+            }
+            let _ = app.run_frame(&ctx, idle_input());
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(app.result().is_some(), "el proyecto debe empaquetarse");
+        let out = app.run_frame(&ctx, idle_input());
+
+        let mut cabecera = None;
+        let mut barras = Vec::new();
+        for (texto, _, _) in &textos_pintados(&out) {
+            if let Some(resto) = texto.trim().strip_prefix("Sprites (") {
+                if let Some(n) = resto.strip_suffix(')') {
+                    cabecera = n.parse::<usize>().ok();
+                }
+            }
+            if texto.contains("ficheros · ") {
+                barras.push(texto.clone());
+            }
+        }
+        let ficheros = cabecera.expect("la cabecera «Sprites (N)» debe pintarse");
+        assert_eq!(
+            ficheros, 6,
+            "el panel lista los seis ficheros de la carpeta (los cinco del \
+             proyecto y el roto)"
+        );
+        assert_eq!(
+            barras.len(),
+            2,
+            "las dos barras de estado deben llevar el recuento de ficheros: {barras:?}"
+        );
+        for barra in &barras {
+            let al_mando: usize = barra
+                .split_whitespace()
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or_else(|| panic!("la barra no empieza por un recuento: {barra}"));
+            assert_eq!(
+                al_mando, ficheros,
+                "«{barra}» no empieza por los ficheros del panel"
+            );
+        }
+        assert!(
+            barras.iter().any(|b| b.contains("5 sprites")),
+            "…y por los cinco que sí son sprites: {barras:?}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

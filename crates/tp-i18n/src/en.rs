@@ -498,7 +498,9 @@ pub static EN: &[(&str, &str)] = &[
         "Secuencia: selección ({} sprite(s)). Quita la selección para ver todos.",
         "Sequence: selection ({} sprite(s)). Clear the selection to see all.",
     ),
-    ("{} sprite(s) · {} alias(es) · {} página(s)", "{} sprite(s) · {} alias(es) · {} page(s)"),
+    ("{} ficheros · {} sprite(s) · {} alias(es) · {} página(s)",
+        "{} file(s) · {} sprite(s) · {} alias(es) · {} page(s)",
+    ),
     ("Página {}: {}x{} · relleno {}% · {}", "Page {}: {}x{} · fill {}% · {}"),
     ("Malla de «{}»", "Mesh of «{}»"),
     (
@@ -613,7 +615,9 @@ pub static EN: &[(&str, &str)] = &[
     ("  [{}] {} ms", "  [{}] {} ms"),
     ("  ➡ {}", "  ➡ {}"),
     ("· {}/{}", "· {}/{}"),
-    ("{} sprite(s) · {} alias(es)", "{} sprite(s) · {} alias(es)"),
+    ("{} ficheros · {} sprite(s) · {} alias(es)",
+        "{} file(s) · {} sprite(s) · {} alias(es)",
+    ),
     ("- {}", "- {}"),
     ("cols ", "cols "),
 

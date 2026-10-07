@@ -311,6 +311,10 @@ impl eframe::App for App {
             .exact_height(22.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    // Los ficheros de entrada van delante: es el recuento del
+                    // panel izquierdo, y con él se entiende por qué el de
+                    // sprites de la derecha es menor (M2).
+                    let ficheros = self.input_file_count();
                     if let Some(out) = &self.result {
                         let pages = out.pages.len();
                         if let Some(p) = out.pages.get(self.selected_page) {
@@ -345,7 +349,8 @@ impl eframe::App for App {
                         ui.separator();
                         ui.label(
                             egui::RichText::new(t!(
-                                "{} sprite(s) · {} alias(es)",
+                                "{} ficheros · {} sprite(s) · {} alias(es)",
+                                ficheros,
                                 out.result.total_sprites,
                                 out.result.alias_count
                             ))
