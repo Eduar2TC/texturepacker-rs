@@ -62,7 +62,12 @@ const SNAPSHOT_POLL_MS: u64 = 150;
 /// Cuánto dura el resaltado de «recién añadido» (árbol y lienzo).
 const JUST_ADDED_HL: std::time::Duration = std::time::Duration::from_secs(8);
 /// Umbral (px) a partir del cual el panel inferior se considera abierto.
-const BOTTOM_OPEN_HEIGHT: f32 = 180.0;
+///
+/// Es también la altura con la que arranca: 180 dejaban 81 px de hueco por
+/// debajo de tres líneas de log, más espacio muerto que lo escrito (M3). Con
+/// 120 las tres líneas caben con un poco de aire y el resto sigue siendo del
+/// atlas; quien necesite más lo estira con el ratón, y quien no lo pliega.
+const BOTTOM_OPEN_HEIGHT: f32 = 120.0;
 
 /// Estado de frescura de la vista previa (indicador de la barra de zoom).
 #[derive(Clone, Copy, PartialEq, Eq)]

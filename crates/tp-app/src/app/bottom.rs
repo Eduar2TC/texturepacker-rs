@@ -283,3 +283,62 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{idle_input, textos_pintados};
+
+    /// M3: el panel arrancaba con 180 px para tres líneas de log: el hueco
+    /// por debajo de lo escrito salía más grande que lo escrito. Con la
+    /// altura de arranque, las tres líneas deben verse enteras y no puede
+    /// quedar debajo de la última más aire que una línea.
+    #[test]
+    fn arranca_con_tres_lineas_de_log_y_sin_hueco_debajo() {
+        fn dentro_de(contenedor: egui::Rect, r: egui::Rect) -> bool {
+            contenedor.contains(r.min) && contenedor.contains(r.max)
+        }
+
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.log(LogKind::Info, "línea uno".into());
+        app.log(LogKind::Info, "línea dos".into());
+        app.log(LogKind::Info, "línea tres".into());
+        // Dos frames: el primero asienta el tamaño del panel.
+        let _ = app.run_frame(&ctx, idle_input());
+        let out = app.run_frame(&ctx, idle_input());
+
+        // El recorte de la pestaña es el del panel entero.
+        let mut panel: Option<egui::Rect> = None;
+        let mut lineas = Vec::new();
+        for (texto, rect, recorte) in &textos_pintados(&out) {
+            if texto.trim() == "Log" && panel.is_none_or(|p| recorte.min.y > p.min.y) {
+                panel = Some(*recorte);
+            }
+            if matches!(texto.trim(), "línea uno" | "línea dos" | "línea tres") {
+                lineas.push((texto.clone(), *rect, *recorte));
+            }
+        }
+        let panel = panel.expect("la pestaña Log debe seguir pintándose");
+        assert_eq!(lineas.len(), 3, "el registro debe tener sus tres líneas");
+
+        // Las tres se ven enteras…
+        for (texto, rect, recorte) in &lineas {
+            assert!(
+                dentro_de(*recorte, *rect),
+                "«{texto}» queda bajo el panel: {rect:?} no cabe en {recorte:?}"
+            );
+        }
+        // …y debajo de la última no queda un hueco más grande que una línea.
+        let ultima = lineas
+            .iter()
+            .map(|(_, rect, _)| rect.max.y)
+            .fold(f32::MIN, f32::max);
+        let hueco = panel.max.y - ultima;
+        assert!(
+            (0.0..=30.0).contains(&hueco),
+            "{hueco:.0} px de hueco bajo el log: la altura de arranque \
+             (BOTTOM_OPEN_HEIGHT) no corresponde con lo que escribe"
+        );
+    }
+}
