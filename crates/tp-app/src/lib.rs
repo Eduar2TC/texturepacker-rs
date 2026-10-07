@@ -8,6 +8,12 @@ mod app;
 mod i18n;
 mod ui_prefs;
 
+/// Tamaño mínimo de ventana: `main.rs` no deja encoger la app por debajo
+/// de esto y las pruebas de layout (`app::ventana_minima`) ejercitan
+/// exactamente ese tamaño, de modo que el prometido y el probado se
+/// mueven juntos.
+pub const VENTANA_MINIMA: (f32, f32) = (900.0, 600.0);
+
 /// Chequeo de que ningún literal de la UI use un carácter sin glifo (sólo en
 /// tests: no aporta código a la app).
 #[cfg(test)]

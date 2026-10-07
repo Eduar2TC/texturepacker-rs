@@ -24,7 +24,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([1360.0, 860.0])
-            .with_min_inner_size([900.0, 600.0])
+            .with_min_inner_size(tp_app::VENTANA_MINIMA)
             .with_title("TexturePacker-RS")
             .with_icon(window_icon().expect("icono de ventana embebido")),
         ..Default::default()

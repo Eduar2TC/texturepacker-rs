@@ -36,6 +36,9 @@ mod state;
 mod theme;
 mod toolbar;
 
+#[cfg(test)]
+mod ventana_minima;
+
 pub use drag::begin_sprite_drag;
 pub(crate) use drag::{SpriteDrag, DRAG_THRESHOLD_PX, GHOST_MIN_SIZE_PX};
 use events::{handle_global_file_drop, handle_shortcuts};
