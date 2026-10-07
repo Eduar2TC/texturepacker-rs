@@ -218,6 +218,23 @@ pub static EN: &[(&str, &str)] = &[
     ("Config inválida: {}", "Invalid config: {}"),
     ("Proyecto inválido: {}", "Invalid project: {}"),
     ("No se pudo leer: {}", "Could not read: {}"),
+    // Motivos de `io::Error` en el idioma de la interfaz (M7): el texto
+    // crudo del sistema llegaba en inglés en mitad de un mensaje español.
+    ("el fichero o la carpeta no existe", "the file or folder does not exist"),
+    (
+        "no hay permiso para leer ni escribir",
+        "there is no permission to read or write",
+    ),
+    ("el destino ya existe", "the destination already exists"),
+    ("el destino es una carpeta", "the destination is a folder"),
+    ("el destino no es una carpeta", "the destination is not a folder"),
+    ("el contenido no es válido", "the content is not valid"),
+    ("se agotó el tiempo de espera", "the operation timed out"),
+    ("error del sistema (código {})", "system error (code {})"),
+    (
+        "no se pudo completar la operación",
+        "the operation could not be completed",
+    ),
     ("{} sprite(s) añadido(s).", "{} sprite(s) added."),
     (
         "Nada nuevo en el workspace ({} fichero(s) soltado(s): ya estaban o no son imágenes).",

@@ -40,7 +40,10 @@ impl App {
                     self.saved_config = self.config.to_toml().unwrap_or_default();
                     self.aviso(LogKind::Info, t!("Proyecto guardado en {}", path.display()));
                 }
-                Err(e) => self.aviso(LogKind::Error, t!("No se pudo guardar: {}", e)),
+                Err(e) => self.aviso(
+                    LogKind::Error,
+                    t!("No se pudo guardar: {}", crate::i18n::io_motivo(&e)),
+                ),
             }
         }
     }
@@ -98,7 +101,10 @@ impl App {
                     ),
                 }
             }
-            Err(e) => self.aviso(LogKind::Error, t!("No se pudo leer: {}", e)),
+            Err(e) => self.aviso(
+                LogKind::Error,
+                t!("No se pudo leer: {}", crate::i18n::io_motivo(&e)),
+            ),
         }
     }
 
@@ -204,6 +210,35 @@ mod tests {
         assert!(
             app.logs.iter().any(|e| e.text.contains("restablecida")),
             "reset_defaults debe dejar constancia en el registro"
+        );
+    }
+
+    /// M7: el `io::Error` crudo del sistema («No such file or directory
+    /// (os error 2)») salía en inglés en mitad de un mensaje español. Al
+    /// abrir un proyecto inexistente el registro debe enseñar el motivo
+    /// localizado, que es lo que da pie a corregir la ruta.
+    #[test]
+    fn abrir_un_proyecto_inexistente_no_ensena_el_error_crudo_del_sistema() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        let ausente =
+            std::env::temp_dir().join(format!("tp_no_existe_{}.tpproj", std::process::id()));
+        assert!(!ausente.exists(), "el fichero no debe existir: {ausente:?}");
+
+        app.open_project(ausente);
+
+        let texto = app
+            .logs
+            .last()
+            .map(|e| e.text.clone())
+            .expect("abrir un fichero inexistente debe dejar constancia");
+        assert!(
+            texto.contains("No se pudo leer: el fichero o la carpeta no existe"),
+            "mensaje localizado esperado, llegó: {texto}"
+        );
+        assert!(
+            !texto.contains("os error") && !texto.contains("No such file"),
+            "no debe quedar el texto crudo del sistema: {texto}"
         );
     }
 

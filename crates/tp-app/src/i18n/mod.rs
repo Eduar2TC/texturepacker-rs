@@ -9,6 +9,34 @@
 
 pub use tp_i18n::*;
 
+/// El motivo de un [`std::io::Error`] en el idioma de la interfaz.
+///
+/// El texto crudo del sistema («No such file or directory (os error 2)»)
+/// salía en inglés en mitad de un mensaje español, justo en el error que
+/// más ve el usuario al abrir o guardar mal una ruta (M7). Aquí se traduce
+/// por lo que describe, que es lo único que da pie a corregirlo; para los
+/// códigos que la interfaz no nombra queda el número del sistema, que es el
+/// mismo en todos.
+pub fn io_motivo(e: &std::io::Error) -> String {
+    use std::io::ErrorKind;
+    let motivo: &str = match e.kind() {
+        ErrorKind::NotFound => t!("el fichero o la carpeta no existe"),
+        ErrorKind::PermissionDenied => t!("no hay permiso para leer ni escribir"),
+        ErrorKind::AlreadyExists => t!("el destino ya existe"),
+        ErrorKind::IsADirectory => t!("el destino es una carpeta"),
+        ErrorKind::NotADirectory => t!("el destino no es una carpeta"),
+        ErrorKind::InvalidData => t!("el contenido no es válido"),
+        ErrorKind::TimedOut => t!("se agotó el tiempo de espera"),
+        _ => {
+            return match e.raw_os_error() {
+                Some(codigo) => t!("error del sistema (código {})", codigo),
+                None => t!("no se pudo completar la operación").to_string(),
+            };
+        }
+    };
+    motivo.to_string()
+}
+
 #[cfg(test)]
 pub(crate) fn t_keys_in(src: &str) -> Vec<String> {
     let chars: Vec<char> = src.chars().collect();
@@ -112,6 +140,78 @@ mod tests {
             "claves de t!(…) sin entrada en i18n/en.rs:\n  {}",
             sin_traducir.join("\n  ")
         );
+    }
+
+    /// M7: el motivo crudo del SO («No such file or directory (os error 2)»)
+    /// salía en inglés en mitad de un mensaje español. Se traduce por el
+    /// motivo que describe; lo que la interfaz no nombra queda por el número
+    /// del sistema, que sí aparece igual en todos.
+    #[test]
+    fn el_motivo_de_un_error_de_entrada_no_va_en_ingles() {
+        use std::io::ErrorKind;
+        let casos = [
+            (ErrorKind::NotFound, "el fichero o la carpeta no existe"),
+            (
+                ErrorKind::PermissionDenied,
+                "no hay permiso para leer ni escribir",
+            ),
+            (ErrorKind::AlreadyExists, "el destino ya existe"),
+            (ErrorKind::IsADirectory, "el destino es una carpeta"),
+            (ErrorKind::NotADirectory, "el destino no es una carpeta"),
+            (ErrorKind::InvalidData, "el contenido no es válido"),
+            (ErrorKind::TimedOut, "se agotó el tiempo de espera"),
+        ];
+        for (kind, esperado) in casos {
+            let e = std::io::Error::from(kind);
+            assert_eq!(io_motivo(&e), esperado, "motivo de {kind:?}");
+        }
+        // Un código que la interfaz no nombra: queda el número, nunca el
+        // texto del sistema.
+        let crudo = std::io::Error::from_raw_os_error(424_242);
+        let motivo = io_motivo(&crudo);
+        assert!(
+            motivo.contains("424242"),
+            "debe quedar el número del sistema: {motivo}"
+        );
+        assert!(
+            !motivo.contains("os error"),
+            "no debe quedar el texto crudo del SO: {motivo}"
+        );
+    }
+
+    /// El motivo de cada caso tiene su entrada en la tabla: sin ella la
+    /// interfaz en inglés se quedaría con la clave española.
+    #[test]
+    fn los_motivos_de_los_errores_de_entrada_estan_traducidos() {
+        for (es, en) in [
+            (
+                "el fichero o la carpeta no existe",
+                "the file or folder does not exist",
+            ),
+            (
+                "no hay permiso para leer ni escribir",
+                "there is no permission to read or write",
+            ),
+            ("el destino ya existe", "the destination already exists"),
+            ("el destino es una carpeta", "the destination is a folder"),
+            (
+                "el destino no es una carpeta",
+                "the destination is not a folder",
+            ),
+            ("el contenido no es válido", "the content is not valid"),
+            ("se agotó el tiempo de espera", "the operation timed out"),
+            ("error del sistema (código {})", "system error (code {})"),
+            (
+                "no se pudo completar la operación",
+                "the operation could not be completed",
+            ),
+        ] {
+            assert_eq!(
+                crate::i18n::en::lookup(es),
+                Some(en),
+                "traducción ausente o cambiada de {es:?}"
+            );
+        }
     }
 
     #[test]

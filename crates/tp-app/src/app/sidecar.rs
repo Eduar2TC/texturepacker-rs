@@ -145,7 +145,10 @@ impl App {
         match serde_json::to_string_pretty(&map) {
             Ok(text) => match std::fs::write(&path, text) {
                 Ok(_) => self.aviso(LogKind::Info, t!("Pivots guardados en {}", path.display())),
-                Err(e) => self.aviso(LogKind::Error, t!("No se pudo guardar: {}", e)),
+                Err(e) => self.aviso(
+                    LogKind::Error,
+                    t!("No se pudo guardar: {}", crate::i18n::io_motivo(&e)),
+                ),
             },
             Err(e) => self.aviso(LogKind::Error, t!("No se pudo serializar: {}", e)),
         }
@@ -170,7 +173,13 @@ impl App {
                         );
                     }
                 }
-                Err(e) => self.log(LogKind::Error, t!("No se pudo guardar borders.json: {}", e)),
+                Err(e) => self.log(
+                    LogKind::Error,
+                    t!(
+                        "No se pudo guardar borders.json: {}",
+                        crate::i18n::io_motivo(&e)
+                    ),
+                ),
             },
             Err(e) => self.log(
                 LogKind::Error,
