@@ -1,12 +1,20 @@
-//! Menú de la aplicación y ventana «Acerca de» (review UI/UX M5).
+//! Barra de menús y ventana «Acerca de» (review UI/UX M5; rediseño F1).
 //!
-//! La barra de menús clásica del escritorio, con lo que la barra de
-//! herramientas no cubre. De aquí salen tres cosas que no existían en
-//! ninguna parte de la app: **«Salir»** (sólo la ✕ de la ventana cerraba),
-//! **«Acerca de»** con la **versión** del programa, y la ayuda de atajos
-//! como entrada de menú además de tecla.
+//! Cuatro menús con **dueño único** de cada acción: «Archivo» para el ciclo
+//! de vida del proyecto, «Edición» para deshacer y quitar, «Ver» para la
+//! vista y «Ayuda» para lo que hay que descubrir. Nada de esto se repite en
+//! la barra de herramientas, que sólo lleva acciones sobre los sprites.
+//!
+//! De aquí salen además tres cosas que no existían en ninguna parte de la
+//! app: **«Salir»** (sólo la ✕ de la ventana cerraba), **«Acerca de»** con
+//! la **versión** del programa, y la ayuda de atajos como entrada de menú
+//! además de tecla.
 
-use super::{toolbar::TUTORIAL_URL, App, LogKind};
+use super::{
+    preview,
+    toolbar::{confirm_reset, TUTORIAL_URL},
+    App, LogKind,
+};
 use crate::i18n::t;
 use eframe::egui;
 
@@ -21,66 +29,153 @@ const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Repositorio del proyecto: issues, releases y código fuente.
 const REPO_URL: &str = "https://github.com/Eduar2TC/texturepacker-rs";
 
-/// Barra de menús, por encima de la barra de herramientas: «Archivo» con
-/// las acciones sobre el proyecto y «Ayuda» con lo que hay que descubrir.
+/// Barra de menús, por encima de la barra de herramientas. Es la única
+/// sede de las acciones que no son de sprite: la barra de herramientas de
+/// abajo sólo lleva añadir/quitar, herramientas del atlas y publicar.
 pub(super) fn menubar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("menubar").show(ctx, |ui| {
         egui::MenuBar::new().ui(ui, |ui| {
-            archivo(app, ui);
-            ayuda(app, ui);
+            ui.menu_button(t!("Archivo"), |ui| archivo(app, ui));
+            ui.menu_button(t!("Edición"), |ui| edicion(app, ui));
+            ui.menu_button(t!("Ver"), |ui| ver(app, ui));
+            ui.menu_button(t!("Ayuda"), |ui| ayuda(app, ui));
         });
     });
 }
 
 fn archivo(app: &mut App, ui: &mut egui::Ui) {
-    ui.menu_button(t!("Archivo"), |ui| {
-        if ui
-            .add(egui::Button::new(t!("Abrir proyecto")).shortcut_text("Ctrl + O"))
-            .clicked()
-        {
-            ui.close();
-            app.load_project();
-        }
-        if ui
-            .add(egui::Button::new(t!("Guardar proyecto")).shortcut_text("Ctrl + S"))
-            .clicked()
-        {
-            ui.close();
-            app.save_project();
-        }
-        ui.separator();
-        // «Salir» no cierra: pide el cierre a la ventana, que es quien
-        // decide si aún hay cambios sin guardar por preguntar (C2).
-        if ui.button(t!("Salir")).clicked() {
-            ui.close();
-            salir(ui.ctx());
-        }
-    });
+    if ui
+        .add(egui::Button::new(t!("Abrir proyecto")).shortcut_text("Ctrl + O"))
+        .clicked()
+    {
+        ui.close();
+        app.load_project();
+    }
+    if ui
+        .add(egui::Button::new(t!("Guardar proyecto")).shortcut_text("Ctrl + S"))
+        .clicked()
+    {
+        ui.close();
+        app.save_project();
+    }
+    ui.separator();
+    // «Restablecer» vive aquí y no en la barra de herramientas: es
+    // destructivo, pide confirmación (C5) y no es una acción del día a
+    // día —junto a «Guardar» se podía golpear por reflejo (rediseño F1).
+    if ui
+        .add(egui::Button::new(t!("Restablecer la configuración")))
+        .on_hover_text(t!(
+            "Restablecer todos los ajustes del proyecto a los valores por defecto"
+        ))
+        .clicked()
+    {
+        ui.close();
+        confirm_reset(app);
+    }
+    ui.separator();
+    // «Salir» no cierra: pide el cierre a la ventana, que es quien
+    // decide si aún hay cambios sin guardar por preguntar (C2).
+    if ui.button(t!("Salir")).clicked() {
+        ui.close();
+        salir(ui.ctx());
+    }
+}
+
+/// «Edición»: el deshacer no tenía ninguna sede visible —sólo `Ctrl+Z`—
+/// y quitar sprites se hacía desde la barra de herramientas o con `Supr`
+/// (rediseño F1). No se ofrece «Rehacer» porque el código no lo tiene.
+fn edicion(app: &mut App, ui: &mut egui::Ui) {
+    if ui
+        .add_enabled(
+            !app.deshacer.is_empty(),
+            egui::Button::new(t!("Deshacer el último cambio")).shortcut_text("Ctrl + Z"),
+        )
+        .clicked()
+    {
+        ui.close();
+        app.deshacer();
+    }
+    ui.separator();
+    if ui
+        .add_enabled(
+            !app.selected_paths.is_empty(),
+            egui::Button::new(t!("Quitar los sprites seleccionados")).shortcut_text(t!("Supr")),
+        )
+        .clicked()
+    {
+        ui.close();
+        super::toolbar::quitar_seleccionados(app);
+    }
+}
+
+/// «Ver»: zoom de la vista y el panel inferior. El chevron del panel
+/// sigue ahí como control local —como en GIMP o Krita—, pero el menú es
+/// la vía canónica y descubrible (rediseño F1).
+fn ver(app: &mut App, ui: &mut egui::Ui) {
+    if ui
+        .add(egui::Button::new(t!("Acercar")).shortcut_text("+"))
+        .clicked()
+    {
+        ui.close();
+        preview::zoom_step(app, 1);
+    }
+    if ui
+        .add(egui::Button::new(t!("Alejar")).shortcut_text("−"))
+        .clicked()
+    {
+        ui.close();
+        preview::zoom_step(app, -1);
+    }
+    if ui
+        .add(egui::Button::new(t!("Zoom al 100% (tamaño real)")).shortcut_text("0"))
+        .clicked()
+    {
+        ui.close();
+        app.zoom = 1.0;
+        app.auto_fit = false;
+    }
+    if ui
+        .add(egui::Button::new(t!("Ajustar")).shortcut_text("F"))
+        .clicked()
+    {
+        ui.close();
+        app.fit_zoom();
+        app.auto_fit = false;
+    }
+    ui.separator();
+    // El menú marca lo que se ve, no lo que se pliega: la casilla está
+    // «marcada» mientras el panel esté a la vista.
+    let mut visible = !app.bottom_collapsed;
+    if ui.checkbox(&mut visible, t!("Panel inferior")).changed() {
+        app.bottom_collapsed = !visible;
+    }
 }
 
 fn ayuda(app: &mut App, ui: &mut egui::Ui) {
-    ui.menu_button(t!("Ayuda"), |ui| {
-        if ui
-            .add(egui::Button::new(t!("Atajos de teclado")).shortcut_text("F1"))
-            .clicked()
-        {
-            ui.close();
-            app.show_shortcuts = true;
-        }
-        if ui.button(t!("Tutorial")).clicked() {
-            ui.close();
-            ui.ctx().open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
-            app.aviso(
-                LogKind::Info,
-                t!("Abriendo la documentación en el navegador.").into(),
-            );
-        }
-        ui.separator();
-        if ui.button(t!("Acerca de")).clicked() {
-            ui.close();
-            app.show_about = true;
-        }
-    });
+    if ui
+        .add(egui::Button::new(t!("Atajos de teclado")).shortcut_text("F1"))
+        .clicked()
+    {
+        ui.close();
+        app.show_shortcuts = true;
+    }
+    if ui
+        .add(egui::Button::new(t!("Tutorial")))
+        .on_hover_text(t!("Abre la documentación del proyecto en el navegador"))
+        .clicked()
+    {
+        ui.close();
+        ui.ctx().open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
+        app.aviso(
+            LogKind::Info,
+            t!("Abriendo la documentación en el navegador.").into(),
+        );
+    }
+    ui.separator();
+    if ui.button(t!("Acerca de")).clicked() {
+        ui.close();
+        app.show_about = true;
+    }
 }
 
 /// «Salir»: pide a la ventana que se cierre y deja que el resto del camino
@@ -233,5 +328,100 @@ mod tests {
             "con cambios sin guardar ese cierre debe rechazarse"
         );
         assert!(app.exit_pending, "y debe abrirse la pregunta");
+    }
+
+    /// Pinta sólo el contenido de un menú —sin el botón que lo abre— para
+    /// poder mirar sus entradas. Los textos se unen con espacios porque un
+    /// rótulo largo puede llegar a egui en varios trozos.
+    fn pinta_menu(app: &mut App, ctx: &egui::Context, menu: fn(&mut App, &mut egui::Ui)) -> String {
+        let out = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1360.0, 860.0),
+                )),
+                ..egui::RawInput::default()
+            },
+            |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| menu(app, ui));
+            },
+        );
+        crate::testing::textos_pintados(&out)
+            .into_iter()
+            .map(|(texto, _, _)| texto)
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+
+    /// F1: «↺ Restablecer» estaba en la barra de herramientas junto a
+    /// «Guardar» —fácil de golpear por reflejo— y «Salir» sólo existía en
+    /// el menú. El menú es ahora la única sede de las acciones de proyecto.
+    #[test]
+    fn el_menu_archivo_lleva_abrir_guardar_restablecer_y_salir() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let texto = pinta_menu(&mut app, &ctx, archivo);
+        for esperado in [
+            "Abrir proyecto",
+            "Guardar proyecto",
+            "Restablecer la configuración",
+            "Salir",
+        ] {
+            assert!(
+                texto.contains(esperado),
+                "«{esperado}» falta en «Archivo»: {texto}"
+            );
+        }
+    }
+
+    /// F1: el deshacer (C6) no tenía ningún botón —sólo `Ctrl+Z`— y quitar
+    /// sprites se hacía desde la barra o con `Supr`. El menú «Edición» es
+    /// su sede visible, y con la pila vacía la entrada se pinta deshabilitada.
+    #[test]
+    fn el_menu_edicion_expone_el_deshacer_que_no_tiene_boton() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        assert!(
+            app.deshacer.is_empty(),
+            "la prueba empieza sin nada que deshacer"
+        );
+        let texto = pinta_menu(&mut app, &ctx, edicion);
+        for esperado in [
+            "Deshacer el último cambio",
+            "Ctrl + Z",
+            "Quitar los sprites seleccionados",
+            "Supr",
+        ] {
+            assert!(
+                texto.contains(esperado),
+                "«{esperado}» falta en «Edición»: {texto}"
+            );
+        }
+    }
+
+    /// F1: el zoom sólo se controlaba con rueda y botones de la barra de
+    /// zoom, y el panel inferior sólo con su chevron. «Ver» reúne las dos
+    /// cosas con sus atajos, que es como se descubren.
+    #[test]
+    fn el_menu_ver_expone_el_zoom_y_el_panel_inferior() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let texto = pinta_menu(&mut app, &ctx, ver);
+        for esperado in [
+            "Acercar",
+            "Alejar",
+            "Zoom al 100%",
+            "Ajustar",
+            "Panel inferior",
+        ] {
+            assert!(
+                texto.contains(esperado),
+                "«{esperado}» falta en «Ver»: {texto}"
+            );
+        }
+        assert!(
+            !app.bottom_collapsed,
+            "el panel inferior arranca visible y el menú debe marcarlo"
+        );
     }
 }

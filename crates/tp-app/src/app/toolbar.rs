@@ -1,52 +1,25 @@
-//! Top tool bar: project actions, sprite set actions and publishing.
+//! Barra de herramientas: sprites, herramientas del atlas y publicación.
 //!
-//! Convenciones UX: iconos con texto (descubribles sin hover), acción
-//! principal destacada a la derecha, atajos mostrados en los tooltips.
+//! Convenciones UX (rediseño F1): aquí sólo vive lo que se hace sobre los
+//! sprites —lo del proyecto está en la barra de menús y lo de ayuda en
+//! «Ayuda», cada acción en una sola sede—, iconos con texto (descubribles
+//! sin hover), acción principal destacada a la derecha y atajos en los
+//! tooltips.
 
 use super::{App, LogKind};
 use crate::i18n::t;
 use eframe::egui;
 
-/// Documentación que abre el botón «Tutorial»: el README del proyecto,
+/// Documentación que abre «Ayuda → Tutorial»: el README del proyecto,
 /// en una pestaña del navegador del usuario.
 pub(crate) const TUTORIAL_URL: &str = "https://github.com/Eduar2TC/texturepacker-rs#readme";
 
 pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
-            // --- Proyecto ---
-            if ui
-                .button(t!("📂 Abrir"))
-                .on_hover_text(t!("Abrir proyecto (.tpproj o .tps) — Ctrl+O"))
-                .clicked()
-            {
-                app.load_project();
-            }
-            if ui
-                .button(t!("💾 Guardar"))
-                .on_hover_text(t!("Guardar proyecto (.tpproj o .tps) — Ctrl+S"))
-                .clicked()
-            {
-                app.save_project();
-            }
-            // «↺» tira toda la configuración: separado de «Guardar» para que
-            // no se pueda golpear por reflejo y con confirmación previa
-            // (review UI/UX C5).
-            ui.separator();
-            if ui
-                .button("↺")
-                .on_hover_text(t!(
-                    "Restablecer todos los ajustes del proyecto a los valores por defecto"
-                ))
-                .clicked()
-            {
-                confirm_reset(app);
-            }
-            ui.separator();
-
             // --- Sprites ---
             if ui
-                .button(t!("➕ Añadir"))
+                .button(t!("➕ Añadir sprites…"))
                 .on_hover_text(t!("Añadir sprites al workspace"))
                 .clicked()
             {
@@ -59,17 +32,10 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 .on_disabled_hover_text(t!("Selecciona sprites en el panel izquierdo"))
                 .clicked()
             {
-                // Orden visual del panel: tras quitar, el cursor queda en la
-                // fila siguiente (igual que con la tecla Supr).
-                let order: Vec<_> = app
-                    .sprite_row_rects()
-                    .iter()
-                    .map(|(p, _)| p.clone())
-                    .collect();
-                app.remove_selected(&order);
+                quitar_seleccionados(app);
             }
             if ui
-                .button(t!("📁 Carpeta"))
+                .button(t!("📁 Añadir carpeta…"))
                 .on_hover_text(t!(
                     "Añadir carpeta inteligente (se sincroniza con el disco)"
                 ))
@@ -111,28 +77,6 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             {
                 app.show_animation = true;
             }
-            // «Tutorial» abre la documentación del proyecto en el
-            // navegador (egui-winit → `webbrowser`).
-            if ui
-                .button(t!("Tutorial"))
-                .on_hover_text(t!("Abre la documentación del proyecto en el navegador"))
-                .clicked()
-            {
-                ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
-                app.aviso(
-                    LogKind::Info,
-                    t!("Abriendo la documentación en el navegador.").into(),
-                );
-            }
-            // «?» abre la ayuda de atajos (I2): los atajos que no viven en
-            // un botón no eran descubribles desde la propia app.
-            if ui
-                .add(egui::Button::new("?").selected(app.show_shortcuts))
-                .on_hover_text(format!("{} — F1", t!("Atajos de teclado")))
-                .clicked()
-            {
-                app.show_shortcuts = !app.show_shortcuts;
-            }
 
             // --- Acción principal, destacada a la derecha ---
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -152,18 +96,14 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 {
                     app.start_pack(false);
                 }
-                // Menú de publicación, como el del original: publicar solo
-                // cuando algo cambió y una entrada para forzar la escritura.
-                ui.menu_button("☰", |ui| {
+                // «…» reúne lo que no cabe en el botón de al lado. Tenía
+                // también «Publicar», a 200 px del botón «⏏ Publicar» —dos
+                // asientos para la misma acción—; se quita (rediseño F1) y
+                // queda «Forzar publicación», que no tiene botón propio.
+                // El glifo «⋯» no existe en las fuentes de egui —lo ha
+                // cazado `glyph_guard`— y «☰» se leía como menú de la app.
+                ui.menu_button("…", |ui| {
                     let publishing = app.running.is_some();
-                    if ui
-                        .add_enabled(!publishing, egui::Button::new(t!("Publicar")))
-                        .on_hover_text(t!("Empaquetar y exportar el sprite sheet — Ctrl+P"))
-                        .clicked()
-                    {
-                        ui.close();
-                        app.start_pack(false);
-                    }
                     if ui
                         .add_enabled(!publishing, egui::Button::new(t!("Forzar publicación")))
                         .on_hover_text(t!("Reescribe los ficheros aunque nada haya cambiado"))
@@ -181,6 +121,19 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             });
         });
     });
+}
+
+/// Quita los sprites seleccionados respetando el orden en que se ven en
+/// el panel: tras quitar, el cursor queda en la fila siguiente (igual que
+/// con la tecla `Supr`). Lo usan la barra de herramientas y el menú
+/// «Edición», para que la misma acción no tenga dos dueños (rediseño F1).
+pub(super) fn quitar_seleccionados(app: &mut App) {
+    let order: Vec<_> = app
+        .sprite_row_rects()
+        .iter()
+        .map(|(p, _)| p.clone())
+        .collect();
+    app.remove_selected(&order);
 }
 
 pub(super) fn add_sprites_dialog(app: &mut App) {
@@ -227,9 +180,11 @@ pub(super) fn add_smart_folder_dialog(app: &mut App) {
     }
 }
 
-/// «↺» tira toda la configuración del proyecto: se pregunta con el diálogo
+/// Tira toda la configuración del proyecto: se pregunta con el diálogo
 /// nativo del sistema y sólo si el usuario acepta se toca nada. El registro
-/// de la app deja constancia del cambio en `reset_defaults` (review UI/UX C5).
+/// de la app deja constancia del cambio en `reset_defaults` (review UI/UX
+/// C5). Se invoca desde «Archivo → Restablecer la configuración», que es
+/// donde vive desde el rediseño F1 (en la barra estaba junto a «Guardar»).
 pub(super) fn confirm_reset(app: &mut App) {
     let respuesta = rfd::MessageDialog::new()
         .set_title(t!("Restablecer la configuración"))
@@ -246,13 +201,50 @@ pub(super) fn confirm_reset(app: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::TUTORIAL_URL;
+    use super::*;
+    use crate::testing::texto_pintado;
 
     #[test]
     fn tutorial_url_points_at_the_project_readme() {
         assert_eq!(
             TUTORIAL_URL,
             "https://github.com/Eduar2TC/texturepacker-rs#readme"
+        );
+    }
+
+    /// F1: una acción no puede tener dos botones. Con los menús cerrados,
+    /// lo que se pinta de «📂 Abrir», «💾 Guardar», «Tutorial» o «↺» sólo
+    /// puede salir de la barra de herramientas: si vuelven a aparecer, es
+    /// que se han vuelto a duplicar con la barra de menús.
+    #[test]
+    fn la_toolbar_no_repite_lo_que_esta_en_los_menus() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let out = app.run_frame(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1360.0, 860.0),
+                )),
+                ..egui::RawInput::default()
+            },
+        );
+        let pintado = texto_pintado(&out);
+        for duplicado in ["📂 Abrir", "💾 Guardar", "Tutorial", "↺"] {
+            assert!(
+                !pintado.contains(duplicado),
+                "«{duplicado}» está en la barra de herramientas y también en un \
+                 menú —una acción, un asiento—: {pintado}"
+            );
+        }
+        assert!(
+            pintado.contains("⏏ Publicar"),
+            "falta la acción principal de la barra: {pintado}"
+        );
+        assert!(
+            pintado.contains("Añadir sprites"),
+            "falta el primer botón de sprites: {pintado}"
         );
     }
 }

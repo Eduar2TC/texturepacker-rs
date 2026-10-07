@@ -28,17 +28,7 @@ pub static EN: &[(&str, &str)] = &[
         "Se guarda en tu equipo, no en el proyecto.",
         "Stored on this machine, not in the project.",
     ),
-    ("📂 Abrir", "📂 Open"),
     ("Tutorial", "Tutorial"),
-    (
-        "Abrir proyecto (.tpproj o .tps) — Ctrl+O",
-        "Open project (.tpproj or .tps) — Ctrl+O",
-    ),
-    ("💾 Guardar", "💾 Save"),
-    (
-        "Guardar proyecto (.tpproj o .tps) — Ctrl+S",
-        "Save project (.tpproj or .tps) — Ctrl+S",
-    ),
     (
         "Restablecer todos los ajustes del proyecto a los valores por defecto",
         "Reset all project settings to their defaults",
@@ -61,7 +51,6 @@ pub static EN: &[(&str, &str)] = &[
     ("💾 Guardar y salir", "💾 Save and exit"),
     ("Salir sin guardar", "Exit without saving"),
     ("Cancelar", "Cancel"),
-    ("➕ Añadir", "➕ Add"),
     (
         "Añadir sprites al workspace",
         "Add sprites to the workspace",
@@ -75,7 +64,6 @@ pub static EN: &[(&str, &str)] = &[
         "Selecciona sprites en el panel izquierdo",
         "Select sprites in the left panel",
     ),
-    ("📁 Carpeta", "📁 Folder"),
     (
         "Añadir carpeta inteligente (se sincroniza con el disco)",
         "Add smart folder (stays in sync with disk)",
@@ -411,6 +399,7 @@ pub static EN: &[(&str, &str)] = &[
 
     ("No hay sprites empaquetados.\nAñade sprites y pulsa «Publicar».", "No sprites are packed yet.\nAdd sprites and press «Publish»."),
     ("Ningún sprite de la selección está publicado.\nPulsa «Publicar» o quita la selección.", "None of the selected sprites is packed.\nPress «Publish» or clear the selection."),
+    ("Panel inferior", "Bottom panel"),
     ("Mostrar el panel", "Show the panel"),
     ("Plegar el panel y dejar la vista del atlas en pantalla completa", "Collapse the panel and leave the atlas view fullscreen"),
     ("Escritos en el disco durante la última publicación.", "Written to disk during the last publish."),
@@ -694,6 +683,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Seleccionar todo", "Select all"),
     ("Supr", "Del"),
     ("Edición", "Edit"),
+    ("Ver", "View"),
     ("Deshacer el último cambio", "Undo the last change"),
     ("General", "General"),
     ("Cerrar la ventana", "Close the window"),
