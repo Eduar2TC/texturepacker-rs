@@ -200,3 +200,31 @@ pub fn textos_pintados(
     }
     fuera
 }
+
+/// Cada rectángulo relleno que un frame dejó pintado, con su color y su
+/// rectángulo: `(relleno, rectángulo)`.
+///
+/// Es la misma inspección que [`textos_pintados`] pero para el **fondo**:
+/// los paneles de la ventana no dejan estado que leer, sólo formas, y es
+/// por los rellenos por los que se distingue una zona de otra.
+pub fn rellenos_pintados(
+    output: &eframe::egui::FullOutput,
+) -> Vec<(eframe::egui::Color32, eframe::egui::Rect)> {
+    fn recorre<'a>(
+        shapes: impl IntoIterator<Item = &'a eframe::egui::Shape>,
+        fuera: &mut Vec<(eframe::egui::Color32, eframe::egui::Rect)>,
+    ) {
+        for shape in shapes {
+            match shape {
+                eframe::egui::Shape::Rect(r) => fuera.push((r.fill, r.rect)),
+                eframe::egui::Shape::Vec(hijos) => recorre(hijos, fuera),
+                _ => {}
+            }
+        }
+    }
+    let mut fuera = Vec::new();
+    for forma in &output.shapes {
+        recorre([&forma.shape], &mut fuera);
+    }
+    fuera
+}

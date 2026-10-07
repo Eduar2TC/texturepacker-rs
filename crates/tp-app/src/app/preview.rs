@@ -30,7 +30,14 @@ pub(super) fn preview_ui(app: &mut App, ui: &mut egui::Ui) {
         .resizable(false)
         .exact_height(32.0)
         .show_inside(ui, |ui| zoom_bar(app, ui));
-    egui::CentralPanel::default().show_inside(ui, |ui| preview_area(app, ui));
+    // El lienzo de verdad (el que lleva scroll): el token de la zona de
+    // trabajo, el mismo que lleva el `CentralPanel` que lo envuelve. Sin
+    // este marco egui le pondría `panel_fill`, que es el color de las
+    // barras, y el centro dejaría de ser una sola superficie.
+    let lienzo = super::superficies(ui.style().visuals.dark_mode).lienzo;
+    egui::CentralPanel::default()
+        .frame(egui::Frame::central_panel(ui.style()).fill(lienzo))
+        .show_inside(ui, |ui| preview_area(app, ui));
 }
 
 fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
@@ -484,12 +491,12 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 egui::Color32::WHITE,
             );
             // Límite de la página. El fondo de la hoja es gris 30 fijo
-            // (`from_gray(30)`) y el del lienzo en tema oscuro es gris 27:
-            // difieren en 3 niveles, así que la hoja parecía no tener borde y
-            // no se veía dónde acaba el atlas (review C1). El trazo se pinta
-            // FUERA de la hoja, sobre el lienzo, para que el contraste sea
-            // siempre contra el fondo del lienzo (y no contra la propia hoja)
-            // y funcione igual en tema claro y oscuro.
+            // (`from_gray(30)`) y el del lienzo es ahora el token de la
+            // zona de trabajo (gris 12 en oscuro), así que la hoja ya se
+            // separa sola; el trazo se mantiene pintado FUERA de la hoja,
+            // sobre el lienzo, para que el contraste sea siempre contra el
+            // fondo del lienzo (y no contra la propia hoja) y funcione igual
+            // en tema claro y oscuro (review C1).
             painter.rect_stroke(
                 rect,
                 0.0,

@@ -271,13 +271,10 @@ fn seccion_visible(clave: &str, filtro: &str) -> bool {
 /// el mismo frame sigue existiendo [`App::on_config_changed`].
 pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
     ui.add_space(4.0);
-    ui.horizontal(|ui| {
-        ui.heading(t!("Ajustes"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.checkbox(&mut app.advanced_settings, t!("Avanzados"))
-                .on_hover_text(t!("Mostrar todas las opciones"));
-        });
-    });
+    // La misma jerarquía de título que «Sprites (n)» del panel izquierdo:
+    // 13 px seminegrita. Como `heading` (17 px) el título pesaba más que
+    // sus propias secciones y las tres zonas no se leían a la misma escala.
+    ui.strong(t!("Ajustes"));
     ui.separator();
 
     // Buscador (I3): estrecha el panel a las secciones que coinciden. Los
@@ -301,6 +298,16 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
                     .desired_width(f32::INFINITY),
             );
         });
+    });
+
+    // «Avanzados» no es un ajuste del proyecto: decide **cuánto** se ve de
+    // este panel. Como cualquier otra línea, con la etiqueta a la vista y
+    // delante de las secciones que abre —colgado de la esquina del título
+    // resultaba un interruptor sin explicación, y situado al final se
+    // encontraba después de lo que revela—.
+    ui.horizontal_wrapped(|ui| {
+        ui.checkbox(&mut app.advanced_settings, t!("Avanzados"));
+        ui.label(egui::RichText::new(t!("Mostrar todas las opciones")).weak());
     });
 
     let filtro = normaliza(app.settings_filter.trim());

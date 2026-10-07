@@ -44,7 +44,7 @@ pub(crate) use drag::{SpriteDrag, DRAG_THRESHOLD_PX, GHOST_MIN_SIZE_PX};
 use events::{handle_global_file_drop, handle_shortcuts};
 pub(crate) use theme::{
     amber_color, apply_theme, drop_tint, info_color, just_added_color, muted_color,
-    muted_hover_color,
+    muted_hover_color, superficies,
 };
 
 use crate::i18n::t;
@@ -391,31 +391,32 @@ impl eframe::App for App {
             bottom::bottom_ui(self, ui);
         });
 
-        // Fondo ligeramente distinto en los paneles laterales: separa
-        // herramientas (izquierda/derecha) del lienzo (centro).
-        let panel_fill = ctx.style().visuals.panel_fill;
-        let side_fill = egui::Color32::from_rgba_unmultiplied(
-            panel_fill.r().saturating_sub(6),
-            panel_fill.g().saturating_sub(6),
-            panel_fill.b().saturating_sub(6),
-            255,
-        );
+        // Un rol de superficie por zona (fase 2 del rediseño): los docks
+        // con el color «panel», el lienzo con el suyo —más extremo, es la
+        // zona de trabajo— y las barras con el «chrome» que les deja egui
+        // en `panel_fill`. Antes la diferencia era de 6 unidades de gris,
+        // invisible: ahora cada zona se reconoce sin necesidad de texto.
+        let superficies = superficies(ctx.style().visuals.dark_mode);
 
         egui::SidePanel::left("sprites_panel")
             .resizable(true)
             .default_width(250.0)
             .min_width(180.0)
-            .frame(egui::Frame::default().fill(side_fill))
+            .frame(egui::Frame::default().fill(superficies.panel))
             .show(ctx, |ui| sprites_panel::sprites_ui(self, ui));
 
         egui::SidePanel::right("settings_panel")
             .resizable(true)
             .default_width(330.0)
             .min_width(260.0)
-            .frame(egui::Frame::default().fill(side_fill))
+            .frame(egui::Frame::default().fill(superficies.panel))
             .show(ctx, |ui| settings::settings_ui(self, ui));
 
-        egui::CentralPanel::default().show(ctx, |ui| preview::preview_ui(self, ui));
+        // `Frame::central_panel` es el marco que egui usaría solo: mismo
+        // margen de 8 px, relleno con el token del lienzo.
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(&ctx.style()).fill(superficies.lienzo))
+            .show(ctx, |ui| preview::preview_ui(self, ui));
 
         sprite_settings::sprite_settings_window(self, ctx);
         animation::animation_window(self, ctx);
