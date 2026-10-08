@@ -265,6 +265,36 @@ fn seccion_visible(clave: &str, filtro: &str) -> bool {
     contiene(filtro, crate::i18n::translate(clave)) || palabras.iter().any(|p| contiene(filtro, p))
 }
 
+/// ¿Hay texto en el buscador del panel? Mientras lo hay, la vista es una
+/// búsqueda y no el panel normal.
+fn buscando(app: &App) -> bool {
+    !app.settings_filter.trim().is_empty()
+}
+
+/// Cabecera de una sección del panel derecho. El título llega ya con `t!`
+/// para que el escáner de literales de i18n siga viendo la clave.
+///
+/// El panel arranca con las secciones plegadas: en vez de un muro de
+/// controles seguidos, cuatro cabeceras que se leen de un vistazo y a las
+/// que se entra con un clic (la métrica de la sección 5 del rediseño: ~6
+/// controles a la vista, no trece). Mientras hay buscador puesto, en
+/// cambio, la sección se abre sola: si el filtro sólo dejara ver la
+/// cabecera, buscar «extrusión» terminaría en un título.
+///
+/// El id cambia durante la búsqueda porque egui guarda abierto/plegado **por
+/// id** y `default_open` sólo se aplica la primera vez; con el mismo id, la
+/// vista de búsqueda heredaría el plegado del panel y no abriría nada. Id
+/// aparte = estado aparte: buscar no toca lo que el usuario haya dejado a
+/// mano.
+fn cabecera(titulo: &str, filtrando: bool) -> egui::CollapsingHeader {
+    let cabecera = egui::CollapsingHeader::new(titulo).default_open(filtrando);
+    if filtrando {
+        cabecera.id_salt(format!("buscando::{titulo}"))
+    } else {
+        cabecera
+    }
+}
+
 /// Panel derecho de Ajustes. Los controles no avisan uno a uno: mutan
 /// `config` y el sondeo por frame (`poll_changes`) detecta el cambio por
 /// huella, repinta y reempaqueta en el frame siguiente. Para notificar en
@@ -351,58 +381,55 @@ fn interface_section(app: &mut App, ui: &mut egui::Ui) {
     use crate::i18n::{t, LangChoice};
     use crate::ui_prefs::{FontScale, Theme};
 
-    egui::CollapsingHeader::new(t!("Interfaz"))
-        // Sólo «Composición» arranca desplegada (Fase 4): con las cuatro
-        // abiertas el panel empezaba por quince controles seguidos y no
-        // se veía dónde empezaba cada cosa.
-        .default_open(false)
-        .show(ui, |ui| {
-            ui.label(t!("Idioma"));
-            let mut lang = app.prefs().lang_choice();
-            egui::ComboBox::from_id_salt("ui_lang")
-                .selected_text(lang_label(lang))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(
-                        &mut lang,
-                        LangChoice::System,
-                        t!("Sistema (idioma del equipo)"),
-                    );
-                    ui.selectable_value(&mut lang, LangChoice::Es, "Español");
-                    ui.selectable_value(&mut lang, LangChoice::En, "English");
-                });
-            if lang != app.prefs().lang_choice() {
-                app.set_lang_choice(lang);
-            }
+    // Plegada por defecto (panel derecho del rediseño); abierta si se está
+    // buscando, para que el filtro no deje sólo el título.
+    cabecera(t!("Interfaz"), buscando(app)).show(ui, |ui| {
+        ui.label(t!("Idioma"));
+        let mut lang = app.prefs().lang_choice();
+        egui::ComboBox::from_id_salt("ui_lang")
+            .selected_text(lang_label(lang))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(
+                    &mut lang,
+                    LangChoice::System,
+                    t!("Sistema (idioma del equipo)"),
+                );
+                ui.selectable_value(&mut lang, LangChoice::Es, "Español");
+                ui.selectable_value(&mut lang, LangChoice::En, "English");
+            });
+        if lang != app.prefs().lang_choice() {
+            app.set_lang_choice(lang);
+        }
 
-            ui.label(t!("Tema"));
-            let mut theme = app.prefs().theme();
-            egui::ComboBox::from_id_salt("ui_theme")
-                .selected_text(theme_label(theme))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut theme, Theme::System, t!("Sistema"));
-                    ui.selectable_value(&mut theme, Theme::Light, t!("Claro"));
-                    ui.selectable_value(&mut theme, Theme::Dark, t!("Oscuro"));
-                });
-            if theme != app.prefs().theme() {
-                app.set_theme(theme);
-            }
+        ui.label(t!("Tema"));
+        let mut theme = app.prefs().theme();
+        egui::ComboBox::from_id_salt("ui_theme")
+            .selected_text(theme_label(theme))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut theme, Theme::System, t!("Sistema"));
+                ui.selectable_value(&mut theme, Theme::Light, t!("Claro"));
+                ui.selectable_value(&mut theme, Theme::Dark, t!("Oscuro"));
+            });
+        if theme != app.prefs().theme() {
+            app.set_theme(theme);
+        }
 
-            ui.label(t!("Tamaño de la letra"));
-            let mut escala = app.prefs().font_scale();
-            egui::ComboBox::from_id_salt("ui_font_scale")
-                .selected_text(font_scale_label(escala))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut escala, FontScale::Small, t!("Pequeña"));
-                    ui.selectable_value(&mut escala, FontScale::Normal, t!("Normal"));
-                    ui.selectable_value(&mut escala, FontScale::Large, t!("Grande"));
-                    ui.selectable_value(&mut escala, FontScale::Larger, t!("Muy grande"));
-                });
-            if escala != app.prefs().font_scale() {
-                app.set_font_scale(escala);
-            }
+        ui.label(t!("Tamaño de la letra"));
+        let mut escala = app.prefs().font_scale();
+        egui::ComboBox::from_id_salt("ui_font_scale")
+            .selected_text(font_scale_label(escala))
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut escala, FontScale::Small, t!("Pequeña"));
+                ui.selectable_value(&mut escala, FontScale::Normal, t!("Normal"));
+                ui.selectable_value(&mut escala, FontScale::Large, t!("Grande"));
+                ui.selectable_value(&mut escala, FontScale::Larger, t!("Muy grande"));
+            });
+        if escala != app.prefs().font_scale() {
+            app.set_font_scale(escala);
+        }
 
-            ui.label(egui::RichText::new(t!("Se guarda en tu equipo, no en el proyecto.")).weak());
-        });
+        ui.label(egui::RichText::new(t!("Se guarda en tu equipo, no en el proyecto.")).weak());
+    });
 }
 
 /// Nombre del idioma en el combo: el nombre propio nunca se traduce.
@@ -436,274 +463,270 @@ fn font_scale_label(escala: crate::ui_prefs::FontScale) -> &'static str {
 
 fn data_section(app: &mut App, ui: &mut egui::Ui) {
     let advanced = app.advanced_settings;
-    egui::CollapsingHeader::new(t!("Datos"))
-        .default_open(false)
-        .show(ui, |ui| {
-            ui.label(t!("Directorio de entrada"));
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.input_dir_text).desired_width(190.0));
-                if ui
-                    .button("…")
-                    .on_hover_text(t!("Elegir la carpeta de entrada"))
-                    .clicked()
-                {
-                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                        app.input_dir_text = dir.display().to_string();
-                        app.config.input_directory = dir;
-                        app.on_paths_edited();
-                    }
+    // Idem: plegada de serie, abierta mientras hay búsqueda (también las
+    // dos cabeceras anidadas de dentro, o el filtro no llegaría a su
+    // contenido).
+    let filtrando = buscando(app);
+    cabecera(t!("Datos"), filtrando).show(ui, |ui| {
+        ui.label(t!("Directorio de entrada"));
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut app.input_dir_text).desired_width(190.0));
+            if ui
+                .button("…")
+                .on_hover_text(t!("Elegir la carpeta de entrada"))
+                .clicked()
+            {
+                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                    app.input_dir_text = dir.display().to_string();
+                    app.config.input_directory = dir;
+                    app.on_paths_edited();
                 }
-            });
-            ui.label(t!("Directorio de salida"));
-            ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut app.output_dir_text).desired_width(190.0));
-                if ui
-                    .button("…")
-                    .on_hover_text(t!("Elegir la carpeta de salida"))
-                    .clicked()
-                {
-                    if let Some(dir) = rfd::FileDialog::new().pick_folder() {
-                        app.output_dir_text = dir.display().to_string();
-                        app.config.output_directory = dir;
-                        app.on_paths_edited();
-                    }
+            }
+        });
+        ui.label(t!("Directorio de salida"));
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(&mut app.output_dir_text).desired_width(190.0));
+            if ui
+                .button("…")
+                .on_hover_text(t!("Elegir la carpeta de salida"))
+                .clicked()
+            {
+                if let Some(dir) = rfd::FileDialog::new().pick_folder() {
+                    app.output_dir_text = dir.display().to_string();
+                    app.config.output_directory = dir;
+                    app.on_paths_edited();
                 }
-            });
-            ui.label(t!("Nombre base de los archivos"));
-            ui.add(egui::TextEdit::singleline(&mut app.config.base_file_name).desired_width(190.0));
-            ui.label(
-                egui::RichText::new(t!("Placeholders: {n} {n1} {v}  (p. ej. hoja{n1}{v})")).weak(),
-            );
-            data_format_combo(app, ui);
+            }
+        });
+        ui.label(t!("Nombre base de los archivos"));
+        ui.add(egui::TextEdit::singleline(&mut app.config.base_file_name).desired_width(190.0));
+        ui.label(
+            egui::RichText::new(t!("Placeholders: {n} {n1} {v}  (p. ej. hoja{n1}{v})")).weak(),
+        );
+        data_format_combo(app, ui);
 
-            if !advanced {
-                return;
-            }
-            // Ficheros de datos extra (--class-file/--header-file/…), que se
-            // escriben junto a los metadatos.
-            let extra_fields: [(&str, &mut String); 4] = [
-                ("Class file (Swift)", &mut app.config.class_file),
-                ("Header file (C++/ObjC)", &mut app.config.header_file),
-                ("Source file (C++)", &mut app.config.source_file),
-                ("Sprite ids file", &mut app.config.spriteids_file),
-            ];
-            egui::CollapsingHeader::new(t!("Ficheros extra por framework"))
-                .default_open(false)
-                .show(ui, |ui| {
-                    ui.label(
-                        egui::RichText::new(t!(
-                            "Vacío = no escribir. Alias CLI: --class-file, --header-file, \
+        if !advanced {
+            return;
+        }
+        // Ficheros de datos extra (--class-file/--header-file/…), que se
+        // escriben junto a los metadatos.
+        let extra_fields: [(&str, &mut String); 4] = [
+            ("Class file (Swift)", &mut app.config.class_file),
+            ("Header file (C++/ObjC)", &mut app.config.header_file),
+            ("Source file (C++)", &mut app.config.source_file),
+            ("Sprite ids file", &mut app.config.spriteids_file),
+        ];
+        cabecera(t!("Ficheros extra por framework"), filtrando).show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(t!(
+                    "Vacío = no escribir. Alias CLI: --class-file, --header-file, \
                              --source-file y --spriteids-file."
-                        ))
-                        .weak(),
-                    );
-                    for (label, value) in extra_fields {
-                        ui.label(label);
-                        ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(value).desired_width(200.0));
-                        });
-                    }
+                ))
+                .weak(),
+            );
+            for (label, value) in extra_fields {
+                ui.label(label);
+                ui.horizontal(|ui| {
+                    ui.add(egui::TextEdit::singleline(value).desired_width(200.0));
                 });
-            // Extras de data format: cache busting (Pixi/Phaser), filtro
-            // (LibGDX) y shape debug (contorno dibujado en la hoja).
-            egui::CollapsingHeader::new(t!("Extras del data format"))
-                .default_open(false)
-                .show(ui, |ui| {
-                    ui.checkbox(
-                        &mut app.config.cache_busting,
-                        t!("Cache busting (?v= en la textura citada)"),
-                    )
-                    .on_hover_text(t!(
-                        "Añade ?v=<hash del fichero> a la imagen que los metadatos \
+            }
+        });
+        // Extras de data format: cache busting (Pixi/Phaser), filtro
+        // (LibGDX) y shape debug (contorno dibujado en la hoja).
+        cabecera(t!("Extras del data format"), filtrando).show(ui, |ui| {
+            ui.checkbox(
+                &mut app.config.cache_busting,
+                t!("Cache busting (?v= en la textura citada)"),
+            )
+            .on_hover_text(t!(
+                "Añade ?v=<hash del fichero> a la imagen que los metadatos \
                          referencian, como los data formats de Pixi/Phaser."
-                    ));
-                    enum_combo(
-                        ui,
-                        "Filtro (LibGDX)",
-                        app.config.gdx_filter.as_str(),
-                        |ui, v| {
-                            ui.selectable_value(v, GdxFilter::Linear, "Linear");
-                            ui.selectable_value(v, GdxFilter::Nearest, "Nearest");
-                        },
-                        &mut app.config.gdx_filter,
-                    );
-                    ui.checkbox(
-                        &mut app.config.shape_debug,
-                        t!("Shape debug (contornos en la hoja)"),
-                    )
-                    .on_hover_text(t!(
-                        "Dibuja el rectángulo visible y los polígonos de cada sprite \
+            ));
+            enum_combo(
+                ui,
+                "Filtro (LibGDX)",
+                app.config.gdx_filter.as_str(),
+                |ui, v| {
+                    ui.selectable_value(v, GdxFilter::Linear, "Linear");
+                    ui.selectable_value(v, GdxFilter::Nearest, "Nearest");
+                },
+                &mut app.config.gdx_filter,
+            );
+            ui.checkbox(
+                &mut app.config.shape_debug,
+                t!("Shape debug (contornos en la hoja)"),
+            )
+            .on_hover_text(t!(
+                "Dibuja el rectángulo visible y los polígonos de cada sprite \
                          sobre la hoja, en magenta."
-                    ));
-                });
-            ui.checkbox(&mut app.config.recursive, t!("Buscar en subdirectorios"));
-            ui.checkbox(
-                &mut app.config.trim_sprite_names,
-                t!("Quitar la extensión de los nombres"),
-            )
-            .on_hover_text(t!("hero/idle_00.png pasa a llamarse hero/idle_00"));
-            ui.checkbox(
-                &mut app.config.prepend_folder_name,
-                t!("Anteponer el nombre de la carpeta inteligente"),
-            )
-            .on_hover_text(t!(
-                "Solo aplica a carpetas añadidas fuera del directorio de entrada"
             ));
-            ui.checkbox(
-                &mut app.config.enable_auto_detect_animations,
-                t!("Auto-detectar animaciones"),
-            )
-            .on_hover_text(t!(
-                "Agrupa sprites como walk_001..walk_003 en una animación walk \
+        });
+        ui.checkbox(&mut app.config.recursive, t!("Buscar en subdirectorios"));
+        ui.checkbox(
+            &mut app.config.trim_sprite_names,
+            t!("Quitar la extensión de los nombres"),
+        )
+        .on_hover_text(t!("hero/idle_00.png pasa a llamarse hero/idle_00"));
+        ui.checkbox(
+            &mut app.config.prepend_folder_name,
+            t!("Anteponer el nombre de la carpeta inteligente"),
+        )
+        .on_hover_text(t!(
+            "Solo aplica a carpetas añadidas fuera del directorio de entrada"
+        ));
+        ui.checkbox(
+            &mut app.config.enable_auto_detect_animations,
+            t!("Auto-detectar animaciones"),
+        )
+        .on_hover_text(t!(
+            "Agrupa sprites como walk_001..walk_003 en una animación walk \
                      y la expone en los metadatos (auto-detectar animaciones)"
-            ));
-            ui.label(t!("Ruta de la textura en los metadatos (p. ej. /assets)"));
-            let mut texture_path = app.config.texture_path.clone().unwrap_or_default();
+        ));
+        ui.label(t!("Ruta de la textura en los metadatos (p. ej. /assets)"));
+        let mut texture_path = app.config.texture_path.clone().unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut texture_path)
+                    .desired_width(190.0)
+                    .hint_text(t!("vacío = sin prefijo")),
+            )
+            .changed()
+        {
+            app.config.texture_path = if texture_path.trim().is_empty() {
+                None
+            } else {
+                Some(texture_path)
+            };
+        }
+        ui.label(t!("Escalado de variantes (p. ej. 2, 0.5 ➡ @2x, -hd)"));
+        ui.add(egui::TextEdit::singleline(&mut app.variants_text).desired_width(190.0));
+        variant_presets_ui(app, ui);
+        variant_options_ui(app, ui);
+        ui.label(t!("Plantilla Mustache personalizada (opcional)"));
+        ui.horizontal(|ui| {
+            let mut path = app
+                .config
+                .export_template
+                .as_ref()
+                .map(|p| p.display().to_string())
+                .unwrap_or_default();
+            ui.add(egui::TextEdit::singleline(&mut path).desired_width(160.0));
             if ui
-                .add(
-                    egui::TextEdit::singleline(&mut texture_path)
-                        .desired_width(190.0)
-                        .hint_text(t!("vacío = sin prefijo")),
-                )
-                .changed()
+                .button("…")
+                .on_hover_text(t!("Elegir la plantilla Mustache"))
+                .clicked()
             {
-                app.config.texture_path = if texture_path.trim().is_empty() {
+                if let Some(f) = rfd::FileDialog::new().pick_file() {
+                    app.config.export_template = Some(f);
+                }
+            } else {
+                app.config.export_template = if path.is_empty() {
                     None
                 } else {
-                    Some(texture_path)
-                };
-            }
-            ui.label(t!("Escalado de variantes (p. ej. 2, 0.5 ➡ @2x, -hd)"));
-            ui.add(egui::TextEdit::singleline(&mut app.variants_text).desired_width(190.0));
-            variant_presets_ui(app, ui);
-            variant_options_ui(app, ui);
-            ui.label(t!("Plantilla Mustache personalizada (opcional)"));
-            ui.horizontal(|ui| {
-                let mut path = app
-                    .config
-                    .export_template
-                    .as_ref()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_default();
-                ui.add(egui::TextEdit::singleline(&mut path).desired_width(160.0));
-                if ui
-                    .button("…")
-                    .on_hover_text(t!("Elegir la plantilla Mustache"))
-                    .clicked()
-                {
-                    if let Some(f) = rfd::FileDialog::new().pick_file() {
-                        app.config.export_template = Some(f);
-                    }
-                } else {
-                    app.config.export_template = if path.is_empty() {
-                        None
-                    } else {
-                        Some(std::path::PathBuf::from(path))
-                    };
-                }
-            });
-            custom_exporters_ui(app, ui);
-            template_properties_ui(app, ui);
-            ui.label(t!("Clave de cifrado AES-256-GCM (opcional)"));
-            let mut key = app.config.encryption_key.clone().unwrap_or_default();
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut key)
-                        .desired_width(190.0)
-                        .password(true),
-                )
-                .changed()
-            {
-                app.config.encryption_key = if key.is_empty() { None } else { Some(key) };
-            }
-            // Clave global: se guarda una sola vez y se reutiliza en
-            // cualquier proyecto.
-            ui.label(t!("Clave global (guardada una vez y reutilizable)"));
-            let names = tp_core::keys::list();
-            let mut name = app.config.encryption_key_name.clone().unwrap_or_default();
-            ui.horizontal(|ui| {
-                let selected = if name.is_empty() {
-                    "— ninguna —".to_string()
-                } else {
-                    name.clone()
-                };
-                egui::ComboBox::from_id_salt("global_key_name")
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        if ui
-                            .selectable_value(&mut name, String::new(), t!("— ninguna —"))
-                            .clicked()
-                        {
-                            app.config.encryption_key_name = None;
-                        }
-                        for n in &names {
-                            if ui
-                                .selectable_value(&mut name, n.clone(), n)
-                                .on_hover_text(t!("Usa esta clave en el proyecto"))
-                                .clicked()
-                            {
-                                app.config.encryption_key_name = Some(n.clone());
-                                // La clave escrita a mano tiene prioridad:
-                                // se limpia para que la global surta efecto.
-                                app.config.encryption_key = None;
-                            }
-                        }
-                    });
-                if ui
-                    .button(t!("Guardar"))
-                    .on_hover_text(t!("Guarda la clave escrita arriba con este nombre"))
-                    .clicked()
-                {
-                    let key = app.config.encryption_key.clone().unwrap_or_default();
-                    match tp_core::keys::put(&name, &key) {
-                        Ok(()) => {
-                            app.config.encryption_key_name = Some(name.clone());
-                            app.aviso(
-                                super::LogKind::Info,
-                                t!("Clave global «{}» guardada.", name),
-                            );
-                        }
-                        Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
-                    }
-                }
-                if ui
-                    .button(t!("Borrar"))
-                    .on_hover_text(t!("Borra la clave global seleccionada"))
-                    .clicked()
-                    && !name.is_empty()
-                {
-                    match tp_core::keys::remove(&name) {
-                        Ok(true) => {
-                            app.config.encryption_key_name = None;
-                            app.aviso(super::LogKind::Info, t!("Clave global «{}» borrada.", name));
-                        }
-                        Ok(false) => {}
-                        Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
-                    }
-                }
-            });
-            if ui
-                .add(
-                    egui::TextEdit::singleline(&mut name)
-                        .desired_width(190.0)
-                        .hint_text(t!("nombre de la clave global")),
-                )
-                .changed()
-            {
-                app.config.encryption_key_name = if name.trim().is_empty() {
-                    None
-                } else {
-                    Some(name)
+                    Some(std::path::PathBuf::from(path))
                 };
             }
         });
+        custom_exporters_ui(app, ui);
+        template_properties_ui(app, ui);
+        ui.label(t!("Clave de cifrado AES-256-GCM (opcional)"));
+        let mut key = app.config.encryption_key.clone().unwrap_or_default();
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut key)
+                    .desired_width(190.0)
+                    .password(true),
+            )
+            .changed()
+        {
+            app.config.encryption_key = if key.is_empty() { None } else { Some(key) };
+        }
+        // Clave global: se guarda una sola vez y se reutiliza en
+        // cualquier proyecto.
+        ui.label(t!("Clave global (guardada una vez y reutilizable)"));
+        let names = tp_core::keys::list();
+        let mut name = app.config.encryption_key_name.clone().unwrap_or_default();
+        ui.horizontal(|ui| {
+            let selected = if name.is_empty() {
+                "— ninguna —".to_string()
+            } else {
+                name.clone()
+            };
+            egui::ComboBox::from_id_salt("global_key_name")
+                .selected_text(selected)
+                .show_ui(ui, |ui| {
+                    if ui
+                        .selectable_value(&mut name, String::new(), t!("— ninguna —"))
+                        .clicked()
+                    {
+                        app.config.encryption_key_name = None;
+                    }
+                    for n in &names {
+                        if ui
+                            .selectable_value(&mut name, n.clone(), n)
+                            .on_hover_text(t!("Usa esta clave en el proyecto"))
+                            .clicked()
+                        {
+                            app.config.encryption_key_name = Some(n.clone());
+                            // La clave escrita a mano tiene prioridad:
+                            // se limpia para que la global surta efecto.
+                            app.config.encryption_key = None;
+                        }
+                    }
+                });
+            if ui
+                .button(t!("Guardar"))
+                .on_hover_text(t!("Guarda la clave escrita arriba con este nombre"))
+                .clicked()
+            {
+                let key = app.config.encryption_key.clone().unwrap_or_default();
+                match tp_core::keys::put(&name, &key) {
+                    Ok(()) => {
+                        app.config.encryption_key_name = Some(name.clone());
+                        app.aviso(
+                            super::LogKind::Info,
+                            t!("Clave global «{}» guardada.", name),
+                        );
+                    }
+                    Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
+                }
+            }
+            if ui
+                .button(t!("Borrar"))
+                .on_hover_text(t!("Borra la clave global seleccionada"))
+                .clicked()
+                && !name.is_empty()
+            {
+                match tp_core::keys::remove(&name) {
+                    Ok(true) => {
+                        app.config.encryption_key_name = None;
+                        app.aviso(super::LogKind::Info, t!("Clave global «{}» borrada.", name));
+                    }
+                    Ok(false) => {}
+                    Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
+                }
+            }
+        });
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut name)
+                    .desired_width(190.0)
+                    .hint_text(t!("nombre de la clave global")),
+            )
+            .changed()
+        {
+            app.config.encryption_key_name = if name.trim().is_empty() {
+                None
+            } else {
+                Some(name)
+            };
+        }
+    });
 }
 
 fn layout_section(app: &mut App, ui: &mut egui::Ui) {
     let advanced = app.advanced_settings;
-    egui::CollapsingHeader::new(t!("Composición"))
-        .default_open(true)
-        .show(ui, |ui| {
+    cabecera(t!("Composición"), buscando(app)).show(ui, |ui| {
             let sizes = [256i32, 512, 1024, 2048, 4096, 8192, 16384];
             ui.label(t!("Tamaño máximo"));
             egui::ComboBox::from_id_salt(t!("Tamaño máximo"))
@@ -1017,273 +1040,264 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn processing_section(app: &mut App, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new(t!("Procesamiento"))
-        .default_open(false)
-        .show(ui, |ui| {
-            enum_combo(
-                ui,
-                t!("Profundidad de color"),
-                app.config.color_depth.as_str(),
-                |ui, v| {
-                    ui.selectable_value(v, ColorDepth::Rgba8888, "RGBA8888");
-                    ui.selectable_value(v, ColorDepth::Rgba4444, "RGBA4444");
-                    ui.selectable_value(v, ColorDepth::Rgb565, "RGB565");
-                },
-                &mut app.config.color_depth,
-            );
-            enum_combo(
-                ui,
-                "Dithering",
-                dither_name(app.config.dithering_algorithm),
-                |ui, v| {
-                    ui.selectable_value(v, DitheringAlgorithm::None, t!("Ninguno"));
-                    ui.selectable_value(
-                        v,
-                        DitheringAlgorithm::NearestNeighbour,
-                        "Nearest Neighbour",
-                    );
-                    ui.selectable_value(v, DitheringAlgorithm::Linear, "Linear");
-                    ui.selectable_value(v, DitheringAlgorithm::FloydSteinberg, "Floyd–Steinberg");
-                    ui.selectable_value(
-                        v,
-                        DitheringAlgorithm::FloydSteinbergAlpha,
-                        "Floyd–Steinberg + alpha",
-                    );
-                    ui.selectable_value(v, DitheringAlgorithm::Atkinson, "Atkinson");
-                    ui.selectable_value(v, DitheringAlgorithm::AtkinsonAlpha, "Atkinson + alpha");
-                },
-                &mut app.config.dithering_algorithm,
-            );
-            enum_combo(
-                ui,
-                "Transparencia",
-                alpha_handling_name(app.config.alpha_handling),
-                |ui, v| {
-                    ui.selectable_value(
-                        v,
-                        AlphaHandling::KeepTransparentPixels,
-                        t!("Conservar píxeles"),
-                    );
-                    ui.selectable_value(
-                        v,
-                        AlphaHandling::ClearTransparentPixels,
-                        "Limpiar transparentes",
-                    );
-                    ui.selectable_value(
-                        v,
-                        AlphaHandling::ReduceBorderArtifacts,
-                        "Reducir bordes (bleeding)",
-                    );
-                    ui.selectable_value(
-                        v,
-                        AlphaHandling::PremultiplyAlpha,
-                        t!("Premultiplicar alpha"),
-                    );
-                },
-                &mut app.config.alpha_handling,
-            );
-            enum_combo(
-                ui,
-                t!("Escalado de variantes"),
-                app.config.scale_mode.as_str(),
-                |ui, v| {
-                    ui.selectable_value(v, ScaleMode::Smooth, t!("Suave (bilineal)"));
-                    ui.selectable_value(v, ScaleMode::Fast, t!("Rápido (vecino más cercano)"));
-                    ui.selectable_value(v, ScaleMode::Scale2x, "Scale2x (2x)");
-                    ui.selectable_value(v, ScaleMode::Scale3x, "Scale3x (3x)");
-                    ui.selectable_value(v, ScaleMode::Scale4x, "Scale4x (4x)");
-                    ui.selectable_value(v, ScaleMode::Eagle, "Eagle (2x)");
-                },
-                &mut app.config.scale_mode,
-            );
-            enum_combo(
-                ui,
-                t!("Formato de publicación"),
-                app.config.gpu_format.as_str(),
-                |ui, v| {
-                    ui.selectable_value(v, GpuFormat::Png, "PNG");
-                    ui.selectable_value(v, GpuFormat::Png8, t!("PNG-8 (indexado)"));
-                    ui.selectable_value(v, GpuFormat::Jpg, "JPG");
-                    ui.selectable_value(v, GpuFormat::WebP, "WebP");
-                    ui.selectable_value(v, GpuFormat::Bmp, "BMP");
-                    ui.selectable_value(v, GpuFormat::Tga, "TGA");
-                    ui.selectable_value(v, GpuFormat::Tiff, "TIFF");
-                    ui.selectable_value(v, GpuFormat::Dds, "DDS");
+    cabecera(t!("Procesamiento"), buscando(app)).show(ui, |ui| {
+        enum_combo(
+            ui,
+            t!("Profundidad de color"),
+            app.config.color_depth.as_str(),
+            |ui, v| {
+                ui.selectable_value(v, ColorDepth::Rgba8888, "RGBA8888");
+                ui.selectable_value(v, ColorDepth::Rgba4444, "RGBA4444");
+                ui.selectable_value(v, ColorDepth::Rgb565, "RGB565");
+            },
+            &mut app.config.color_depth,
+        );
+        enum_combo(
+            ui,
+            "Dithering",
+            dither_name(app.config.dithering_algorithm),
+            |ui, v| {
+                ui.selectable_value(v, DitheringAlgorithm::None, t!("Ninguno"));
+                ui.selectable_value(v, DitheringAlgorithm::NearestNeighbour, "Nearest Neighbour");
+                ui.selectable_value(v, DitheringAlgorithm::Linear, "Linear");
+                ui.selectable_value(v, DitheringAlgorithm::FloydSteinberg, "Floyd–Steinberg");
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::FloydSteinbergAlpha,
+                    "Floyd–Steinberg + alpha",
+                );
+                ui.selectable_value(v, DitheringAlgorithm::Atkinson, "Atkinson");
+                ui.selectable_value(v, DitheringAlgorithm::AtkinsonAlpha, "Atkinson + alpha");
+            },
+            &mut app.config.dithering_algorithm,
+        );
+        enum_combo(
+            ui,
+            "Transparencia",
+            alpha_handling_name(app.config.alpha_handling),
+            |ui, v| {
+                ui.selectable_value(
+                    v,
+                    AlphaHandling::KeepTransparentPixels,
+                    t!("Conservar píxeles"),
+                );
+                ui.selectable_value(
+                    v,
+                    AlphaHandling::ClearTransparentPixels,
+                    "Limpiar transparentes",
+                );
+                ui.selectable_value(
+                    v,
+                    AlphaHandling::ReduceBorderArtifacts,
+                    "Reducir bordes (bleeding)",
+                );
+                ui.selectable_value(
+                    v,
+                    AlphaHandling::PremultiplyAlpha,
+                    t!("Premultiplicar alpha"),
+                );
+            },
+            &mut app.config.alpha_handling,
+        );
+        enum_combo(
+            ui,
+            t!("Escalado de variantes"),
+            app.config.scale_mode.as_str(),
+            |ui, v| {
+                ui.selectable_value(v, ScaleMode::Smooth, t!("Suave (bilineal)"));
+                ui.selectable_value(v, ScaleMode::Fast, t!("Rápido (vecino más cercano)"));
+                ui.selectable_value(v, ScaleMode::Scale2x, "Scale2x (2x)");
+                ui.selectable_value(v, ScaleMode::Scale3x, "Scale3x (3x)");
+                ui.selectable_value(v, ScaleMode::Scale4x, "Scale4x (4x)");
+                ui.selectable_value(v, ScaleMode::Eagle, "Eagle (2x)");
+            },
+            &mut app.config.scale_mode,
+        );
+        enum_combo(
+            ui,
+            t!("Formato de publicación"),
+            app.config.gpu_format.as_str(),
+            |ui, v| {
+                ui.selectable_value(v, GpuFormat::Png, "PNG");
+                ui.selectable_value(v, GpuFormat::Png8, t!("PNG-8 (indexado)"));
+                ui.selectable_value(v, GpuFormat::Jpg, "JPG");
+                ui.selectable_value(v, GpuFormat::WebP, "WebP");
+                ui.selectable_value(v, GpuFormat::Bmp, "BMP");
+                ui.selectable_value(v, GpuFormat::Tga, "TGA");
+                ui.selectable_value(v, GpuFormat::Tiff, "TIFF");
+                ui.selectable_value(v, GpuFormat::Dds, "DDS");
+                ui.separator();
+                ui.selectable_value(v, GpuFormat::Astc4x4, "ASTC 4x4");
+                ui.selectable_value(v, GpuFormat::Etc2Rgba, "ETC2 RGBA (ktx)");
+                ui.selectable_value(v, GpuFormat::Etc1, "ETC1 (pkm)");
+                ui.selectable_value(v, GpuFormat::Etc1Ktx, t!("ETC1 en KTX (ktx)"));
+                ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP (pvr)");
+                ui.selectable_value(v, GpuFormat::Basis, "Basis (basis)");
+                ui.separator();
+                ui.selectable_value(v, GpuFormat::Zktx, t!("KTX con zlib (zktx)"));
+                ui.selectable_value(v, GpuFormat::Ktx2, t!("KTX2 sin comprimir (ktx2)"));
+                ui.selectable_value(v, GpuFormat::Pvr3Gz, t!("PVR3 en gzip (pvr.gz)"));
+                ui.selectable_value(v, GpuFormat::Pvr3Ccz, t!("PVR3 en CCZ (pvr.ccz)"));
+            },
+            &mut app.config.gpu_format,
+        );
+        // El formato de píxel debe encajar con el formato de textura
+        // elegido: si el usuario cambia de formato y deja un pixel format
+        // insoportable, se vuelve al RGBA8888.
+        if !app
+            .config
+            .pixel_format
+            .is_compatible_with(app.config.gpu_format)
+        {
+            app.config.pixel_format = PixelFormat::Rgba8888;
+        }
+        let gpu = app.config.gpu_format;
+        enum_combo(
+            ui,
+            t!("Formato de píxel"),
+            app.config.pixel_format.as_str(),
+            |ui, v| {
+                for &(fmt, label) in SOFT_PIXEL_FORMATS {
+                    ui.selectable_value(v, fmt, label);
+                }
+                if GPU_PIXEL_FORMATS
+                    .iter()
+                    .any(|(f, _)| f.is_compatible_with(gpu))
+                {
                     ui.separator();
-                    ui.selectable_value(v, GpuFormat::Astc4x4, "ASTC 4x4");
-                    ui.selectable_value(v, GpuFormat::Etc2Rgba, "ETC2 RGBA (ktx)");
-                    ui.selectable_value(v, GpuFormat::Etc1, "ETC1 (pkm)");
-                    ui.selectable_value(v, GpuFormat::Etc1Ktx, t!("ETC1 en KTX (ktx)"));
-                    ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP (pvr)");
-                    ui.selectable_value(v, GpuFormat::Basis, "Basis (basis)");
-                    ui.separator();
-                    ui.selectable_value(v, GpuFormat::Zktx, t!("KTX con zlib (zktx)"));
-                    ui.selectable_value(v, GpuFormat::Ktx2, t!("KTX2 sin comprimir (ktx2)"));
-                    ui.selectable_value(v, GpuFormat::Pvr3Gz, t!("PVR3 en gzip (pvr.gz)"));
-                    ui.selectable_value(v, GpuFormat::Pvr3Ccz, t!("PVR3 en CCZ (pvr.ccz)"));
-                },
-                &mut app.config.gpu_format,
-            );
-            // El formato de píxel debe encajar con el formato de textura
-            // elegido: si el usuario cambia de formato y deja un pixel format
-            // insoportable, se vuelve al RGBA8888.
-            if !app
-                .config
-                .pixel_format
-                .is_compatible_with(app.config.gpu_format)
-            {
-                app.config.pixel_format = PixelFormat::Rgba8888;
-            }
-            let gpu = app.config.gpu_format;
-            enum_combo(
-                ui,
-                t!("Formato de píxel"),
-                app.config.pixel_format.as_str(),
-                |ui, v| {
-                    for &(fmt, label) in SOFT_PIXEL_FORMATS {
-                        ui.selectable_value(v, fmt, label);
-                    }
-                    if GPU_PIXEL_FORMATS
-                        .iter()
-                        .any(|(f, _)| f.is_compatible_with(gpu))
-                    {
-                        ui.separator();
-                        for &(fmt, label) in GPU_PIXEL_FORMATS {
-                            if fmt.is_compatible_with(gpu) {
-                                ui.selectable_value(v, fmt, label);
-                            }
+                    for &(fmt, label) in GPU_PIXEL_FORMATS {
+                        if fmt.is_compatible_with(gpu) {
+                            ui.selectable_value(v, fmt, label);
                         }
                     }
-                },
-                &mut app.config.pixel_format,
-            );
-            match app.config.gpu_format {
-                GpuFormat::Png | GpuFormat::Png8 => {
-                    ui.label(t!("Optimización PNG (0-7)"));
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(egui::DragValue::new(&mut app.config.png_opt_level).range(0..=7))
-                            .changed()
-                        {
-                            // No reempaqueta: solo afecta a la exportación.
-                            app.log(
-                                super::LogKind::Info,
-                                t!("Se aplicará al Publicar (nivel de optimización PNG).").into(),
-                            );
-                        }
-                    });
                 }
-                GpuFormat::Jpg => {
-                    ui.label(t!("Calidad JPG (0-100)"));
-                    ui.horizontal(|ui| {
-                        if ui
-                            .add(egui::DragValue::new(&mut app.config.jpg_quality).range(0..=100))
-                            .changed()
-                        {
-                            app.log(
-                                super::LogKind::Info,
-                                t!("Se aplicará al Publicar (calidad JPG).").into(),
-                            );
-                        }
-                    });
-                }
-                GpuFormat::WebP => {
-                    let mut lossless = app.config.webp_quality > 100;
+            },
+            &mut app.config.pixel_format,
+        );
+        match app.config.gpu_format {
+            GpuFormat::Png | GpuFormat::Png8 => {
+                ui.label(t!("Optimización PNG (0-7)"));
+                ui.horizontal(|ui| {
                     if ui
-                        .checkbox(&mut lossless, t!("WebP sin pérdidas"))
+                        .add(egui::DragValue::new(&mut app.config.png_opt_level).range(0..=7))
                         .changed()
                     {
-                        app.config.webp_quality = if lossless { 101 } else { 100 };
-                    }
-                    if app.config.webp_quality <= 100 {
-                        ui.label(t!("Calidad WebP (0-100)"));
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add(
-                                    egui::DragValue::new(&mut app.config.webp_quality)
-                                        .range(0..=100),
-                                )
-                                .changed()
-                            {
-                                app.log(
-                                    super::LogKind::Info,
-                                    t!("Se aplicará al Publicar (calidad WebP).").into(),
-                                );
-                            }
-                        });
-                    }
-                }
-                _ => {}
-            }
-            // Calidades por formato de textura.
-            match app.config.gpu_format {
-                GpuFormat::Pvrtc4Bpp | GpuFormat::Pvr3Gz | GpuFormat::Pvr3Ccz => {
-                    ui.label(t!("Calidad PVRTC (0-7)"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut app.config.pvr_quality).range(0..=7));
-                    });
-                }
-                GpuFormat::Etc1 | GpuFormat::Etc1Ktx => {
-                    ui.label(t!("Calidad ETC1 (0-100)"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut app.config.etc1_quality).range(0..=100));
-                    });
-                }
-                GpuFormat::Etc2Rgba => {
-                    ui.label(t!("Calidad ETC2 (0-100)"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut app.config.etc2_quality).range(0..=100));
-                    });
-                }
-                GpuFormat::Astc4x4 => {
-                    ui.label(t!("Calidad ASTC (0-4, 4 = exhaustivo)"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
-                    });
-                }
-                GpuFormat::Basis => {
-                    ui.label(t!("Calidad Basis ETC1S (0-100)"));
-                    ui.horizontal(|ui| {
-                        ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
-                    });
-                }
-                _ => {}
-            }
-            if app.config.gpu_format == GpuFormat::Dds
-                && matches!(
-                    app.config.pixel_format,
-                    PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5
-                )
-            {
-                enum_combo(
-                    ui,
-                    "Modo DXT",
-                    app.config.dxt_mode.as_str(),
-                    |ui, v| {
-                        ui.selectable_value(v, DxtMode::Linear, t!("DXT_LINEAR (error uniforme)"));
-                        ui.selectable_value(
-                            v,
-                            DxtMode::Perceptual,
-                            t!("DXT_PERCEPTUAL (pondera la luminancia)"),
+                        // No reempaqueta: solo afecta a la exportación.
+                        app.log(
+                            super::LogKind::Info,
+                            t!("Se aplicará al Publicar (nivel de optimización PNG).").into(),
                         );
-                    },
-                    &mut app.config.dxt_mode,
-                );
+                    }
+                });
             }
-            if app.config.gpu_format == GpuFormat::Png8 {
-                enum_combo(
-                    ui,
-                    "Dithering PNG-8",
-                    app.config.png8_dither.as_str(),
-                    |ui, v| {
-                        ui.selectable_value(v, PngDither::Low, "PngQuant Low");
-                        ui.selectable_value(v, PngDither::Medium, "PngQuant Medium");
-                        ui.selectable_value(v, PngDither::High, "PngQuant High");
-                    },
-                    &mut app.config.png8_dither,
-                );
+            GpuFormat::Jpg => {
+                ui.label(t!("Calidad JPG (0-100)"));
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(egui::DragValue::new(&mut app.config.jpg_quality).range(0..=100))
+                        .changed()
+                    {
+                        app.log(
+                            super::LogKind::Info,
+                            t!("Se aplicará al Publicar (calidad JPG).").into(),
+                        );
+                    }
+                });
             }
-        });
+            GpuFormat::WebP => {
+                let mut lossless = app.config.webp_quality > 100;
+                if ui
+                    .checkbox(&mut lossless, t!("WebP sin pérdidas"))
+                    .changed()
+                {
+                    app.config.webp_quality = if lossless { 101 } else { 100 };
+                }
+                if app.config.webp_quality <= 100 {
+                    ui.label(t!("Calidad WebP (0-100)"));
+                    ui.horizontal(|ui| {
+                        if ui
+                            .add(egui::DragValue::new(&mut app.config.webp_quality).range(0..=100))
+                            .changed()
+                        {
+                            app.log(
+                                super::LogKind::Info,
+                                t!("Se aplicará al Publicar (calidad WebP).").into(),
+                            );
+                        }
+                    });
+                }
+            }
+            _ => {}
+        }
+        // Calidades por formato de textura.
+        match app.config.gpu_format {
+            GpuFormat::Pvrtc4Bpp | GpuFormat::Pvr3Gz | GpuFormat::Pvr3Ccz => {
+                ui.label(t!("Calidad PVRTC (0-7)"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut app.config.pvr_quality).range(0..=7));
+                });
+            }
+            GpuFormat::Etc1 | GpuFormat::Etc1Ktx => {
+                ui.label(t!("Calidad ETC1 (0-100)"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut app.config.etc1_quality).range(0..=100));
+                });
+            }
+            GpuFormat::Etc2Rgba => {
+                ui.label(t!("Calidad ETC2 (0-100)"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut app.config.etc2_quality).range(0..=100));
+                });
+            }
+            GpuFormat::Astc4x4 => {
+                ui.label(t!("Calidad ASTC (0-4, 4 = exhaustivo)"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
+                });
+            }
+            GpuFormat::Basis => {
+                ui.label(t!("Calidad Basis ETC1S (0-100)"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
+                });
+            }
+            _ => {}
+        }
+        if app.config.gpu_format == GpuFormat::Dds
+            && matches!(
+                app.config.pixel_format,
+                PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5
+            )
+        {
+            enum_combo(
+                ui,
+                "Modo DXT",
+                app.config.dxt_mode.as_str(),
+                |ui, v| {
+                    ui.selectable_value(v, DxtMode::Linear, t!("DXT_LINEAR (error uniforme)"));
+                    ui.selectable_value(
+                        v,
+                        DxtMode::Perceptual,
+                        t!("DXT_PERCEPTUAL (pondera la luminancia)"),
+                    );
+                },
+                &mut app.config.dxt_mode,
+            );
+        }
+        if app.config.gpu_format == GpuFormat::Png8 {
+            enum_combo(
+                ui,
+                "Dithering PNG-8",
+                app.config.png8_dither.as_str(),
+                |ui, v| {
+                    ui.selectable_value(v, PngDither::Low, "PngQuant Low");
+                    ui.selectable_value(v, PngDither::Medium, "PngQuant Medium");
+                    ui.selectable_value(v, PngDither::High, "PngQuant High");
+                },
+                &mut app.config.png8_dither,
+            );
+        }
+    });
 }
 
 /// Avisos de configuración que solo se ven en la GUI (antes de publicar).
@@ -1742,8 +1756,7 @@ fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
 /// «Formato de metadatos»: el exportador propio sólo aporta el texto (y
 /// `validate()` sólo acepta ids de formatos oficiales).
 fn custom_exporters_ui(app: &mut App, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new(t!("Exportadores propios"))
-        .default_open(false)
+    cabecera(t!("Exportadores propios"), buscando(app))
         .show(ui, |ui| custom_exporters_body(app, ui));
 }
 
@@ -1836,8 +1849,7 @@ fn custom_exporters_body(app: &mut App, ui: &mut egui::Ui) -> bool {
 /// `exporterProperties.*` que citan la plantilla de texto plano y los `.hbs`
 /// propios.
 fn template_properties_ui(app: &mut App, ui: &mut egui::Ui) {
-    egui::CollapsingHeader::new(t!("Propiedades de la plantilla"))
-        .default_open(false)
+    cabecera(t!("Propiedades de la plantilla"), buscando(app))
         .show(ui, |ui| template_properties_body(app, ui));
 }
 
@@ -2120,11 +2132,23 @@ mod tests {
     /// sobra y los apretujones que el usuario ve en una ventana normal
     /// no salen.
     fn ajustes_frame(app: &mut App, ctx: &egui::Context) -> eframe::egui::FullOutput {
+        ajustes_con_eventos(app, ctx, Vec::new())
+    }
+
+    /// El mismo panel dejando pasar eventos en la entrada. Los miradores
+    /// que necesitan un gesto de verdad —un clic, no un `default_open` a
+    /// mano— lo usan: la pantalla es idéntica, sólo que el puntero entra.
+    fn ajustes_con_eventos(
+        app: &mut App,
+        ctx: &egui::Context,
+        eventos: Vec<egui::Event>,
+    ) -> eframe::egui::FullOutput {
         let pantalla = egui::RawInput {
             screen_rect: Some(egui::Rect::from_min_size(
                 egui::Pos2::ZERO,
                 egui::vec2(1360.0, 860.0),
             )),
+            events: eventos,
             ..egui::RawInput::default()
         };
         ctx.run(pantalla, |ctx| {
@@ -2169,8 +2193,10 @@ mod tests {
         lineas.join("\n")
     }
 
-    /// I3: el buscador estrecha el panel a las secciones cuyas etiquetas
-    /// coinciden y deja un botón para limpiarlo.
+    /// I3/F7: el buscador estrecha el panel a las secciones cuyas etiquetas
+    /// coinciden, **las abre** —que el filtro no termine en un título—,
+    /// deja un botón para limpiarlo y, al limpiarlo, el panel vuelve a su
+    /// estado plegado de origen.
     #[test]
     fn el_buscador_deja_solo_las_secciones_que_coinciden() {
         let ctx = egui::Context::default();
@@ -2193,6 +2219,11 @@ mod tests {
             "«Extrusión (px)» vive en Composición: {filtrado}"
         );
         assert!(
+            filtrado.contains("Extrusión (px)"),
+            "con la sección plegada el filtro sólo enseñaría su título: \
+             el buscador la abre y se ve el control: {filtrado}"
+        );
+        assert!(
             !filtrado.contains("Procesamiento"),
             "Procesamiento no habla de extrusión: {filtrado}"
         );
@@ -2210,6 +2241,39 @@ mod tests {
         assert!(
             otra_vez.contains("Procesamiento"),
             "limpiado el filtro vuelve todo: {otra_vez}"
+        );
+        assert!(
+            !otra_vez.contains("Tamaño máximo"),
+            "limpiado el filtro el panel vuelve a plegado y no hereda lo que \
+             la búsqueda hubiera abierto: {otra_vez}"
+        );
+    }
+
+    /// F7: y el filtro no se queda en la cabecera de «Datos»: entra en los
+    /// colapsables anidados dentro de ella. Si no, buscar un alias CLI
+    /// terminaría en dos títulos apilados y el control seguiría escondido.
+    /// Se busca por el texto de ayuda que sí pasa por `t!` y que el índice
+    /// conoce.
+    #[test]
+    fn el_buscador_entra_en_los_colapsables_anidados() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.advanced_settings = true;
+        app.settings_filter = "--class-file".into();
+
+        let texto = pintar_ajustes(&mut app, &ctx);
+        assert!(
+            texto.contains("Ficheros extra por framework"),
+            "los extras están en «Datos», que es lo que coincide: {texto}"
+        );
+        assert!(
+            texto.contains("Vacío = no escribir"),
+            "el colapsable anidado se abre con el filtro y se ve su \
+             contenido, no sólo el título: {texto}"
+        );
+        assert!(
+            !texto.contains("Tamaño máximo"),
+            "«Composición» no habla de alias CLI: {texto}"
         );
     }
 
@@ -2230,13 +2294,14 @@ mod tests {
         assert!(texto.contains("Limpiar"), "queda la salida: {texto}");
     }
 
-    /// F4: el panel se ordena por lo que se toca —lo que cambia en todos
+    /// F4/F7: el panel se ordena por lo que se toca —lo que cambia en todos
     /// los proyectos por delante de lo que se fija una vez— y arranca con
-    /// sólo «Composición» desplegada: con las cuatro abiertas el panel
-    /// empezaba por un muro de quince controles seguidos. Los cuatro
-    /// títulos se buscan por su texto y se comparan por su altura.
+    /// **las cuatro plegadas**: con ellas abiertas el panel empezaba por un
+    /// muro de trece controles seguidos y no se veía dónde empezaba cada
+    /// cosa. Los cuatro títulos se buscan por su texto y se comparan por su
+    /// altura; el contenido de cada uno no se pinta hasta que se abre.
     #[test]
-    fn las_secciones_se_ordenan_por_uso_y_solo_composicion_arranca_abierta() {
+    fn las_secciones_se_ordenan_por_uso_y_arrancan_plegadas() {
         let ctx = egui::Context::default();
         let mut app = App::new_for_testing(ctx.clone(), None);
         let salida = ajustes_frame(&mut app, &ctx);
@@ -2266,12 +2331,60 @@ mod tests {
 
         let texto = crate::testing::texto_pintado(&salida);
         assert!(
-            texto.contains("Tamaño máximo"),
-            "«Composición» es la que arranca desplegada: {texto}"
+            texto.contains("Composición") && texto.contains("Interfaz"),
+            "con todo plegado sólo se ven las cuatro cabeceras: {texto}"
         );
+        for contenido in [
+            "Tamaño máximo",
+            "Directorio de entrada",
+            "Profundidad de color",
+            "Idioma",
+        ] {
+            assert!(
+                !texto.contains(contenido),
+                "«{contenido}» vive dentro de una sección y no se pinta hasta \
+                 que se abre: {texto}"
+            );
+        }
+    }
+
+    /// F7: con todo plegado, la cabecera es la única puerta de entrada al
+    /// contenido, así que tiene que abrirla un clic de verdad. No basta
+    /// con mirar `default_open`: se manda el puntero, la bajada y la
+    /// subida en frames distintos —egui sólo suelta el clic al soltar—.
+    #[test]
+    fn un_clic_en_la_cabecera_abre_la_seccion() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        let primera = ajustes_frame(&mut app, &ctx);
+        let donde = crate::testing::textos_pintados(&primera)
+            .iter()
+            .find(|(texto, _, _)| texto.trim() == "Composición")
+            .map(|(_, rect, _)| rect.center())
+            .expect("la cabecera «Composición» se pinta");
+        let antes = crate::testing::texto_pintado(&primera);
         assert!(
-            !texto.contains("Idioma"),
-            "«Interfaz» arranca plegada y su contenido no debe pintarse: {texto}"
+            !antes.contains("Tamaño máximo"),
+            "arranca plegada, que es lo que el clic tiene que abrir: {antes}"
+        );
+
+        let boton = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ajustes_con_eventos(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(donde), boton(donde, true)],
+        );
+        let tras_el_clic = ajustes_con_eventos(&mut app, &ctx, vec![boton(donde, false)]);
+        let despues = crate::testing::texto_pintado(&tras_el_clic);
+        assert!(
+            despues.contains("Tamaño máximo"),
+            "un clic en la cabecera despliega «Composición»: {despues}"
         );
     }
 
@@ -2401,10 +2514,15 @@ mod tests {
     /// dice dónde está nada: la etiqueta de un desplegable por encima de su
     /// valor, y las de los tres tipos de control (desplegable propio,
     /// `enum_combo` y slider) empezando todas en el mismo margen.
+    ///
+    /// El panel arranca plegado, así que el test abre «Composición» como
+    /// haría una persona: con el buscador, que es la vía que obliga a la
+    /// sección a desplegarse sola.
     #[test]
     fn las_etiquetas_van_encima_y_alineadas_a_la_izquierda() {
         let ctx = egui::Context::default();
         let mut app = App::new_for_testing(ctx.clone(), None);
+        app.settings_filter = "extrusión".into();
         let valor_escrito = app.config.max_texture_size.to_string();
         let salida = ajustes_frame(&mut app, &ctx);
         let pintados = crate::testing::textos_pintados(&salida);
