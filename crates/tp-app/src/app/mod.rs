@@ -445,10 +445,13 @@ impl eframe::App for App {
                 .show(ctx, |ui| settings::settings_ui(self, ui));
         }
 
-        // `Frame::central_panel` es el marco que egui usaría solo: mismo
-        // margen de 8 px, relleno con el token del lienzo.
+        // El marco de `Frame::central_panel` con su margen de 8 px dejaba
+        // una tira de lienzo entre la barra de zoom y el panel inferior: la
+        // banda medía 39 px en vez de los 32 del diseño (Fase 5). Se quita
+        // el margen; el relleno sigue siendo el token del lienzo, así que
+        // el color de la zona no cambia, sólo dónde empieza su contenido.
         egui::CentralPanel::default()
-            .frame(egui::Frame::central_panel(&ctx.style()).fill(superficies.lienzo))
+            .frame(egui::Frame::new().fill(superficies.lienzo))
             .show(ctx, |ui| preview::preview_ui(self, ui));
 
         sprite_settings::sprite_settings_window(self, ctx);

@@ -142,6 +142,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Página anterior", "Previous page"),
     ("Página siguiente", "Next page"),
     ("Zoom al 100% (tamaño real)", "Zoom to 100% (actual size)"),
+    ("Zoom {} %", "Zoom {} %"),
     ("Ajustar", "Fit"),
     ("Encuadrar el atlas completo en la vista", "Frame the whole atlas in the view"),
     ("Vista", "View"),

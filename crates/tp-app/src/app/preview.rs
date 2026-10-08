@@ -41,16 +41,20 @@ pub(super) fn preview_ui(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
+    // Ancho real de la barra: dentro del scroll el contenido es infinito en
+    // X, así que hay que anotarlo antes para poder alinear a su borde
+    // derecho (Fase 5).
+    let ancho = ui.available_width();
     // La barra nunca desborda: si no cabe, aparece scroll horizontal.
     egui::ScrollArea::horizontal()
         .id_salt("zoom_bar_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            zoom_bar_inner(app, ui);
+            zoom_bar_inner(app, ui, ancho);
         });
 }
 
-fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
+fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
     ui.horizontal(|ui| {
         // Indicador de frescura de la vista previa.
         match app.preview_state() {
@@ -91,34 +95,10 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
             ui.separator();
         }
 
-        if ui.button("−").on_hover_text(t!("Alejar")).clicked() {
-            zoom_step(app, -1);
-        }
-        let zoom_slider = ui.add(
-            egui::Slider::new(&mut app.zoom, 0.05..=8.0)
-                .logarithmic(true)
-                .text("Zoom"),
-        );
-        if zoom_slider.changed() {
-            app.auto_fit = false;
-        }
-        if ui.button("+").on_hover_text(t!("Acercar")).clicked() {
-            zoom_step(app, 1);
-        }
-        if ui.button("1:1").on_hover_text(t!("Zoom al 100% (tamaño real)")).clicked() {
-            app.zoom = 1.0;
-            app.auto_fit = false;
-        }
-        if ui
-            .button(t!("Ajustar"))
-            .on_hover_text(t!("Encuadrar el atlas completo en la vista"))
-            .clicked()
-        {
-            app.fit_zoom();
-            app.auto_fit = false;
-        }
+        // Los controles de zoom ya no viven aquí: están al fondo de la
+        // barra, pegados a la derecha (Fase 5). Aquí sólo quedan estado,
+        // páginas y menús.
 
-        ui.separator();
         ui.menu_button(t!("Vista"), |ui| {
             ui.checkbox(&mut app.show_outlines, t!("Mostrar contornos"))
                 .on_hover_text(t!("Marcos y triangulación de los sprites"));
@@ -186,6 +166,59 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui) {
                     .truncate(),
             );
         }
+
+        // Controles de zoom pegados al borde derecho (Fase 5): lo que se
+        // toca mientras se mira el lienzo no debe quedarse en mitad de la
+        // barra, y el rótulo dice el zoom en porcentaje —«Zoom 800 %»— en
+        // lugar del factor suelto seguido del literal —«8.0 Zoom»—.
+        //
+        // La barra vive dentro de un `ScrollArea` horizontal, cuyo ancho de
+        // contenido es infinito: alinear a la derecha exige un ancho
+        // concreto, y sólo queda libre el que falta hasta el borde de la
+        // barra (los controles de la izquierda ya se han llevado el resto).
+        let ocupado = ui.cursor().min.x - ui.max_rect().min.x;
+        let restante = (ancho - ocupado).max(0.0);
+        ui.allocate_ui_with_layout(
+            egui::vec2(restante, ui.available_height()),
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+            if ui
+                .button(t!("Ajustar"))
+                .on_hover_text(t!("Encuadrar el atlas completo en la vista"))
+                .clicked()
+            {
+                app.fit_zoom();
+                app.auto_fit = false;
+            }
+            if ui
+                .button("1:1")
+                .on_hover_text(t!("Zoom al 100% (tamaño real)"))
+                .clicked()
+            {
+                app.zoom = 1.0;
+                app.auto_fit = false;
+            }
+            if ui.button("+").on_hover_text(t!("Acercar")).clicked() {
+                zoom_step(app, 1);
+            }
+            let porcentaje = (app.zoom * 100.0).round() as i32;
+            let zoom_slider = ui.add(
+                egui::Slider::new(&mut app.zoom, 0.05..=8.0)
+                    .logarithmic(true)
+                    .show_value(false)
+                    .text(t!("Zoom {} %", porcentaje)),
+            );
+            if zoom_slider.changed() {
+                app.auto_fit = false;
+            }
+            if ui.button("−").on_hover_text(t!("Alejar")).clicked() {
+                zoom_step(app, -1);
+            }
+            // Último en entrar en un diseño de derecha a izquierda: queda
+            // a la izquierda del grupo, separándolo del resto de la barra.
+            ui.separator();
+            }
+        );
     });
 }
 
@@ -302,10 +335,47 @@ fn drop_strip(ui: &mut egui::Ui, hovering: bool) {
     );
 }
 
+/// Retícula del lienzo: una caja de 1 px cada 32 px al 6 % de opacidad,
+/// alineada a las coordenadas de la ventana para que no vibre con el scroll.
+/// El color sale del texto del tema, así que sobre fondo claro son líneas
+/// oscuras y sobre oscuro, claras.
+fn pintar_reticula(ui: &egui::Ui, area: egui::Rect) {
+    const PASO: f32 = 32.0;
+    let texto = ui.visuals().text_color();
+    let color = egui::Color32::from_rgba_unmultiplied(texto.r(), texto.g(), texto.b(), 15); // ≈6 %
+    let painter = ui.painter();
+    let primer_x = (area.min.x / PASO).ceil() * PASO;
+    let mut x = primer_x;
+    while x < area.max.x {
+        painter.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(x, area.min.y), egui::pos2(x + 1.0, area.max.y)),
+            0.0,
+            color,
+        );
+        x += PASO;
+    }
+    let mut y = (area.min.y / PASO).ceil() * PASO;
+    while y < area.max.y {
+        painter.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(area.min.x, y), egui::pos2(area.max.x, y + 1.0)),
+            0.0,
+            color,
+        );
+        y += PASO;
+    }
+}
+
 fn preview_area(app: &mut App, ui: &mut egui::Ui) {
     app.preview_size = ui.available_size();
     app.canvas_rect = None;
     app.preview_zoom = app.zoom;
+
+    // Retícula de 32 px al 6 %: se pinta antes que nada, así que queda
+    // debajo de la hoja y encima del relleno de la zona. Aparte de separar
+    // de un vistazo el lienzo de los paneles de al lado, la caja mide lo
+    // mismo que 32 px de atlas a 100 %, así que sirve de referencia de
+    // escala (Fase 5 del rediseño).
+    pintar_reticula(ui, ui.max_rect());
 
     // Encuadre automático: la primera vez que hay resultado y el lienzo ya
     // está medido, la hoja se enmarca entera en lugar de quedar pegada a la
@@ -475,7 +545,20 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         .id_salt("preview_scroll")
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let (rect, response) = ui.allocate_exact_size(size, egui::Sense::click_and_drag());
+            // La hoja se centra en el lienzo cuando no lo llena: pegada a
+            // la esquina de arriba a la izquierda se leía como un elemento
+            // más del panel, no como la vista del atlas (Fase 5). El hueco
+            // sobrante se reserva en los dos ejes; si al subir el zoom la
+            // hoja llena el lienzo, `extra` es cero y vuelve a haber scroll
+            // como antes. Se descuenta lo que ocupen las barras de scroll
+            // (0 px con el estilo flotante por defecto) para que al centrar
+            // no aparezca ninguna barra de repente.
+            let barra = ui.style().spacing.scroll.allocated_width();
+            let visor = app.preview_size - egui::vec2(barra, barra);
+            let extra = ((visor - size) / 2.0).max(egui::Vec2::ZERO);
+            let (_, marco) = ui.allocate_space(size + extra * 2.0);
+            let rect = egui::Rect::from_min_size(marco.min + extra, size);
+            let response = ui.interact(rect, ui.id().with("hoja"), egui::Sense::click_and_drag());
             // El lienzo es destino de soltado de sprites del panel izquierdo:
             // registrar geometría y consumir el drop (ver post-frame abajo).
             app.canvas_rect = Some(rect);
@@ -1768,6 +1851,255 @@ mod error_tests {
             app.preview_error.is_some(),
             "el motivo sigue a la vista en el lienzo; registro: {:?}",
             app.log_texts()
+        );
+    }
+}
+
+/// Fase 5 del rediseño: hoja centrada, retícula del lienzo y barra de zoom
+/// (rótulo en porcentaje, controles a la derecha y banda de 32 px).
+#[cfg(test)]
+mod fase5_tests {
+    use super::*;
+    use crate::testing::{idle_input, rellenos_pintados, textos_pintados};
+
+    /// Página sintética de `w`×`h` con la imagen a cero: para probar la
+    /// geometría del lienzo sin montar el pipeline ni leer el disco.
+    fn hoja_de(w: i32, h: i32) -> tp_core::pipeline::PipelineOutput {
+        let info = tp_core::types::PageInfo {
+            index: 0,
+            width: w,
+            height: h,
+            file_name: "atlas.png".to_string(),
+            format: "PNG".to_string(),
+            has_normals: false,
+            normal_file_name: None,
+            encrypted: false,
+            fill_ratio: 0.0,
+            cache_version: String::new(),
+        };
+        tp_core::pipeline::PipelineOutput {
+            result: tp_core::types::PackResult {
+                config: tp_core::config::ProjectConfig::default(),
+                sprites: Vec::new(),
+                pages: vec![info],
+                warnings: Vec::new(),
+                stage_times_ms: Vec::new(),
+                total_sprites: 0,
+                alias_count: 0,
+                output_files: Vec::new(),
+            },
+            pages: vec![tp_core::types::AtlasPage::new(0, w, h)],
+        }
+    }
+
+    fn app_con_hoja(ctx: &egui::Context, w: i32, h: i32) -> App {
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.result = Some(hoja_de(w, h));
+        app.textures = vec![ctx.load_texture(
+            "hoja-de-prueba",
+            egui::ColorImage::new(
+                [w as usize, h as usize],
+                vec![egui::Color32::TRANSPARENT; (w * h) as usize],
+            ),
+            egui::TextureOptions::NEAREST,
+        )];
+        app.auto_fit = false;
+        app.zoom = 1.0;
+        app
+    }
+
+    /// La hoja no llena el lienzo y no debe quedar pegada a la esquina de
+    /// arriba a la izquierda, donde se leía como un elemento más del panel:
+    /// se centra en los dos ejes. Lienzo de 700×538 y hoja de 144×448.
+    #[test]
+    fn la_hoja_queda_en_el_centro_del_lienzo() {
+        let ctx = egui::Context::default();
+        let mut app = app_con_hoja(&ctx, 144, 448);
+
+        let lienzo = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(700.0, 538.0));
+        let mut entrada = idle_input();
+        entrada.screen_rect = Some(lienzo);
+        let _ = ctx.run(entrada, |ctx| {
+            // Sin margen: el lienzo es exactamente la ventana que se mide.
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new())
+                .show(ctx, |ui| preview_area(&mut app, ui));
+        });
+
+        assert_eq!(app.preview_size, lienzo.size(), "el lienzo mide 700×538");
+        let hoja = app.canvas_rect.expect("la hoja registra su rectángulo");
+        assert_eq!(hoja.size(), egui::vec2(144.0, 448.0), "a zoom 1 es 1:1");
+        let descentrado = (hoja.center() - lienzo.center()).abs();
+        assert!(
+            descentrado.x < 16.0 && descentrado.y < 16.0,
+            "la hoja debe quedar a menos de 16 px del centro en los dos ejes; \
+             está desplazada {:?}",
+            descentrado
+        );
+    }
+
+    /// Cada línea de la retícula va clavada a un múltiplo de 32 px: esa es
+    /// su utilidad (una caja = 32 px de atlas a 100 %), y al 6 % de opacidad
+    /// sólo separa, no compite con la hoja.
+    #[test]
+    fn la_reticula_del_lienzo_va_cada_32_px() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let entrada = idle_input();
+        let salida = app.run_frame(&ctx, entrada);
+        let texto = ctx.style().visuals.text_color();
+        let reticula = egui::Color32::from_rgba_unmultiplied(texto.r(), texto.g(), texto.b(), 15);
+
+        let rellenos = rellenos_pintados(&salida);
+        let verticales: Vec<f32> = rellenos
+            .iter()
+            .filter(|(color, r)| *color == reticula && r.width() <= 1.5 && r.height() > 100.0)
+            .map(|(_, r)| r.min.x)
+            .collect();
+        let horizontales: Vec<f32> = rellenos
+            .iter()
+            .filter(|(color, r)| *color == reticula && r.height() <= 1.5 && r.width() > 100.0)
+            .map(|(_, r)| r.min.y)
+            .collect();
+        assert!(
+            verticales.len() >= 10 && horizontales.len() >= 8,
+            "la retícula no se pinta: {} verticales y {} horizontales",
+            verticales.len(),
+            horizontales.len()
+        );
+        for x in &verticales {
+            assert!(
+                (x.rem_euclid(32.0)).abs() < 0.01,
+                "la vertical de {x} no está en un múltiplo de 32"
+            );
+        }
+        for y in &horizontales {
+            assert!(
+                (y.rem_euclid(32.0)).abs() < 0.01,
+                "la horizontal de {y} no está en un múltiplo de 32"
+            );
+        }
+    }
+
+    /// Rect de la barra de zoom: chrome, 32 px de alto y no cruzando la
+    /// ventana entera (eso sería la barra de menús o la de estado).
+    fn barra_de_zoom(
+        rellenos: &[(egui::Color32, egui::Rect)],
+        chrome: egui::Color32,
+        pantalla: egui::Rect,
+    ) -> Option<egui::Rect> {
+        rellenos
+            .iter()
+            .filter(|(color, r)| {
+                *color == chrome
+                    && (r.height() - 32.0).abs() < 0.5
+                    && r.width() > 400.0
+                    && r.min.y > pantalla.center().y
+            })
+            .map(|(_, r)| *r)
+            .max_by(|a, b| a.width().partial_cmp(&b.width()).unwrap())
+    }
+
+    /// La barra dice el zoom en porcentaje —«Zoom 800 %», no «8.0 Zoom»— y
+    /// sus controles van pegados al borde derecho, detrás de los menús.
+    #[test]
+    fn la_barra_de_zoom_dice_el_porcentaje_y_va_a_la_derecha() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.auto_fit = false;
+        app.zoom = 8.0;
+        let entrada = idle_input();
+        let pantalla = entrada.screen_rect.expect("la prueba trae pantalla");
+        let salida = app.run_frame(&ctx, entrada);
+
+        let textos = textos_pintados(&salida);
+        let rect_de = |que: &str| -> Option<egui::Rect> {
+            textos
+                .iter()
+                .find(|(texto, rect, clip)| texto.trim() == que && rect.intersects(*clip))
+                .map(|(_, rect, _)| *rect)
+        };
+        let pintados: Vec<&str> = textos.iter().map(|(texto, _, _)| texto.as_str()).collect();
+
+        assert!(
+            rect_de("Zoom 800 %").is_some(),
+            "el rótulo dice el zoom en porcentaje; textos pintados: {pintados:?}"
+        );
+        assert!(
+            rect_de("Zoom").is_none(),
+            "el literal «Zoom» suelto ya no debe pintarse: {pintados:?}"
+        );
+
+        let vista = rect_de("Vista").expect("el menú «Vista» está en la barra");
+        let ajustar = rect_de("Ajustar").expect("«Ajustar» está en la barra");
+        assert!(
+            ajustar.min.x > vista.max.x,
+            "los controles de zoom van a la derecha de los menús: «Ajustar» \
+             empieza en {} y «Vista» termina en {}",
+            ajustar.min.x,
+            vista.max.x
+        );
+
+        let chrome = crate::app::superficies(ctx.style().visuals.dark_mode).chrome;
+        let barra = barra_de_zoom(&rellenos_pintados(&salida), chrome, pantalla)
+            .expect("la barra de zoom se pinta con su relleno de 32 px");
+        assert!(
+            barra.max.x - ajustar.max.x <= 40.0,
+            "«Ajustar» debe tocar el borde derecho de la barra: {} px le separan",
+            barra.max.x - ajustar.max.x
+        );
+        assert!(
+            ajustar.max.x <= barra.max.x + 1.0,
+            "«Ajustar» no debe salirse de la barra: termina en {} y la barra en {}",
+            ajustar.max.x,
+            barra.max.x
+        );
+        // El slider ya no suelta el factor crudo («8.0»): sólo manda el
+        // rótulo con el porcentaje.
+        let suelto: Vec<&str> = textos
+            .iter()
+            .filter(|(_, rect, clip)| rect.intersects(*clip) && rect.intersects(barra))
+            .map(|(texto, _, _)| texto.trim())
+            .filter(|texto| {
+                !texto.is_empty()
+                    && texto
+                        .chars()
+                        .all(|c| c.is_ascii_digit() || c == '.' || c == '-')
+            })
+            .collect();
+        assert!(
+            suelto.is_empty(),
+            "el slider no debe pintar el valor suelto junto al rótulo: {suelto:?}"
+        );
+    }
+
+    /// La banda de la barra mide 32 px de la esquina del lienzo al panel
+    /// inferior: el margen de 8 px del `CentralPanel` empujaba la barra
+    /// hacia arriba y dejaba una tira de lienzo de 8 px debajo.
+    #[test]
+    fn la_barra_de_zoom_ocupa_32_px_hasta_el_panel_inferior() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let entrada = idle_input();
+        let pantalla = entrada.screen_rect.expect("la prueba trae pantalla");
+        let salida = app.run_frame(&ctx, entrada);
+        let chrome = crate::app::superficies(ctx.style().visuals.dark_mode).chrome;
+
+        let rellenos = rellenos_pintados(&salida);
+        let barra = barra_de_zoom(&rellenos, chrome, pantalla)
+            .expect("la barra de zoom se pinta con su relleno de 32 px");
+        let panel_inferior = rellenos
+            .iter()
+            .filter(|(color, r)| {
+                *color == chrome && r.width() > 400.0 && r.min.y >= barra.max.y - 0.5
+            })
+            .map(|(_, r)| *r)
+            .min_by(|a, b| a.min.y.partial_cmp(&b.min.y).unwrap())
+            .expect("el panel inferior está debajo de la barra de zoom");
+        let hueco = panel_inferior.min.y - barra.max.y;
+        assert!(
+            hueco <= 0.5,
+            "la barra debe tocar el panel inferior: hay {hueco} px de hueco"
         );
     }
 }
