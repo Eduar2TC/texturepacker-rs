@@ -37,6 +37,9 @@ mod theme;
 mod toolbar;
 
 #[cfg(test)]
+mod dock_ajustes;
+
+#[cfg(test)]
 mod ventana_minima;
 
 pub use drag::begin_sprite_drag;
@@ -68,6 +71,14 @@ const JUST_ADDED_HL: std::time::Duration = std::time::Duration::from_secs(8);
 /// 120 las tres líneas caben con un poco de aire y el resto sigue siendo del
 /// atlas; quien necesite más lo estira con el ratón, y quien no lo pliega.
 const BOTTOM_OPEN_HEIGHT: f32 = 120.0;
+/// Ancho (px) por debajo del cual el dock de Ajustes se pliega solo.
+///
+/// Con los dos paneles laterales (250 + 330) por debajo de este umbral el
+/// lienzo se queda en menos del 45 % de la ventana, que es justo lo que
+/// pide el objetivo de área. Sigue a mano con `F9` o con el menú «Ver»:
+/// el pliegue ocurre al *cruzar* el umbral, no en cada frame, para que
+/// esa tecla pueda devolverlo con la ventana todavía estrecha.
+const ANCHO_DOCK_AJUSTES: f32 = 1100.0;
 
 /// Estado de frescura de la vista previa (indicador de la barra de zoom).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -156,6 +167,15 @@ pub struct App {
     /// Texto del buscador de Ajustes: estrecha el panel a las secciones
     /// que coinciden (review UI/UX I3).
     settings_filter: String,
+    /// Dock de Ajustes a la vista (estado de sesión, arranca abierto):
+    /// lo giran la casilla del menú «Ver» y `F9`. Es la intención del
+    /// usuario, no el estado pintado —ver `settings_estrecho_antes`—.
+    show_settings: bool,
+    /// Si en el frame anterior la ventana ya estaba por debajo del umbral
+    /// de pliegue ([`ANCHO_DOCK_AJUSTES`]). El dock se pliega sólo al
+    /// *cruzar* el umbral, para que `F9` lo pueda devolver aunque la
+    /// ventana siga estrecha (Fase 4).
+    settings_estrecho_antes: bool,
     show_sprite_settings: bool,
     /// Whether the animation preview window is open.
     show_animation: bool,
@@ -405,12 +425,25 @@ impl eframe::App for App {
             .frame(egui::Frame::default().fill(superficies.panel))
             .show(ctx, |ui| sprites_panel::sprites_ui(self, ui));
 
-        egui::SidePanel::right("settings_panel")
-            .resizable(true)
-            .default_width(330.0)
-            .min_width(260.0)
-            .frame(egui::Frame::default().fill(superficies.panel))
-            .show(ctx, |ui| settings::settings_ui(self, ui));
+        // El dock de Ajustes sólo se pinta si está pedido: la casilla del
+        // menú «Ver» y `F9` lo giran, y por debajo del umbral se pliega
+        // solo para que el lienzo no quede en una tira. El pliegue ocurre
+        // al *cruzar* el umbral, así que `F9` lo devuelve aunque la
+        // ventana siga estrecha (Fase 4 del rediseño).
+        let estrecho = ctx.content_rect().width() < ANCHO_DOCK_AJUSTES;
+        if estrecho && !self.settings_estrecho_antes && self.show_settings {
+            self.show_settings = false;
+        }
+        self.settings_estrecho_antes = estrecho;
+
+        if self.show_settings {
+            egui::SidePanel::right("settings_panel")
+                .resizable(true)
+                .default_width(330.0)
+                .min_width(260.0)
+                .frame(egui::Frame::default().fill(superficies.panel))
+                .show(ctx, |ui| settings::settings_ui(self, ui));
+        }
 
         // `Frame::central_panel` es el marco que egui usaría solo: mismo
         // margen de 8 px, relleno con el token del lienzo.

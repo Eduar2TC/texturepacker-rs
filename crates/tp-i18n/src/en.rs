@@ -237,6 +237,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Página {} · {}×{} px · relleno {}%", "Page {} · {}×{} px · fill {}%"),
 
     ("Ajustes", "Settings"),
+    ("Mostrar Ajustes", "Show Settings"),
     ("Avanzados", "Advanced"),
     ("Mostrar todas las opciones", "Show every option"),
     ("Datos", "Data"),

@@ -322,17 +322,23 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("settings_scroll")
         .show(ui, |ui| {
-            if seccion_visible("Interfaz", &filtro) {
-                interface_section(app, ui);
+            // Orden por frecuencia de uso (Fase 4 del rediseño): lo que se
+            // toca en todos los proyectos —la composición del lienzo— por
+            // delante de lo que se fija una vez —rutas y metadatos—, y al
+            // final lo que casi no cambia. Antes «Interfaz» y «Datos» se
+            // comían los primeros píxeles con ajustes que sólo se tocan
+            // una vez por proyecto.
+            if seccion_visible("Composición", &filtro) {
+                layout_section(app, ui);
             }
             if seccion_visible("Datos", &filtro) {
                 data_section(app, ui);
             }
-            if seccion_visible("Composición", &filtro) {
-                layout_section(app, ui);
-            }
             if seccion_visible("Procesamiento", &filtro) {
                 processing_section(app, ui);
+            }
+            if seccion_visible("Interfaz", &filtro) {
+                interface_section(app, ui);
             }
             warnings_section(app, ui);
         });
@@ -346,7 +352,10 @@ fn interface_section(app: &mut App, ui: &mut egui::Ui) {
     use crate::ui_prefs::{FontScale, Theme};
 
     egui::CollapsingHeader::new(t!("Interfaz"))
-        .default_open(true)
+        // Sólo «Composición» arranca desplegada (Fase 4): con las cuatro
+        // abiertas el panel empezaba por quince controles seguidos y no
+        // se veía dónde empezaba cada cosa.
+        .default_open(false)
         .show(ui, |ui| {
             ui.label(t!("Idioma"));
             let mut lang = app.prefs().lang_choice();
@@ -428,7 +437,7 @@ fn font_scale_label(escala: crate::ui_prefs::FontScale) -> &'static str {
 fn data_section(app: &mut App, ui: &mut egui::Ui) {
     let advanced = app.advanced_settings;
     egui::CollapsingHeader::new(t!("Datos"))
-        .default_open(true)
+        .default_open(false)
         .show(ui, |ui| {
             ui.label(t!("Directorio de entrada"));
             ui.horizontal(|ui| {
@@ -1009,7 +1018,7 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
 
 fn processing_section(app: &mut App, ui: &mut egui::Ui) {
     egui::CollapsingHeader::new(t!("Procesamiento"))
-        .default_open(true)
+        .default_open(false)
         .show(ui, |ui| {
             enum_combo(
                 ui,
@@ -2219,6 +2228,51 @@ mod tests {
         assert!(!texto.contains("Composición"), "nada coincide: {texto}");
         assert!(!texto.contains("Procesamiento"), "nada coincide: {texto}");
         assert!(texto.contains("Limpiar"), "queda la salida: {texto}");
+    }
+
+    /// F4: el panel se ordena por lo que se toca —lo que cambia en todos
+    /// los proyectos por delante de lo que se fija una vez— y arranca con
+    /// sólo «Composición» desplegada: con las cuatro abiertas el panel
+    /// empezaba por un muro de quince controles seguidos. Los cuatro
+    /// títulos se buscan por su texto y se comparan por su altura.
+    #[test]
+    fn las_secciones_se_ordenan_por_uso_y_solo_composicion_arranca_abierta() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let salida = ajustes_frame(&mut app, &ctx);
+        let pintados = crate::testing::textos_pintados(&salida);
+        let y_de = |titulo: &str| {
+            pintados
+                .iter()
+                .find(|(texto, _, _)| texto.trim() == titulo)
+                .map(|(_, rect, _)| rect.min.y)
+                .unwrap_or_else(|| panic!("la sección «{titulo}» no se pinta"))
+        };
+
+        let alturas: Vec<(&str, f32)> = ["Composición", "Datos", "Procesamiento", "Interfaz"]
+            .iter()
+            .map(|titulo| (*titulo, y_de(titulo)))
+            .collect();
+        for par in alturas.windows(2) {
+            assert!(
+                par[0].1 < par[1].1,
+                "«{}» debe ir antes de «{}»: {:.0} ≥ {:.0}",
+                par[0].0,
+                par[1].0,
+                par[0].1,
+                par[1].1
+            );
+        }
+
+        let texto = crate::testing::texto_pintado(&salida);
+        assert!(
+            texto.contains("Tamaño máximo"),
+            "«Composición» es la que arranca desplegada: {texto}"
+        );
+        assert!(
+            !texto.contains("Idioma"),
+            "«Interfaz» arranca plegada y su contenido no debe pintarse: {texto}"
+        );
     }
 
     /// I3: «Limpiar» no sirve de nada si no está donde se pueda tocar: en

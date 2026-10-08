@@ -52,6 +52,7 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
                     (t!("Zoom al 100% (tamaño real)"), "0"),
                     (t!("Ajustar"), "F"),
                     (t!("Zoom con la rueda"), t!("Ctrl + rueda")),
+                    (t!("Mostrar Ajustes"), "F9"),
                 ],
             );
             seccion(
@@ -101,7 +102,10 @@ fn seccion(ui: &mut egui::Ui, titulo: &str, filas: &[Fila]) {
                 ui.end_row();
             }
         });
-    ui.add_space(8.0);
+    // Entre secciones, no dentro: con ocho el diálogo ya no cabía en la
+    // ventana mínima (M4) una vez añadida la fila de F9, y cuatro siguen
+    // separando lo suficiente como para que se lean bloques.
+    ui.add_space(4.0);
 }
 
 #[cfg(test)]
@@ -197,6 +201,7 @@ mod tests {
             "Mayús + flechas",
             "Esc",
             "F1 / ?",
+            "F9",
         ] {
             assert!(texto.contains(atajo), "falta el atajo {atajo}: {texto}");
         }

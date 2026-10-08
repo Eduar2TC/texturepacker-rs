@@ -149,6 +149,12 @@ fn ver(app: &mut App, ui: &mut egui::Ui) {
     if ui.checkbox(&mut visible, t!("Panel inferior")).changed() {
         app.bottom_collapsed = !visible;
     }
+    // Mismo patrón que la de arriba: la casilla refleja el dock tal y
+    // como está pintado, que es lo que decide si se plegó solo por ancho.
+    let mut dock = app.show_settings;
+    if ui.checkbox(&mut dock, t!("Mostrar Ajustes")).changed() {
+        app.show_settings = dock;
+    }
 }
 
 fn ayuda(app: &mut App, ui: &mut egui::Ui) {
@@ -401,9 +407,10 @@ mod tests {
 
     /// F1: el zoom sólo se controlaba con rueda y botones de la barra de
     /// zoom, y el panel inferior sólo con su chevron. «Ver» reúne las dos
-    /// cosas con sus atajos, que es como se descubren.
+    /// cosas con sus atajos, que es como se descubren. F4 añade el dock
+    /// de Ajustes, que hasta entonces no se podía ocultar.
     #[test]
-    fn el_menu_ver_expone_el_zoom_y_el_panel_inferior() {
+    fn el_menu_ver_expone_el_zoom_el_panel_inferior_y_el_dock() {
         let ctx = egui::Context::default();
         let mut app = App::new_for_testing(ctx.clone(), None);
         let texto = pinta_menu(&mut app, &ctx, ver);
@@ -413,6 +420,7 @@ mod tests {
             "Zoom al 100%",
             "Ajustar",
             "Panel inferior",
+            "Mostrar Ajustes",
         ] {
             assert!(
                 texto.contains(esperado),
@@ -423,5 +431,63 @@ mod tests {
             !app.bottom_collapsed,
             "el panel inferior arranca visible y el menú debe marcarlo"
         );
+        assert!(
+            app.show_settings,
+            "el dock de Ajustes arranca visible y el menú debe marcarlo"
+        );
+    }
+
+    /// F4: la casilla no sólo se pinta —si no gira el dock, el menú miente.
+    /// Se localiza su rectángulo en un frame y se le manda un clic real
+    /// (movimiento + pulsación + levantación) en el siguiente.
+    #[test]
+    fn la_casilla_de_ver_gira_el_dock_de_ajustes() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        assert!(app.show_settings, "el dock arranca a la vista");
+
+        let base = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let pinta = |app: &mut App, entrada: egui::RawInput| {
+            ctx.run(entrada, |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| ver(app, ui));
+            })
+        };
+
+        let pintado = pinta(&mut app, base());
+        let (_, rect, _) = crate::testing::textos_pintados(&pintado)
+            .into_iter()
+            .find(|(texto, _, _)| texto.trim() == "Mostrar Ajustes")
+            .expect("la casilla «Mostrar Ajustes» debe pintarse en «Ver»");
+        let pos = rect.center();
+
+        for (vez, esperado) in [(1, false), (2, true)] {
+            let mut entrada = base();
+            entrada.events = vec![
+                egui::Event::PointerMoved(pos),
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ];
+            let _ = pinta(&mut app, entrada);
+            assert_eq!(
+                app.show_settings, esperado,
+                "el clic {vez} de la casilla no gira el dock"
+            );
+        }
     }
 }

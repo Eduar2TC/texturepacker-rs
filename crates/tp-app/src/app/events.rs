@@ -185,6 +185,13 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
         app.show_shortcuts = !app.show_shortcuts;
     }
 
+    // F9 gira el dock de Ajustes (la tecla de los paneles laterales en
+    // Eclipse/IntelliJ y en Blender). Es también la única forma de
+    // recuperarlo cuando se ha plegado solo por ancho (Fase 4).
+    if ctx.input(|i| i.key_pressed(egui::Key::F9)) {
+        app.show_settings = !app.show_settings;
+    }
+
     // Esc cierra la ventana flotante activa (convención estándar) y, de
     // paso, devuelve el foco de teclado de la lista de sprites al ratón.
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));

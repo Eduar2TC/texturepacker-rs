@@ -146,8 +146,11 @@ fn lo_esencial_de_la_barra_y_los_paneles_se_ve_entero() {
     let buscados = [
         ("⏏ Publicar", false), // barra de herramientas
         ("Sprites (", false),  // panel izquierdo
-        ("Ajustes", true),     // panel derecho
-        ("Log", true),         // pestaña del panel inferior
+        // Sin «Ajustes»: a 900 px el dock se pliega solo para que el
+        // lienzo no quede en una tira (F4) y se recupera con `F9`. Que
+        // no aparezca aquí es lo que comprueba el pliegue, y que vuelva
+        // lo comprueba `dock_ajustes`.
+        ("Log", true), // pestaña del panel inferior
     ];
     for (buscado, exacto) in buscados {
         let mut hallado = None;
