@@ -74,8 +74,13 @@ fn archivo(app: &mut App, ui: &mut egui::Ui) {
     }
     ui.separator();
     // «Salir» no cierra: pide el cierre a la ventana, que es quien
-    // decide si aún hay cambios sin guardar por preguntar (C2).
-    if ui.button(t!("Salir")).clicked() {
+    // decide si aún hay cambios sin guardar por preguntar (C2). La tecla
+    // se enseña en la propia entrada: es el sitio donde se descubre (Fase
+    // 6), y hace lo mismo que la fila del diálogo de atajos.
+    if ui
+        .add(egui::Button::new(t!("Salir")).shortcut_text("Ctrl + Q"))
+        .clicked()
+    {
         ui.close();
         salir(ui.ctx());
     }
@@ -361,7 +366,8 @@ mod tests {
 
     /// F1: «↺ Restablecer» estaba en la barra de herramientas junto a
     /// «Guardar» —fácil de golpear por reflejo— y «Salir» sólo existía en
-    /// el menú. El menú es ahora la única sede de las acciones de proyecto.
+    /// el menú. El menú es ahora la única sede de las acciones de proyecto,
+    /// y en «Salir» se descubre su tecla (Fase 6).
     #[test]
     fn el_menu_archivo_lleva_abrir_guardar_restablecer_y_salir() {
         let ctx = egui::Context::default();
@@ -372,6 +378,7 @@ mod tests {
             "Guardar proyecto",
             "Restablecer la configuración",
             "Salir",
+            "Ctrl + Q",
         ] {
             assert!(
                 texto.contains(esperado),

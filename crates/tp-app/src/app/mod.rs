@@ -212,6 +212,9 @@ pub struct App {
     tree_filter: String,
     /// Whether the tree filter has keyboard focus (blocks the Delete key).
     tree_filter_focused: bool,
+    /// `Ctrl+F` pide el foco para el filtro; el panel lo consume al pintar
+    /// su campo, que es donde ese widget existe (Fase 6 del rediseño).
+    tree_filter_focus: bool,
     /// `Some(true)` opens every folder, `Some(false)` closes them (one frame).
     tree_force_open: Option<bool>,
     /// Pending preview job (dynamic workspace): packed in memory, no files.
@@ -380,12 +383,22 @@ impl eframe::App for App {
                         ui.label(egui::RichText::new(t!("Sin atlas — añade sprites")).weak());
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if self.project_path.is_none() {
-                            ui.label(
+                        match &self.project_path {
+                            // El hueco de la derecha es donde va lo del
+                            // título: la ruta del proyecto, con lo que quepa
+                            // y el ratón encima para enseñarla entera (L5).
+                            Some(ruta) => {
+                                let texto = ruta.display().to_string();
+                                ui.add(
+                                    egui::Label::new(egui::RichText::new(&texto).weak()).truncate(),
+                                )
+                                .on_hover_text(texto)
+                            }
+                            None => ui.label(
                                 egui::RichText::new(t!("proyecto sin guardar — Ctrl+S"))
                                     .weak()
                                     .italics(),
-                            );
+                            ),
                         }
                     });
                 });
@@ -465,11 +478,13 @@ impl eframe::App for App {
         self.exit_dialog(ctx);
         dirty = self.is_dirty();
 
-        // La ruta del proyecto vive en el título de la ventana, no en la
-        // barra de herramientas (evita truncamientos y ruido visual). El
-        // punto delante avisa de que hay cambios sin guardar (C2).
+        // El título dice qué documento está abierto: el nombre del fichero,
+        // no la ruta entera. Con un proyecto real la ruta larga se ponía a
+        // scroll en la barra de título y dejaba de decir nada (L5); la ruta
+        // vive ahora en la tira de estado, con su tooltip. El punto delante
+        // avisa de que hay cambios sin guardar (C2).
         let base = match &self.project_path {
-            Some(p) => format!("{} — TexturePacker-RS", p.display()),
+            Some(p) => format!("{} — TexturePacker-RS", nombre_del_fichero(p)),
             None => "TexturePacker-RS".to_string(),
         };
         let title = if dirty { format!("• {base}") } else { base };
@@ -482,6 +497,16 @@ impl eframe::App for App {
         // demás y ve el frame completo (reloj, puntero y repintado).
         aviso::pintar(ctx, &mut self.aviso);
     }
+}
+
+/// Nombre del fichero de un proyecto, para el título de la ventana: es lo
+/// único que cabe y lo único que dice qué documento está abierto. Una ruta
+/// sin nombre (un directorio recién creado) no puede dejar el título vacío,
+/// así que en ese caso se enseña la ruta tal cual.
+fn nombre_del_fichero(ruta: &std::path::Path) -> String {
+    ruta.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ruta.display().to_string())
 }
 
 /// Conduce la app real (la misma que abre la ventana) durante `frames`
@@ -499,5 +524,76 @@ pub fn run_headless(app: &mut App, ctx: &egui::Context, mut frames: usize) {
         };
         let _ = app.run_frame(ctx, input);
         frames -= 1;
+    }
+}
+
+/// Fase 6 (L5): el título dice qué documento está abierto —el nombre del
+/// fichero— y la ruta entera vive en la tira de estado, donde cabe y donde
+/// se puede mirar sin que la barra de título se ponga a scroll.
+#[cfg(test)]
+mod titulo_tests {
+    use super::*;
+    use crate::testing::{idle_input, texto_pintado};
+
+    fn titulos(out: &egui::FullOutput) -> Vec<String> {
+        out.viewport_output
+            .values()
+            .flat_map(|v| v.commands.iter())
+            .filter_map(|c| match c {
+                egui::ViewportCommand::Title(t) => Some(t.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn el_titulo_dice_el_fichero_y_la_ruta_se_queda_en_la_tira() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.project_path = Some(PathBuf::from("/home/edu/proyectos/evid.tpproj"));
+
+        let salida = app.run_frame(&ctx, idle_input());
+        let dados = titulos(&salida);
+        assert!(
+            dados.contains(&"evid.tpproj — TexturePacker-RS".to_string()),
+            "el título enseña el fichero abierto: {dados:?}"
+        );
+        assert!(
+            !dados.iter().any(|t| t.contains("/home/edu")),
+            "la ruta entera no debe ir en el título: {dados:?}"
+        );
+
+        let texto = texto_pintado(&salida);
+        assert!(
+            texto.contains("/home/edu/proyectos/evid.tpproj"),
+            "la ruta entera vive en la tira: {texto}"
+        );
+
+        // Con cambios sin guardar, el punto va delante del nombre: es lo
+        // único que avisa en la barra de título (C2).
+        app.config.padding = 5;
+        let dados = titulos(&app.run_frame(&ctx, idle_input()));
+        assert!(
+            dados.contains(&"• evid.tpproj — TexturePacker-RS".to_string()),
+            "el punto de cambios sin guardar va delante: {dados:?}"
+        );
+    }
+
+    #[test]
+    fn sin_proyecto_el_titulo_no_inventa_documento() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        let salida = app.run_frame(&ctx, idle_input());
+        let dados = titulos(&salida);
+        assert!(
+            dados.contains(&"TexturePacker-RS".to_string()),
+            "sin proyecto sólo está el nombre del programa: {dados:?}"
+        );
+        let texto = texto_pintado(&salida);
+        assert!(
+            texto.contains("proyecto sin guardar — Ctrl+S"),
+            "la tira recuerda que no hay dónde guardar: {texto}"
+        );
     }
 }

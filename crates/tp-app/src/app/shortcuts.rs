@@ -36,6 +36,7 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
                     (t!("Abrir proyecto"), "Ctrl + O"),
                     (t!("Guardar proyecto"), "Ctrl + S"),
                     (t!("Publicar"), "Ctrl + P"),
+                    (t!("Salir"), "Ctrl + Q"),
                 ],
             );
             seccion(
@@ -59,6 +60,7 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
                 ui,
                 t!("Lista de sprites"),
                 &[
+                    (t!("Filtrar sprites…"), "Ctrl + F"),
                     (t!("Mover el cursor"), t!("Flechas")),
                     (t!("Extender la selección"), t!("Mayús + flechas")),
                     (t!("Acumular la selección"), t!("Ctrl + flechas")),
@@ -92,7 +94,10 @@ fn seccion(ui: &mut egui::Ui, titulo: &str, filas: &[Fila]) {
     ui.strong(titulo);
     egui::Grid::new(("atajos", titulo))
         .num_columns(2)
-        .spacing([28.0, 4.0])
+        // 2 px entre filas: con las dos de la Fase 6 (Ctrl+Q y Ctrl+F) el
+        // diálogo pasaba de los 600 px de la ventana mínima y M4 se pone a
+        // llorar. Entre secciones siguen mandando los 4 de abajo.
+        .spacing([28.0, 2.0])
         .show(ui, |ui| {
             for (accion, tecla) in filas {
                 ui.label(*accion);
@@ -196,8 +201,10 @@ mod tests {
             "Ctrl + O",
             "Ctrl + S",
             "Ctrl + P",
+            "Ctrl + Q",
             "Ctrl + Z",
             "Ctrl + A",
+            "Ctrl + F",
             "Mayús + flechas",
             "Esc",
             "F1 / ?",
@@ -211,6 +218,7 @@ mod tests {
             "Publicar",
             "Deshacer el último cambio",
             "Ajustar",
+            "Filtrar sprites…",
             "Seleccionar todo",
             "Esta ayuda",
         ] {

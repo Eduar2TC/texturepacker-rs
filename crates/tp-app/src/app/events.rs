@@ -121,8 +121,9 @@ pub(super) fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
 }
 
 /// Atajos de teclado globales (estilo estándar de herramientas de escritorio):
-/// Ctrl+O abrir, Ctrl+S guardar, Ctrl+P publicar, Supr quitar selección,
-/// +/-/0 zoom, F ajustar, Esc cierra ventanas flotantes.
+/// Ctrl+O abrir, Ctrl+S guardar, Ctrl+P publicar, Ctrl+Q salir, Ctrl+F
+/// filtro, Supr quitar selección, +/-/0 zoom, F ajustar, Esc cierra
+/// ventanas flotantes.
 pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     let consume = |ctx: &egui::Context, key: egui::Key| {
         ctx.input(|i| {
@@ -144,6 +145,19 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     // escribir una ruta sería un desastre.
     if consume(ctx, egui::Key::Z) && !ctx.wants_keyboard_input() {
         app.deshacer();
+    }
+    // Ctrl+Q, el atajo de salida del escritorio (L3): hoy la única vía era
+    // «Archivo → Salir». Pide el cierre a la ventana como ese menú, así que
+    // con cambios sin guardar manda el diálogo del C2 en vez de cerrar.
+    if consume(ctx, egui::Key::Q) {
+        super::menubar::salir(ctx);
+    }
+    // Ctrl+F enfoca el filtro del panel de sprites: con la lista larga es
+    // la primera tecla que se busca y hasta ahora había que ir a buscarlo
+    // con el ratón. La bandera la consume el panel al pintar su campo, que
+    // es el único sitio donde ese widget existe.
+    if consume(ctx, egui::Key::F) {
+        app.tree_filter_focus = true;
     }
 
     // Zoom de teclado (sin modificadores, como en Figma/Photoshop):
@@ -214,5 +228,126 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     // el lienzo o una hoja (feedback estándar de arrastrar-y-soltar).
     if SpriteDrag::has_payload(ctx) {
         ctx.set_cursor_icon(egui::CursorIcon::Copy);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        mods: egui::Modifiers,
+        eventos: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        app.run_frame(
+            ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1360.0, 860.0),
+                )),
+                // La ventana tiene el foco: sin eso egui da por no
+                // enfocado cualquier widget, pase lo que pase.
+                focused: true,
+                modifiers: mods,
+                events: eventos,
+                ..egui::RawInput::default()
+            },
+        )
+    }
+
+    fn ctrl(app: &mut App, ctx: &egui::Context, key: egui::Key) -> egui::FullOutput {
+        let mods = egui::Modifiers::CTRL;
+        frame(
+            app,
+            ctx,
+            mods,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: mods,
+            }],
+        )
+    }
+
+    fn pide(out: &egui::FullOutput, cmd: egui::ViewportCommand) -> bool {
+        out.viewport_output
+            .values()
+            .any(|v| v.commands.contains(&cmd))
+    }
+
+    /// L3: Ctrl+Q es la forma de salir del escritorio. Pide el cierre a la
+    /// ventana —igual que «Archivo → Salir»— para que con cambios sin
+    /// guardar mande el diálogo del C2 en lugar de cerrar a pelo.
+    #[test]
+    fn ctrl_q_pide_cerrar_la_ventana() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.config.padding = 5;
+        assert!(app.is_dirty(), "el test sólo tiene sentido con cambios");
+
+        let out = ctrl(&mut app, &ctx, egui::Key::Q);
+
+        assert!(
+            pide(&out, egui::ViewportCommand::Close),
+            "Ctrl+Q debe pedir el cierre de la ventana"
+        );
+        assert!(
+            !app.exit_confirmed,
+            "no debe saltarse la pregunta de cambios sin guardar"
+        );
+    }
+
+    /// La Q sola no es ninguna acción: el atajo vive en el Ctrl.
+    #[test]
+    fn la_q_sin_ctrl_no_pide_nada() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        let out = frame(
+            &mut app,
+            &ctx,
+            egui::Modifiers::NONE,
+            vec![egui::Event::Key {
+                key: egui::Key::Q,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        assert!(
+            !pide(&out, egui::ViewportCommand::Close),
+            "sin Ctrl, la Q no debe cerrar la ventana"
+        );
+    }
+
+    /// Ctrl+F deja el foco en el filtro del panel: la bandera la consume el
+    /// panel al pintar su campo y el foco se queda, no parpadea.
+    #[test]
+    fn ctrl_f_enfoca_el_filtro_de_la_lista() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        let _ = ctrl(&mut app, &ctx, egui::Key::F);
+        assert!(
+            !app.tree_filter_focus,
+            "la petición de foco se consume al pintar el campo"
+        );
+        assert!(
+            app.tree_filter_focused,
+            "Ctrl+F debe dejar el foco en el filtro de sprites"
+        );
+
+        let _ = frame(&mut app, &ctx, egui::Modifiers::NONE, vec![]);
+        assert!(
+            app.tree_filter_focused,
+            "el foco se queda en el filtro, no parpadea"
+        );
     }
 }

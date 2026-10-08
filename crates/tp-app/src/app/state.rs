@@ -89,6 +89,7 @@ impl App {
             exit_confirmed: false,
             tree_filter: String::new(),
             tree_filter_focused: false,
+            tree_filter_focus: false,
             tree_force_open: None,
             pending: None,
             change_seq: 0,

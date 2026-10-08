@@ -201,6 +201,11 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
             .hint_text(t!("Filtrar sprites…"))
             .desired_width(f32::INFINITY),
     );
+    // Ctrl+F: el foco se pide aquí, en el único frame en el que el campo
+    // existe, y la bandera se apaga al consumirla.
+    if std::mem::take(&mut app.tree_filter_focus) {
+        filter_response.request_focus();
+    }
     app.tree_filter_focused = filter_response.has_focus();
     ui.separator();
 

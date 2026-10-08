@@ -311,7 +311,7 @@ mod tests {
     /// o «Zoom» y los separadores «x»/«y» de las dimensiones): no merecen
     /// entrada en la tabla y el test de arriba los deja pasar.
     const UI_IGUALES: &[&str] = &[
-        "FPS", "Zoom", "x", "y", "Ctrl + O", "Ctrl + S", "Ctrl + Z", "F1", "F",
+        "FPS", "Zoom", "x", "y", "Ctrl + O", "Ctrl + S", "Ctrl + Z", "Ctrl + Q", "F1", "F",
     ];
 
     /// El test `cada_clave_en_uso_tiene_traduccion` solo mira lo que ya pasa
