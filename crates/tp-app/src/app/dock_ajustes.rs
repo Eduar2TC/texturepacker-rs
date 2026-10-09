@@ -7,6 +7,10 @@
 //! del umbral se pliega solo **una vez** —si se plegara en cada frame, la
 //! misma tecla que lo devuelve no serviría para nada—.
 //!
+//! El pliegue por ancho es el único caso en que la app se quita un panel
+//! sin que nadie lo pida, y no deja rastro alguno: aquí también se prueba
+//! el aviso in-situ que lo cuenta con la tecla que lo devuelve (4.2).
+//!
 //! El test de que la ventana mínima sigue siendo usable sin el dock vive
 //! en [`super::ventana_minima`].
 
@@ -20,6 +24,14 @@ fn pantalla(ancho: f32, alto: f32) -> eframe::egui::RawInput {
         eframe::egui::Pos2::ZERO,
         eframe::egui::vec2(ancho, alto),
     ));
+    input
+}
+
+/// Un frame con la geometría dada y el reloj puesto a mano: el aviso del
+/// pliegue vive de tiempo, así que el test lo lleva.
+fn pantalla_en(ancho: f32, alto: f32, t: f64) -> eframe::egui::RawInput {
+    let mut input = pantalla(ancho, alto);
+    input.time = Some(t);
     input
 }
 
@@ -135,4 +147,113 @@ fn el_dock_se_pliega_al_cruzar_el_umbral_y_f9_lo_devuelve() {
         !app.show_settings,
         "el segundo cruce del umbral vuelve a plegarlo"
     );
+}
+
+/// Texto del aviso del pliegue (4.2). El mismo que va al log, así que en
+/// pantalla sólo se distingue por dónde cae: el registro vive abajo a la
+/// izquierda y el recuadro, al pie derecha.
+const AVISO: &str = "Ajustes oculto — F9";
+
+/// 4.2: el pliegue por ancho es el único cambio que la app hace sola, y
+/// no deja rastro —se va el dock, se va el botón y se va el título—: si
+/// no avisa, el usuario no sabe ni que estaba ahí ni que `F9` lo devuelve.
+/// El recuadro cae al pie derecho, lejos de la línea del log que dice lo
+/// mismo (que es el registro, y sigue ahí).
+#[test]
+fn el_pliegue_por_ancho_deja_un_aviso_con_la_tecla_que_lo_devuelve() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+
+    let ancha = frame(&mut app, &ctx, 1360.0, 860.0);
+    assert!(
+        app.aviso.is_none(),
+        "por encima del umbral no hay nada que avisar"
+    );
+    assert!(
+        textos_pintados(&ancha)
+            .iter()
+            .all(|(t, _, _)| !t.contains(AVISO)),
+        "…ni nada de aviso pintado"
+    );
+
+    let estrecho = frame(&mut app, &ctx, 900.0, 600.0);
+    assert!(!app.show_settings, "el dock se pliega solo");
+    assert!(app.aviso.is_some(), "y el pliegue tiene que avisar");
+    assert!(
+        app.logs.iter().any(|l| l.text.contains(AVISO)),
+        "como todo aviso, se apunta también en el log"
+    );
+    assert!(
+        textos_pintados(&estrecho)
+            .iter()
+            .all(|(t, _, _)| !t.contains(AVISO)),
+        "el recuadro mide su caja en este frame, así que aún no se ve"
+    );
+
+    let con_aviso = frame(&mut app, &ctx, 900.0, 600.0);
+    let (_, rect, _) = textos_pintados(&con_aviso)
+        .into_iter()
+        .find(|(texto, rect, _)| texto.contains(AVISO) && rect.min.x > 500.0)
+        .unwrap_or_else(|| panic!("el aviso debe salir al pie derecho de la ventana"));
+    assert!(
+        rect.min.y > 300.0,
+        "…y abajo, no en mitad de la pantalla: {rect:?}"
+    );
+    assert!(
+        app.logs.iter().any(|l| l.text.contains(AVISO)),
+        "y la línea del log sigue siendo el registro"
+    );
+}
+
+/// `F9` —y la casilla del menú «Ver», que gira el mismo conmutador— es un
+/// gesto consciente: quien acaba de pulsarlo sabe qué hizo y no necesita
+/// que la app se lo recuerde. El aviso es sólo para lo que nadie pidió.
+#[test]
+fn f9_no_avisa_de_lo_que_el_usuario_acaba_de_pedir() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+    frame(&mut app, &ctx, 1360.0, 860.0);
+
+    let oculto = pulsa(&mut app, &ctx, egui::Key::F9, 1360.0, 860.0);
+    assert!(!app.show_settings, "F9 debe ocultar el dock");
+    assert!(app.aviso.is_none(), "…sin avisar, que lo ha pedido él");
+    assert!(
+        textos_pintados(&oculto)
+            .iter()
+            .all(|(t, _, _)| !t.contains(AVISO)),
+        "ni pintado"
+    );
+
+    let visible = pulsa(&mut app, &ctx, egui::Key::F9, 1360.0, 860.0);
+    assert!(app.show_settings, "y lo vuelve a poner");
+    assert!(app.aviso.is_none(), "volver a enseñarlo tampoco es noticia");
+    assert!(
+        textos_pintados(&visible)
+            .iter()
+            .all(|(t, _, _)| !t.contains(AVISO)),
+        "ni pintado"
+    );
+}
+
+/// 4.2: el aviso del pliegue no acompaña a un gesto sino a un cambio, y
+/// el tiempo que pide no es el de leerlo sólo —que es lo que cuestan los
+/// de 2,5 s— sino el de leerlo y decidir si se va a por `F9` mientras la
+/// ventana sigue estrecha. Se va solo, sin que nadie toque nada.
+#[test]
+fn el_aviso_del_pliegue_dura_tres_segundos_y_se_va_solo() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+
+    app.run_frame(&ctx, pantalla_en(1360.0, 860.0, 100.0));
+    app.run_frame(&ctx, pantalla_en(900.0, 600.0, 100.2)); // el cruce
+    assert!(app.aviso.is_some(), "el pliegue avisa");
+
+    app.run_frame(&ctx, pantalla_en(900.0, 600.0, 103.1)); // 2,9 s después
+    assert!(
+        app.aviso.is_some(),
+        "a los 2,9 s sigue: el de un gesto (2,5 s) ya se habría ido"
+    );
+
+    app.run_frame(&ctx, pantalla_en(900.0, 600.0, 103.4)); // 3,2 s después
+    assert!(app.aviso.is_none(), "y a los 3,2 s se va solo");
 }

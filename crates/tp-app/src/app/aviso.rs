@@ -14,6 +14,13 @@ use eframe::egui;
 /// de estorbar al gesto siguiente.
 const DURACION: f64 = 2.5;
 
+/// Tiempo del aviso que no acompaña a un gesto sino a un cambio que la
+/// app hace sola: el dock de Ajustes plegado por ancho (4.2). Un segundo
+/// más que el resto porque no basta con leerlo —hay que ir a por `F9` con
+/// la ventana todavía estrecha—, y porque no hay control al lado donde
+/// mirar para entender qué acaba de pasar.
+pub(super) const DURACION_PLIEGUE: f64 = 3.0;
+
 /// Hueco entre el control y el recuadro, en píxeles.
 const HUECO: f32 = 6.0;
 
@@ -37,6 +44,10 @@ pub(super) struct Aviso {
     /// Reloj de egui del primer pintado. Se sella ahí porque es el único
     /// frame en que el reloj y el puntero cuentan para este gesto.
     empezado: Option<f64>,
+    /// Cuánto dura este aviso en concreto ([`DURACION`] por regla general,
+    /// [`DURACION_PLIEGUE`] si la app se pliega algo sin que nadie lo
+    /// pida): el tiempo es del aviso, no del mecanismo.
+    duracion: f64,
 }
 
 impl App {
@@ -49,6 +60,15 @@ impl App {
     /// Si en un mismo frame llegan dos avisos gana el último; al log
     /// llegan todos.
     pub(super) fn aviso(&mut self, kind: LogKind, texto: String) {
+        self.aviso_durante(kind, texto, DURACION);
+    }
+
+    /// Como [`App::aviso`] con el tiempo a medida.
+    ///
+    /// Sólo lo necesita quien avisa de un cambio que la app hizo sola: el
+    /// aviso de un gesto se lee mientras la mano sigue en el control, y
+    /// el del pliegue del dock no tiene ese lujo (4.2).
+    pub(super) fn aviso_durante(&mut self, kind: LogKind, texto: String, duracion: f64) {
         // El log traduce lo que le llega (los mensajes del motor vienen
         // en español): el aviso enseña exactamente lo que se apunta.
         let texto = crate::i18n::tr(&texto);
@@ -59,6 +79,7 @@ impl App {
             color,
             ancla: None,
             empezado: None,
+            duracion,
         });
     }
 }
@@ -109,7 +130,7 @@ pub(super) fn pintar(ctx: &egui::Context, aviso: &mut Option<Aviso>) {
     let Some(a) = aviso.as_ref() else {
         return;
     };
-    let restante = DURACION - (ahora - a.empezado.unwrap_or(ahora));
+    let restante = a.duracion - (ahora - a.empezado.unwrap_or(ahora));
     if restante <= 0.0 {
         *aviso = None;
         return;
@@ -344,6 +365,7 @@ mod tests {
             color: egui::Color32::WHITE,
             ancla: None,
             empezado: None,
+            duracion: DURACION,
         });
         frame_limpio(&ctx, 0.5, vec![mover_a(donde)]);
         frame_solo_aviso(&ctx, 1.0, &mut aviso);

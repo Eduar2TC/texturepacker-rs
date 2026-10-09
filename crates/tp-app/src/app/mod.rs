@@ -486,6 +486,17 @@ impl eframe::App for App {
         let estrecho = ctx.content_rect().width() < ANCHO_DOCK_AJUSTES;
         if estrecho && !self.settings_estrecho_antes && self.show_settings {
             self.show_settings = false;
+            // El pliegue por ancho no deja rastro: el dock desaparece solo,
+            // sin que nadie lo pidiera y sin botón ni título al que mirar
+            // para notarlo. El aviso es lo único que cuenta que se fue y
+            // que `F9` lo devuelve (4.2); cae al pie de la ventana, que es
+            // donde se ve igual desde el gesto de redimensionado que desde
+            // un teclado.
+            self.aviso_durante(
+                LogKind::Info,
+                t!("Ajustes oculto — F9").into(),
+                aviso::DURACION_PLIEGUE,
+            );
         }
         self.settings_estrecho_antes = estrecho;
 

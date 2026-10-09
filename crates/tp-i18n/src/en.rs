@@ -240,6 +240,7 @@ pub static EN: &[(&str, &str)] = &[
 
     ("Ajustes", "Settings"),
     ("Mostrar Ajustes", "Show Settings"),
+    ("Ajustes oculto — F9", "Settings hidden — F9"),
     ("Avanzados", "Advanced"),
     ("Mostrar todas las opciones", "Show every option"),
     ("Datos", "Data"),
