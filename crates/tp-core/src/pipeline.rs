@@ -21,6 +21,7 @@ use crate::ingest::{self, IngestedSprite};
 use crate::pack::{self, PackItem, PackerOptions};
 use crate::pixels;
 use crate::polygon;
+use crate::progress::{Progress, Segment};
 use crate::templates;
 use crate::types::{AtlasPage, PackResult, PageInfo, Point2D, Rect, SpriteAsset};
 use rayon::prelude::*;
@@ -44,14 +45,26 @@ pub struct PipelineOutput {
 pub fn run(config: &ProjectConfig) -> Result<PipelineOutput> {
     // Los grupos viajan siempre: el gancho de `execute` decide si están
     // activos (modo manual con asignaciones o modo automático por carpetas).
-    execute(config, true, Some(&config.folder_groups), None)
+    execute(config, true, Some(&config.folder_groups), None, None)
+}
+
+/// Like [`run`], feeding `progreso` with every phase of the run: the status
+/// bar of the GUI reads it from another thread while packing.
+pub fn run_with_progress(config: &ProjectConfig, progreso: &Progress) -> Result<PipelineOutput> {
+    execute(
+        config,
+        true,
+        Some(&config.folder_groups),
+        None,
+        Some(progreso),
+    )
 }
 
 /// Run the pipeline without touching the disk: pack in memory only, so the
 /// GUI can show a live preview of the workspace. No directory is created and
 /// no image or metadata file is rendered or written.
 pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, false, Some(&config.folder_groups), None)
+    execute(config, false, Some(&config.folder_groups), None, None)
 }
 
 /// Pack by manual folder groups (`folder_groups`): one pipeline run per
@@ -61,12 +74,27 @@ pub fn run_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
 /// members; the merged result keeps every group's sprites and pages for the
 /// GUI preview.
 pub fn run_grouped(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, true, Some(&config.folder_groups), None)
+    execute(config, true, Some(&config.folder_groups), None, None)
+}
+
+/// Like [`run_grouped`], feeding `progreso` (same call as [`run_with_progress`]:
+/// `execute` is what decides whether the groups are active).
+pub fn run_grouped_with_progress(
+    config: &ProjectConfig,
+    progreso: &Progress,
+) -> Result<PipelineOutput> {
+    execute(
+        config,
+        true,
+        Some(&config.folder_groups),
+        None,
+        Some(progreso),
+    )
 }
 
 /// In-memory version of [`run_grouped`] for the live preview.
 pub fn run_grouped_preview(config: &ProjectConfig) -> Result<PipelineOutput> {
-    execute(config, false, Some(&config.folder_groups), None)
+    execute(config, false, Some(&config.folder_groups), None, None)
 }
 
 fn execute(
@@ -74,6 +102,7 @@ fn execute(
     write_to_disk: bool,
     groups: Option<&[FolderGroup]>,
     variant: Option<&VariantRun>,
+    progreso: Option<&Progress>,
 ) -> Result<PipelineOutput> {
     config.validate()?;
     // Clave global: si el proyecto solo nombra una clave guardada, se
@@ -83,6 +112,25 @@ fn execute(
     let config: &ProjectConfig = &resolved_key;
     let mut stage_times: Vec<(String, u64)> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
+
+    // ------------------------------------------------------------------
+    // Barra de la tira: la corrida se parte en cinco tramos contiguos —
+    // ingerir, variantes, componer, pintar, escribir— y cada fase avanza
+    // dentro del suyo con sus propios trabajos. Como los tramos son
+    // contiguos y el último cierra la barra, arrancar una fase sólo puede
+    // empujar el porcentaje hacia delante y terminar la última lo deja en
+    // 1. La corrida agrupada no llega a las tres últimas: se para en
+    // `run_groups`, que se lleva lo que sobra de la primera.
+    // ------------------------------------------------------------------
+    let tramos = Segment::split(Segment::FULL, &[350, 100, 150, 200, 200]);
+    let tramo_grupos = Segment {
+        start: tramos[0].start + tramos[0].len,
+        len: Segment::FULL.len - tramos[0].start - tramos[0].len,
+    };
+    if let Some(prog) = progreso {
+        // El total de la ingesta lo fija ésta al descubrir los ficheros.
+        prog.begin_phase(tramos[0], 0);
+    }
 
     // ------------------------------------------------------------------
     // Ajustes de rejilla (align to grid / common divisor / border padding).
@@ -141,26 +189,29 @@ fn execute(
     // PASO 1 + 2: discover, load (parallel), trim, hash
     // ------------------------------------------------------------------
     let t = Instant::now();
-    let ingested = ingest::ingest(&ingest::IngestOptions {
-        input_directory: &config.input_directory,
-        trim_threshold: config.trim_threshold,
-        trim_mode: config.effective_trim_mode(),
-        trim_margin: config.trim_margin,
-        enable_normal_maps: config.enable_normal_maps,
-        normal_map_suffix: config.normal_map_suffix.clone(),
-        normal_map_filter: config.normal_map_filter.clone(),
-        normal_map_auto_detect: config.normal_map_auto_detect,
-        recursive: config.recursive,
-        extra_inputs: &config.extra_inputs,
-        excluded_inputs: &config.excluded_inputs,
-        trim_sprite_names: config.trim_sprite_names,
-        prepend_folder_name: config.prepend_folder_name,
-        common_divisor_x: div_x,
-        common_divisor_y: div_y,
-        ignore_patterns: &config.ignore_patterns,
-        name_replacements: &config.name_replacements,
-        heuristic_mask: config.heuristic_mask,
-    });
+    let ingested = ingest::ingest_con(
+        &ingest::IngestOptions {
+            input_directory: &config.input_directory,
+            trim_threshold: config.trim_threshold,
+            trim_mode: config.effective_trim_mode(),
+            trim_margin: config.trim_margin,
+            enable_normal_maps: config.enable_normal_maps,
+            normal_map_suffix: config.normal_map_suffix.clone(),
+            normal_map_filter: config.normal_map_filter.clone(),
+            normal_map_auto_detect: config.normal_map_auto_detect,
+            recursive: config.recursive,
+            extra_inputs: &config.extra_inputs,
+            excluded_inputs: &config.excluded_inputs,
+            trim_sprite_names: config.trim_sprite_names,
+            prepend_folder_name: config.prepend_folder_name,
+            common_divisor_x: div_x,
+            common_divisor_y: div_y,
+            ignore_patterns: &config.ignore_patterns,
+            name_replacements: &config.name_replacements,
+            heuristic_mask: config.heuristic_mask,
+        },
+        progreso,
+    );
     warnings.extend(ingested.warnings);
     if ingested.sprites.is_empty() {
         return Err("No se encontraron sprites válidos en el directorio de entrada".into());
@@ -209,14 +260,26 @@ fn execute(
             if derived.len() > 1 {
                 derived[1..].sort_by(|a, b| a.name.cmp(&b.name));
             }
-            return run_groups(config, &sprites, &derived, write_to_disk);
+            return run_groups(
+                config,
+                &sprites,
+                &derived,
+                write_to_disk,
+                progreso.map(|p| (p, tramo_grupos)),
+            );
         }
         // Modo manual: activo en cuanto hay un grupo con nombre y sprites.
         if groups
             .iter()
             .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
         {
-            return run_groups(config, &sprites, groups, write_to_disk);
+            return run_groups(
+                config,
+                &sprites,
+                groups,
+                write_to_disk,
+                progreso.map(|p| (p, tramo_grupos)),
+            );
         }
     }
 
@@ -229,6 +292,12 @@ fn execute(
     // con su filtro, su tamaño máximo y su geometría ya escalada.
     let mut variant_files: Vec<String> = Vec::new();
     let mut export_scales: Vec<f32> = config.scale_variants.clone();
+    // Fase de variantes: su total sólo se sabe al planificarse (y sólo hay
+    // variantes que planificar al escribir), así que hasta entonces la fase
+    // está anunciada sin trabajos y se da por hecha si no llegan.
+    if let Some(prog) = progreso {
+        prog.begin_phase(tramos[1], 0);
+    }
     // Los modos de escalado de pixel art solo entienden su factor entero; el
     // resto de escalas caen a Smooth. Solo se avisa en la corrida de arriba
     // (las corridas internas de variante repiten la misma lista).
@@ -261,6 +330,9 @@ fn execute(
         let (identical, passes, plan_warnings) = plan_variants(config, &sprites);
         warnings.extend(plan_warnings);
         export_scales = identical;
+        if let Some(prog) = progreso {
+            prog.set_total(passes.len());
+        }
         for p in passes {
             let mut pcfg = config.clone();
             let mut excluded = pcfg.excluded_inputs.clone();
@@ -270,7 +342,7 @@ fn execute(
             pcfg.max_texture_size = p.max_texture_size;
             scale_variant_geometry(&mut pcfg, p.run.scale);
             let t = Instant::now();
-            let out = execute(&pcfg, true, None, Some(&p.run))?;
+            let out = execute(&pcfg, true, None, Some(&p.run), None)?;
             warnings.extend(out.result.warnings);
             variant_files.extend(out.result.output_files);
             let inner: u64 = out.result.stage_times_ms.iter().map(|(_, ms)| *ms).sum();
@@ -278,12 +350,21 @@ fn execute(
                 format!("variante {}", variant_suffix_for(config, p.run.scale)),
                 inner + t.elapsed().as_millis() as u64,
             ));
+            if let Some(prog) = progreso {
+                prog.add(1);
+            }
         }
     }
 
     // ------------------------------------------------------------------
     // PASO 3: alias resolution
     // ------------------------------------------------------------------
+    // Fase de composición: cinco sub-etapas sin trabajo por sprite que
+    // avisar (dentro del empaquetador no hay gancho), así que cada etapa
+    // cerrada es un trabajo de la barra.
+    if let Some(prog) = progreso {
+        prog.begin_phase(tramos[2], 5);
+    }
     let t = Instant::now();
     let aliases = if config.enable_aliasing {
         ingest::resolve_aliases(&sprites)
@@ -292,6 +373,9 @@ fn execute(
     };
     let alias_count = aliases.iter().filter(|(a, _)| *a).count();
     stage_times.push(("aliasing".into(), t.elapsed().as_millis() as u64));
+    if let Some(prog) = progreso {
+        prog.add(1);
+    }
 
     // Un id duplicado por dos ficheros CON CONTENIDO DISTINTO corrompería la
     // salida en silencio: hay dos colocaciones con el mismo id, el `HashMap`
@@ -366,6 +450,9 @@ fn execute(
             .collect();
     }
     stage_times.push(("polygons".into(), t.elapsed().as_millis() as u64));
+    if let Some(prog) = progreso {
+        prog.add(1);
+    }
 
     // ------------------------------------------------------------------
     // PASO 5 + 6: pack (sort by area inside the packer, multi-atlas)
@@ -412,6 +499,9 @@ fn execute(
     };
     let pack_out = pack::pack(&items, &opts)?;
     stage_times.push(("packing".into(), t.elapsed().as_millis() as u64));
+    if let Some(prog) = progreso {
+        prog.add(1);
+    }
 
     // Multipack — con la opción desactivada todas las imágenes deben
     // caber en una sola hoja.
@@ -507,6 +597,9 @@ fn execute(
             page.has_normals = true;
         }
     }
+    if let Some(prog) = progreso {
+        prog.add(1);
+    }
 
     // Preload normal-map pixels (parallel).
     let t = Instant::now();
@@ -528,10 +621,22 @@ fn execute(
         }
     }
     stage_times.push(("normal-load".into(), t.elapsed().as_millis() as u64));
+    if let Some(prog) = progreso {
+        prog.add(1);
+    }
 
     // ------------------------------------------------------------------
     // PASO 8: blit sprites into page buffers (parallel)
     // ------------------------------------------------------------------
+    // Fase de pintado: el blit con un trabajo por sprite (los alias y los
+    // que no tienen marco también cuentan: su turno ya está resuelto) y
+    // cuatro pasos por página —ocupación, fondo, alfa y cuantización—. Dos
+    // de esos pasos son condicionales y se quedan sin avisar: la barra no
+    // acaba el tramo y la fase siguiente la empuja al suyo, que es lo único
+    // que la puede mover hacia delante.
+    if let Some(prog) = progreso {
+        prog.begin_phase(tramos[3], sprites.len() + pages.len() * 4);
+    }
     let t = Instant::now();
     // Los buffers viajan de `pages` a los candados y vuelven al final: así
     // el candado nunca lleva un clon del lienzo (de 64 MB en un atlas
@@ -548,6 +653,11 @@ fn execute(
     let extrude = config.extrude.max(0);
 
     (0..sprites.len()).into_par_iter().for_each(|i| {
+        // Un trabajo por sprite que entra al blit: los que saltan (alias o
+        // sin marco) también cuentan, que su turno ya está resuelto.
+        if let Some(prog) = progreso {
+            prog.add(1);
+        }
         let s = &sprites[i];
         if aliases[i].0 {
             return;
@@ -616,6 +726,9 @@ fn execute(
     for page in &mut pages {
         page.fill_ratio = fill_ratio(&page.pixels, page.width, page.height);
     }
+    if let Some(prog) = progreso {
+        prog.add(pages.len());
+    }
 
     // ------------------------------------------------------------------
     // PASO 8a: background colour (`--background-color`)
@@ -626,6 +739,9 @@ fn execute(
             .par_iter_mut()
             .for_each(|p| pixels::fill_background(&mut p.pixels, bg));
         stage_times.push(("background".into(), t.elapsed().as_millis() as u64));
+        if let Some(prog) = progreso {
+            prog.add(pages.len());
+        }
     }
 
     // ------------------------------------------------------------------
@@ -638,6 +754,9 @@ fn execute(
             pixels::apply_alpha_handling(&mut p.pixels, p.width as usize, p.height as usize, mode);
         });
         stage_times.push(("alpha-handling".into(), t.elapsed().as_millis() as u64));
+        if let Some(prog) = progreso {
+            prog.add(pages.len());
+        }
     }
 
     // ------------------------------------------------------------------
@@ -659,6 +778,9 @@ fn execute(
         }
     });
     stage_times.push(("quantize".into(), t.elapsed().as_millis() as u64));
+    if let Some(prog) = progreso {
+        prog.add(pages.len());
+    }
 
     // ------------------------------------------------------------------
     // Assemble SpriteAsset list
@@ -780,6 +902,13 @@ fn execute(
     // escala entre las que se exportan.
     let base_scale = variant.map(|v| v.scale).unwrap_or(1.0);
     let base_page_infos: Vec<PageInfo> = page_infos_at(config, &pages, base_scale);
+
+    // Fase de escritura: una página y escala por trabajo —lo caro es
+    // codificar cada hoja—. Los datos de la plantilla van después, sin
+    // coste de codificación que avisar.
+    if let Some(prog) = progreso {
+        prog.begin_phase(tramos[4], pages.len() * export_scales.len());
+    }
 
     for scale in &export_scales {
         // Una corrida de variante empaqueta ya a su escala: sus páginas se
@@ -959,6 +1088,14 @@ fn execute(
                         },
                         written,
                     })
+                }
+            })
+            .inspect(|_| {
+                // Una hoja codificada (y escrita, si toca) es un trabajo
+                // terminado; si el `?` de dentro corta, esa no se cuenta y
+                // la fase siguiente empuja la barra a su tramo.
+                if let Some(prog) = progreso {
+                    prog.add(1);
                 }
             })
             .collect::<Result<Vec<_>>>()?;
@@ -1336,6 +1473,7 @@ fn run_groups(
     all_sprites: &[IngestedSprite],
     groups: &[FolderGroup],
     write_to_disk: bool,
+    progreso: Option<(&Progress, Segment)>,
 ) -> Result<PipelineOutput> {
     use std::collections::{HashMap, HashSet};
 
@@ -1365,6 +1503,17 @@ fn run_groups(
         Some(&o) => o == i,
         None => default_idx == Some(i),
     };
+
+    // Barra de la corrida agrupada: un trabajo por grupo con sprites (los
+    // vacíos ni se ejecutan ni cuentan), y dentro de cada uno la corrida
+    // entera —ingerir, componer, pintar, escribir— corre sin contar, porque
+    // cada grupo es ya el trabajo que la barra está siguiendo.
+    if let Some((prog, tramo)) = progreso {
+        let con_sprites = (0..groups.len())
+            .filter(|&i| all_sprites.iter().any(|s| owns(s, i)))
+            .count();
+        prog.begin_phase(tramo, con_sprites);
+    }
 
     let t0 = Instant::now();
     let mut merged_sprites: Vec<SpriteAsset> = Vec::new();
@@ -1398,7 +1547,10 @@ fn run_groups(
         gcfg.excluded_inputs = excluded;
         gcfg.folder_groups = Vec::new(); // no recursión
 
-        let mut out = execute(&gcfg, write_to_disk, None, None)?;
+        let mut out = execute(&gcfg, write_to_disk, None, None, None)?;
+        if let Some((prog, _)) = progreso {
+            prog.add(1);
+        }
         warnings.append(&mut out.result.warnings);
         alias_count += out.result.alias_count;
         let group_prefix = if g.name.is_empty() {

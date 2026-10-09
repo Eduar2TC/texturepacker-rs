@@ -54,6 +54,7 @@ impl App {
             result: None,
             textures: Vec::new(),
             running: None,
+            progreso: None,
             selected_page: 0,
             zoom: 1.0,
             auto_fit: true,

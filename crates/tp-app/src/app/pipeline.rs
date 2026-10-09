@@ -535,11 +535,15 @@ impl App {
         // (por eso no toca `self.config`, que es lo que firma el snapshot).
         cfg.force_publish = force;
         let grouped = self.groups_active();
+        // La tira necesita leer la marcha de la corrida desde el hilo de la
+        // interfaz: el `Progress` va en un `Arc` compartido con éste.
+        let progreso = std::sync::Arc::new(tp_core::progress::Progress::new());
+        let del_hilo = progreso.clone();
         std::thread::spawn(move || {
             let result = if grouped {
-                tp_core::pipeline::run_grouped(&cfg)
+                tp_core::pipeline::run_grouped_with_progress(&cfg, &del_hilo)
             } else {
-                tp_core::pipeline::run(&cfg)
+                tp_core::pipeline::run_with_progress(&cfg, &del_hilo)
             };
             let _ = tx.send(RunMessage {
                 elapsed_ms: 0,
@@ -547,6 +551,7 @@ impl App {
             });
         });
         self.running = Some(rx);
+        self.progreso = Some(progreso);
         self.packed_snapshot = Some(snapshot);
         self.change_seq += 1;
         let origin = if self.config.input_directory.as_os_str().is_empty() {
@@ -575,6 +580,7 @@ impl App {
 
     pub(super) fn handle_run_result(&mut self, ctx: &egui::Context, msg: RunMessage) {
         self.running = None;
+        self.progreso = None;
         match msg.result {
             Ok(out) => {
                 let total = out.result.total_sprites;

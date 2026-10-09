@@ -135,6 +135,11 @@ pub struct App {
     result: Option<PipelineOutput>,
     textures: Vec<egui::TextureHandle>,
     running: Option<Receiver<RunMessage>>,
+    /// Corrida en marcha y su barra: la tira lee el `Progress` mientras
+    /// esté puesto y se lo quita al terminar. El contador «3/13» sale de
+    /// la ingesta y el porcentaje de la corrida entera (tp-core reparte la
+    /// barra en tramos contiguos, una fase por tramo).
+    progreso: Option<std::sync::Arc<tp_core::progress::Progress>>,
     selected_page: usize,
     zoom: f32,
     /// Encuadrar la hoja en cuanto haya resultado y lienzo medido. Se apaga
@@ -286,6 +291,34 @@ pub struct App {
     prefs_path: PathBuf,
 }
 
+/// Tira de progreso de una publicación: cuántas imágenes lleva cargadas la
+/// ingesta y qué fracción de la corrida entera lleva la barra.
+///
+/// Los dos a la vez porque ninguno solo sirve: el contador se queda en
+/// «13/13» en cuanto acaba la ingesta, que es apenas el primer tramo, y una
+/// barra sin texto no dice qué se está cargando. La barra no se puede quedar
+/// quieta en el mismo sitio: tp-core la reparte en tramos contiguos, uno por
+/// fase (ingerir, variantes, componer, pintar, escribir), así que va
+/// avanzando de la ingesta a la escritura y termina en el borde.
+fn progreso_en_la_tira(ui: &mut egui::Ui, progreso: &tp_core::progress::Progress) {
+    let (cargadas, ficheros) = progreso.loaded();
+    ui.separator();
+    ui.label(egui::RichText::new(t!("Empaquetando… {}/{}", cargadas, ficheros)).weak());
+
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 6.0), egui::Sense::hover());
+    let pintor = ui.painter();
+    let visuals = ui.visuals();
+    // Surco con el gris del widget inactivo (se ve en los dos temas) y
+    // relleno con el color de selección, que es el acento del tema: ni la
+    // barra ni su relleno inventan un color propio.
+    pintor.rect_filled(rect, 3.0, visuals.widgets.inactive.bg_fill);
+    let ancho = rect.width() * progreso.fraction();
+    if ancho > 0.0 {
+        let barra = egui::Rect::from_min_size(rect.min, egui::vec2(ancho, rect.height()));
+        pintor.rect_filled(barra, 3.0_f32.min(ancho / 2.0), visuals.selection.bg_fill);
+    }
+}
+
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         apply_theme(ctx, self.prefs.theme());
@@ -307,6 +340,7 @@ impl eframe::App for App {
                 }
                 Err(TryRecvError::Disconnected) => {
                     self.running = None;
+                    self.progreso = None;
                     self.log(
                         LogKind::Error,
                         t!("El hilo de empaquetado terminó inesperadamente.").into(),
@@ -381,6 +415,12 @@ impl eframe::App for App {
                         );
                     } else {
                         ui.label(egui::RichText::new(t!("Sin atlas — añade sprites")).weak());
+                    }
+                    // En marcha: contador de imágenes cargadas + barra de la
+                    // corrida entera (se quita al terminar, no se queda
+                    // enseñando «100 %» de una publicación ya cerrada).
+                    if let Some(progreso) = self.progreso.as_deref() {
+                        progreso_en_la_tira(ui, progreso);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         match &self.project_path {
@@ -595,5 +635,131 @@ mod titulo_tests {
             texto.contains("proyecto sin guardar — Ctrl+S"),
             "la tira recuerda que no hay dónde guardar: {texto}"
         );
+    }
+}
+
+#[cfg(test)]
+mod tira_tests {
+    use super::*;
+    use crate::testing::{idle_input, rellenos_pintados, texto_pintado};
+
+    /// Una corrida ya empezada: 13 imágenes descubiertas, 3 de ellas
+    /// cargadas y un 37 % de la corrida entera hecha.
+    fn progreso_en_marcha() -> std::sync::Arc<tp_core::progress::Progress> {
+        let progreso = std::sync::Arc::new(tp_core::progress::Progress::new());
+        progreso.begin_phase(tp_core::progress::Segment::FULL, 100);
+        progreso.set_files(13);
+        for _ in 0..3 {
+            progreso.add_loaded();
+        }
+        progreso.add(37);
+        progreso
+    }
+
+    fn color_de_barra(ctx: &egui::Context) -> egui::Color32 {
+        ctx.style().visuals.selection.bg_fill
+    }
+
+    /// Ancho de la barra pintada en la tira, o `None` si no la hay. Se
+    /// buscan las rellenas del acento con la altura exacta de la barra para
+    /// que no se confunda con otro rellén del mismo color.
+    fn barra_pintada(out: &egui::FullOutput, ctx: &egui::Context) -> Option<f32> {
+        let color = color_de_barra(ctx);
+        rellenos_pintados(out)
+            .into_iter()
+            .filter(|(c, _)| *c == color)
+            .find(|(_, r)| (r.height() - 6.0).abs() < 0.5)
+            .map(|(_, r)| r.width())
+    }
+
+    /// 4.2: mientras se empaqueta la tira enseña las dos cosas decididas —
+    /// el contador de imágenes cargadas y la barra de la corrida entera—, y
+    /// la barra mide exactamente la fracción que tp-core calcula, ni más ni
+    /// menos.
+    #[test]
+    fn la_tira_de_progreso_pinta_el_contador_y_la_barra() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.progreso = Some(progreso_en_marcha());
+
+        let out = app.run_frame(&ctx, idle_input());
+
+        let texto = texto_pintado(&out);
+        assert!(
+            texto.contains("Empaquetando… 3/13"),
+            "falta el contador de la tira: {texto}"
+        );
+        let ancho = barra_pintada(&out, &ctx).expect("no hay barra de 6 px con el color de acento");
+        let esperado = 120.0 * 0.37;
+        assert!(
+            (ancho - esperado).abs() < 1.0,
+            "la barra debe medir {esperado} px (37 de 100 hechos), mide {ancho}"
+        );
+    }
+
+    /// Sin corrida no se pinta nada: el contador y la barra sólo viven
+    /// mientras hay un `Progress` en marcha.
+    #[test]
+    fn sin_corrida_la_tira_no_inventa_progreso() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        let out = app.run_frame(&ctx, idle_input());
+
+        let texto = texto_pintado(&out);
+        assert!(
+            !texto.contains("Empaquetando"),
+            "no hay corrida y la tira dice que sí: {texto}"
+        );
+        assert!(
+            barra_pintada(&out, &ctx).is_none(),
+            "no debe haber barra de progreso sin corrida"
+        );
+    }
+
+    /// Si el hilo muere sin mandar resultado, la tira no se queda
+    /// enseñando un empaquetado que ya no existe.
+    #[test]
+    fn si_el_hilo_de_la_corrida_muere_se_quita_la_barra() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let (tx, rx) = std::sync::mpsc::channel::<RunMessage>();
+        drop(tx);
+        app.running = Some(rx);
+        app.progreso = Some(progreso_en_marcha());
+
+        let out = app.run_frame(&ctx, idle_input());
+
+        let texto = texto_pintado(&out);
+        assert!(
+            !texto.contains("Empaquetando"),
+            "la corrida ya no existe y la tira sigue con el contador: {texto}"
+        );
+        assert!(app.progreso.is_none(), "el progreso debe quedar borrado");
+    }
+
+    /// Lo mismo cuando el resultado llega (aquí, un fallo): la barra se
+    /// apaga al cerrar la corrida, no se queda pegada al 100 %.
+    #[test]
+    fn al_llegar_el_resultado_se_quita_la_barra() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(RunMessage {
+            elapsed_ms: 0,
+            result: Err("fallo de prueba".into()),
+        })
+        .expect("el receptor sigue vivo");
+        app.running = Some(rx);
+        app.progreso = Some(progreso_en_marcha());
+
+        let out = app.run_frame(&ctx, idle_input());
+
+        let texto = texto_pintado(&out);
+        assert!(
+            !texto.contains("Empaquetando"),
+            "la corrida terminó y la tira sigue contando: {texto}"
+        );
+        assert!(app.progreso.is_none(), "el progreso debe quedar borrado");
     }
 }

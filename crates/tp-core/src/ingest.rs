@@ -9,6 +9,7 @@
 use crate::config::{glob_match, TrimMode};
 use crate::error::{Result, TpError};
 use crate::hash::{hash_pixels_rgba, AliasTable};
+use crate::progress::Progress;
 use crate::types::Rect;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -385,10 +386,26 @@ pub fn load_border_overrides(dir: &Path) -> Result<HashMap<String, [i32; 4]>> {
 /// normal maps. `*_normal.*` files are *not* returned as sprites when
 /// `enable_normal_maps` is set — they are attached as companions.
 pub fn ingest(options: &IngestOptions) -> IngestResult {
+    ingest_con(options, None)
+}
+
+/// Like [`ingest`], feeding `progreso` so the status bar can move while the
+/// images load.
+///
+/// The total of the current phase is only known once the files are
+/// discovered, so it is set right there (`set_files` feeds the «3/13»
+/// counter; `set_total` the bar, which also counts the images the
+/// auto-detect has to decode a second time). Every image that finishes
+/// loading is one more item.
+pub fn ingest_con(options: &IngestOptions, progreso: Option<&Progress>) -> IngestResult {
     let mut result = IngestResult::default();
     let threshold = options.trim_threshold.clamp(0, 255) as u8;
 
     let files = discover_images(options);
+    if let Some(prog) = progreso {
+        prog.set_files(files.len());
+        prog.set_total(files.len());
+    }
     if files.is_empty() {
         result.warnings.push(format!(
             "No se encontraron imágenes en {}",
@@ -413,9 +430,19 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
             .cloned()
             .collect();
         if options.normal_map_auto_detect {
+            // Cada imagen que queda por clasificar es un trabajo más de esta
+            // fase: se decodifica entera para mirar sus colores.
+            if let Some(prog) = progreso {
+                prog.set_total(files.len() + (files.len() - set.len()));
+            }
             let detected: Vec<PathBuf> = files
                 .par_iter()
                 .filter(|p| !set.contains(*p))
+                .inspect(|_| {
+                    if let Some(prog) = progreso {
+                        prog.add(1);
+                    }
+                })
                 .filter_map(|p| {
                     let (w, h, rgba) = load_image_rgba(p).ok()?;
                     (w > 0 && h > 0 && looks_like_normal_map(&rgba)).then(|| p.clone())
@@ -539,6 +566,14 @@ pub fn ingest(options: &IngestOptions) -> IngestResult {
                 pixel_hash: hash,
                 normal_path,
             }))
+        })
+        .inspect(|_| {
+            // Cada imagen que sale de la carga — también la que venía rota o
+            // entera en blanco y se descarta— ya tiene su turno dado.
+            if let Some(prog) = progreso {
+                prog.add(1);
+                prog.add_loaded();
+            }
         })
         .collect();
 

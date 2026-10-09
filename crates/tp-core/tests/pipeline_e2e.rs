@@ -4,9 +4,10 @@
 
 use std::path::{Path, PathBuf};
 use tp_core::config::{
-    ColorDepth, DitheringAlgorithm, GpuFormat, PackMode, PackingAlgorithm, PackingStrategy,
-    ProjectConfig, SizeConstraint, TemplateFormat, VariantOptions,
+    ColorDepth, DitheringAlgorithm, FolderGroup, GpuFormat, PackMode, PackingAlgorithm,
+    PackingStrategy, ProjectConfig, SizeConstraint, TemplateFormat, VariantOptions,
 };
+use tp_core::progress::Progress;
 use tp_core::types::Rect;
 use tp_core::{export, pipeline, reader};
 
@@ -3073,4 +3074,101 @@ fn fase_c_renderiza_prefijo_css_media_query_y_plantilla_propia() {
     let data = std::fs::read_to_string(output.join("atlas.json")).unwrap();
     assert!(!data.trim_start().starts_with('{'), "no es JSON: {data}");
     assert!(data.contains("hero") && data.contains("icon"), "{data}");
+}
+
+/// La barra de la tira de estado, vista desde fuera: una corrida real debe
+/// terminar en el borde de su último tramo (fracción 1) y con el contador de
+/// imágenes igualado. Si una fase se anuncia y luego no se avanza, la barra
+/// se queda corta y este test la pilla.
+#[test]
+fn la_corrida_plana_llega_al_fondo_de_la_barra() {
+    let fx = Fixture::new("progreso");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+    for i in 0..12 {
+        write_png(
+            &input.join(format!("s{i}.png")),
+            8,
+            8,
+            [(i * 20) as u8, 90, 200, 255],
+        );
+    }
+    let cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        template_format: TemplateFormat::Json,
+        ..ProjectConfig::default()
+    };
+
+    let progreso = Progress::new();
+    pipeline::run_with_progress(&cfg, &progreso).expect("la corrida debe terminar");
+
+    assert_eq!(
+        progreso.fraction(),
+        1.0,
+        "la barra de una corrida completa debe cerrar: {}",
+        progreso.fraction()
+    );
+    assert_eq!(
+        progreso.loaded(),
+        (12, 12),
+        "el contador debe llevar las 12 imágenes descubiertas y cargadas"
+    );
+}
+
+/// La corrida por grupos tiene otra escalera —la ingesta de arriba y un
+/// tramo repartido entre los grupos— y también tiene que cerrar. Los grupos
+/// sin sprites no se ejecutan y no deben contar como trabajos pendientes.
+#[test]
+fn la_corrida_agrupada_tambien_cierra_su_barra() {
+    let fx = Fixture::new("progreso_grupos");
+    let input = make_input_dir(&fx.dir, "in");
+    for i in 0..3 {
+        write_png(
+            &input.join(format!("s{i}.png")),
+            8,
+            8,
+            [(i * 60) as u8, 30, 210, 255],
+        );
+    }
+    let cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: fx.dir.join("out"),
+        max_texture_size: 64,
+        template_format: TemplateFormat::Json,
+        ..ProjectConfig::default()
+    };
+    // Los ids reales salen de una corrida plana: no hay que adivinar si el
+    // proyecto trae los nombres recortados o con extensión.
+    let plana = pipeline::run(&cfg).expect("la corrida plana debe terminar");
+    let ids: Vec<String> = plana.result.sprites.iter().map(|s| s.id.clone()).collect();
+
+    let mut agrupado = cfg.clone();
+    agrupado.output_directory = fx.dir.join("out_grupos");
+    agrupado.folder_groups = vec![
+        FolderGroup {
+            name: "ui".into(),
+            sprites: vec![ids[0].clone()],
+        },
+        // Ni un sprite: no se ejecuta y no puede dejar la barra a medias.
+        FolderGroup {
+            name: "vacio".into(),
+            sprites: vec!["que_no_existe".into()],
+        },
+    ];
+    let progreso = Progress::new();
+    pipeline::run_grouped_with_progress(&agrupado, &progreso).expect("la corrida agrupada");
+
+    assert_eq!(
+        progreso.fraction(),
+        1.0,
+        "la barra agrupada debe cerrar con todos los grupos contados: {}",
+        progreso.fraction()
+    );
+    assert_eq!(
+        progreso.loaded(),
+        (3, 3),
+        "el contador lo pone la ingesta de arriba del todo"
+    );
 }
