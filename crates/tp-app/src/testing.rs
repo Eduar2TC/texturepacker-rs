@@ -228,3 +228,36 @@ pub fn rellenos_pintados(
     }
     fuera
 }
+
+/// La caja del control que pinta `glifo`, una por aparición en pantalla.
+///
+/// La caja de un botón no es texto sino una forma, y egui no devuelve el
+/// rectángulo de un widget: lo que sí deja una salida son los glifos de
+/// sus rótulos —[`textos_pintados`]— y, pintados a su alrededor, los
+/// rellenos de su frame —[`rellenos_pintados`]—. El relleno más pequeño
+/// que contiene al glifo es el propio control; el panel que también lo
+/// contiene es más grande y, por serlo, pierde.
+///
+/// Es con lo que se mide si un control alcanza su objetivo (4.3): la
+/// medida sale del frame de verdad, sin confiar en el fuente.
+pub fn controles_de(output: &eframe::egui::FullOutput, glifo: &str) -> Vec<eframe::egui::Rect> {
+    let centros: Vec<_> = textos_pintados(output)
+        .iter()
+        .filter(|(texto, _, _)| texto.trim() == glifo)
+        .map(|(_, rect, _)| rect.center())
+        .collect();
+    let rellenos: Vec<_> = rellenos_pintados(output)
+        .into_iter()
+        .map(|(_, rect)| rect)
+        .collect();
+    centros
+        .iter()
+        .filter_map(|centro| {
+            rellenos
+                .iter()
+                .filter(|r| r.contains(*centro))
+                .min_by(|a, b| a.area().total_cmp(&b.area()))
+                .copied()
+        })
+        .collect()
+}

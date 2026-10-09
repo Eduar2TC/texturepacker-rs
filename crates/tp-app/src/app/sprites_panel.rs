@@ -1,6 +1,6 @@
 //! Left sprites panel: tree of folders and sprites, drag & drop target.
 
-use super::{App, LogKind};
+use super::{App, LogKind, OBJETIVO_MIN};
 use crate::i18n::t;
 use eframe::egui;
 use std::collections::HashSet;
@@ -181,14 +181,14 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
-                .small_button("−")
+                .add(egui::Button::new("−").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Plegar todas las carpetas"))
                 .clicked()
             {
                 app.tree_force_open = Some(false);
             }
             if ui
-                .small_button("+")
+                .add(egui::Button::new("+").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Desplegar todas las carpetas"))
                 .clicked()
             {
@@ -1369,5 +1369,48 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// 4.3: el `+`/`−` de la cabecera del árbol eran `small_button`, o
+    /// sea 14 px de alto: el control más pequeño del panel y el que peor
+    /// se acierta a tientas. Aquí se mide la caja que cada uno deja
+    /// pintada, con el proyecto vacío —si no hay sprites los dos siguen
+    /// ahí, que son de cabecera—.
+    #[test]
+    fn los_mas_y_menos_del_arbol_miden_el_objetivo_minimo() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let pantalla = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let salida = ctx.run(pantalla, |ctx| {
+            egui::SidePanel::left("sprites_panel")
+                .resizable(true)
+                .default_width(250.0)
+                .show(ctx, |ui| sprites_ui(&mut app, ui));
+        });
+
+        for glifo in ["+", "−"] {
+            let cajas = crate::testing::controles_de(&salida, glifo);
+            assert_eq!(
+                cajas.len(),
+                1,
+                "«{glifo}» debe pintarse una vez en el panel: {}",
+                cajas.len()
+            );
+            let caja = cajas[0];
+            assert!(
+                caja.width() >= 24.0 && caja.height() >= 24.0,
+                "la caja de «{glifo}» {caja:?} mide menos que el objetivo de 24 px"
+            );
+            assert!(
+                caja.width() <= 64.0 && caja.height() <= 64.0,
+                "la caja de «{glifo}» {caja:?} no parece de botón: ¿se quedó sin relleno propio?"
+            );
+        }
     }
 }

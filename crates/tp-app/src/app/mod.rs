@@ -80,6 +80,17 @@ const BOTTOM_OPEN_HEIGHT: f32 = 120.0;
 /// esa tecla pueda devolverlo con la ventana todavía estrecha.
 const ANCHO_DOCK_AJUSTES: f32 = 1100.0;
 
+/// Objetivo mínimo de un control suelto (4.3), en píxeles de lado.
+///
+/// Sólo lo llevan los controles de un solo glifo —los «…» de ruta de
+/// Ajustes y los `+/−` del árbol—: medían 18 px, la altura que egui da
+/// de serie a cualquier botón, y 14 px en el caso de `small_button`, y
+/// sin texto que apuntar esa caja es todo lo que se puede acertar. Los
+/// controles con rótulo se quedan como están, y tampoco se sube
+/// `interact_size` en global: las dos cosas encarecerían la barra de
+/// herramientas, que es chrome y está medida (44 px con un tope de 50).
+const OBJETIVO_MIN: egui::Vec2 = egui::vec2(24.0, 24.0);
+
 /// Estado de frescura de la vista previa (indicador de la barra de zoom).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreviewState {

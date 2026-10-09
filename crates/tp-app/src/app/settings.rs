@@ -1,6 +1,6 @@
 //! Right settings panel: basic options always visible, advanced behind a toggle.
 
-use super::App;
+use super::{App, OBJETIVO_MIN};
 use crate::i18n::t;
 use eframe::egui;
 use std::path::PathBuf;
@@ -472,7 +472,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut app.input_dir_text).desired_width(190.0));
             if ui
-                .button("…")
+                .add(egui::Button::new("…").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Elegir la carpeta de entrada"))
                 .clicked()
             {
@@ -487,7 +487,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut app.output_dir_text).desired_width(190.0));
             if ui
-                .button("…")
+                .add(egui::Button::new("…").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Elegir la carpeta de salida"))
                 .clicked()
             {
@@ -612,7 +612,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                 .unwrap_or_default();
             ui.add(egui::TextEdit::singleline(&mut path).desired_width(160.0));
             if ui
-                .button("…")
+                .add(egui::Button::new("…").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Elegir la plantilla Mustache"))
                 .clicked()
             {
@@ -1796,7 +1796,7 @@ fn custom_exporters_body(app: &mut App, ui: &mut egui::Ui) -> bool {
             changed = true;
         }
         if ui
-            .button("…")
+            .add(egui::Button::new("…").min_size(OBJETIVO_MIN))
             .on_hover_text(t!("Elegir la carpeta de exportadores"))
             .clicked()
         {
@@ -2607,15 +2607,18 @@ mod tests {
     /// I7: un botón «…» no se explica solo —treinta píxeles sin etiqueta
     /// junto a un campo de ruta—. Recorre `settings.rs` y exige que cada
     /// uno lleve su `on_hover_text` antes del `.clicked()`, de modo que el
-    /// que aparezca nuevo tampoco se quede sin ayuda. Que la ayuda pase
-    /// por `t!` lo exige el escáner de literales de i18n.
+    /// que aparezca nuevo tampoco se quede sin ayuda. Se busca el glifo
+    /// entre paréntesis, no una forma concreta de construirlo, para que
+    /// el tamaño que le puso el Paso 4 (4.3) no despiste al escáner:
+    /// sirva el botón escrito a mano o montado con `Button::new`.
+    /// Que la ayuda pase por `t!` lo exige el escáner de literales de i18n.
     #[test]
     fn los_botones_de_exploracion_tienen_ayuda() {
         let ruta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/settings.rs");
         let src = std::fs::read_to_string(&ruta).expect("settings.rs legible");
         let mut sin_ayuda = Vec::new();
         let mut desde = 0;
-        while let Some(p) = src[desde..].find("button(\"…\")") {
+        while let Some(p) = src[desde..].find("(\"…\")") {
             let ini = desde + p;
             let linea = src[..ini].matches('\n').count() + 1;
             // La llamada puede partirse en varias líneas: se mira desde el
@@ -2640,5 +2643,78 @@ mod tests {
                 .collect::<Vec<_>>()
                 .join(", ")
         );
+    }
+
+    /// 4.3: los «…» de ruta medían 14-18 px —lo que egui da de alto a un
+    /// botón con rótulo— y con eso no se acierta a tientas. Aquí se mide
+    /// la caja que cada uno deja pintada en el panel, no el fuente: los
+    /// cuatro call sites (las dos rutas, la plantilla y los exportadores
+    /// propios) tienen que alcanzar el objetivo de 24 px.
+    #[test]
+    fn los_botones_de_ruta_miden_el_objetivo_minimo() {
+        let ctx = egui::Context::default();
+        let pantalla = egui::RawInput {
+            // Sin hueco no se miden cuatro: el panel sin `ScrollArea` deja
+            // de pintar lo que se sale por abajo, y el cuarto «…» caería
+            // fuera del recorte.
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 1600.0),
+            )),
+            ..egui::RawInput::default()
+        };
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.advanced_settings = true;
+
+        let salida = ctx.run(pantalla, |ctx| {
+            egui::SidePanel::right("settings_panel")
+                .resizable(true)
+                .default_width(330.0)
+                .show(ctx, |ui| {
+                    // Mientras hay buscador las cabeceras nacen abiertas
+                    // (con id aparte): es lo único que las abre en un solo
+                    // frame, y sin eso no se pintaría ni un «…». Con eso
+                    // salen las cuatro rutas del fichero, la de los
+                    // exportadores propios incluida, que va con cabecera
+                    // propia dentro de «Datos».
+                    app.settings_filter = "ruta".into();
+                    data_section(&mut app, ui);
+                });
+        });
+
+        let cajas = crate::testing::controles_de(&salida, "…");
+        assert_eq!(
+            cajas.len(),
+            4,
+            "las cuatro rutas del fichero (dos directorios, la plantilla \
+             y los exportadores propios) tienen que medirse: sólo se \
+             pintan {}",
+            cajas.len()
+        );
+        // El recuento del fuente es la red de seguridad: si algún día
+        // aparece un «…» en una sección que este frame no llega a abrir,
+        // los dos números divergen y hay que enseñarle a medir.
+        let en_fuente = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/settings.rs"),
+        )
+        .expect("settings.rs legible")
+        .matches("(\"…\")")
+        .count();
+        assert_eq!(
+            cajas.len(),
+            en_fuente,
+            "hay {en_fuente} «…» en el fichero y aquí se pintan {}",
+            cajas.len()
+        );
+        for caja in &cajas {
+            assert!(
+                caja.width() >= 24.0 && caja.height() >= 24.0,
+                "la caja {caja:?} mide menos que el objetivo de 24 px"
+            );
+            assert!(
+                caja.width() <= 64.0 && caja.height() <= 64.0,
+                "la caja {caja:?} no parece de botón: ¿se quedó sin relleno propio?"
+            );
+        }
     }
 }
