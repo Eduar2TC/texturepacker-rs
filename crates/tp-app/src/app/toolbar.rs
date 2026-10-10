@@ -46,7 +46,8 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             super::separador(ui);
 
             // --- Herramientas ---
-            let sprite_settings = egui::Button::new("⚙ Sprite").selected(app.show_sprite_settings);
+            let sprite_settings =
+                egui::Button::new(t!("⚙ Sprite")).selected(app.show_sprite_settings);
             if ui
                 .add(sprite_settings)
                 .on_hover_text(t!("Ajustes de sprite (pivots y bordes 9-patch)"))

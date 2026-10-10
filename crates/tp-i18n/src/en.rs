@@ -96,6 +96,10 @@ pub static EN: &[(&str, &str)] = &[
     ),
     ("… Publicando", "… Publishing"),
     ("⏏ Publicar", "⏏ Publish"),
+    // El botón de ajustes de sprite de la barra: el único texto de la
+    // barra que seguía a pelo («Sprite» es anglicismo en los dos idiomas,
+    // pero la clave existe para que se pueda traducir).
+    ("⚙ Sprite", "⚙ Sprite"),
     (
         "Empaquetar y exportar el sprite sheet — Ctrl+P",
         "Pack and export the sprite sheet — Ctrl+P",
