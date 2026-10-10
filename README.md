@@ -538,7 +538,7 @@ frase, sin sal) se siguen descifrando; sólo se deja de escribir ese formato.
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta más de 450 tests (entre ellos el del tipo de error
+`cargo test --workspace` ejecuta más de 550 tests (entre ellos el del tipo de error
 `TpError`, con mensajes en español en el código que la GUI traduce al
 idioma elegido): algoritmos (trim, hash, pack, earcut,
 dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
