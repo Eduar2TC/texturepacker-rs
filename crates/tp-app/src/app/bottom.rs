@@ -376,6 +376,45 @@ mod tests {
         }
     }
 
+    /// Plegado, el panel es una banda de 22 px: 2 de marco y 18 de fila,
+    /// como el menú, la barra de herramientas y la tira de estado. Con
+    /// `exact_height(28)` la banda medía 28 y su marco dejaba 6 px de chrome
+    /// muerto debajo de la única fila que lleva —1 px de aire entre la línea
+    /// de arriba y la fila, 8 entre la fila y la de abajo—, que es justo el
+    /// defecto que tenía la barra de zoom.
+    #[test]
+    fn el_panel_plegado_es_de_22_px_y_llena_su_banda() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.bottom_collapsed = true;
+        let _ = app.run_frame(&ctx, idle_input());
+        let out = app.run_frame(&ctx, idle_input());
+
+        let banda = textos_pintados(&out)
+            .into_iter()
+            .find(|(texto, _, _)| texto.trim() == "Log")
+            .map(|(_, _, recorte)| recorte)
+            .expect("la pestaña Log sigue pintándose con el panel plegado");
+        let fila = controles_de(&out, "⏵")
+            .into_iter()
+            .next()
+            .expect("el chevron de la barra está en el panel plegado");
+
+        assert!(
+            (banda.height() - 22.0).abs() < 0.5,
+            "el panel plegado mide {:.0} px: la banda es 2 de marco y 18 de \
+             fila, como las demás bandas de 22",
+            banda.height()
+        );
+        let arriba = fila.min.y - banda.min.y;
+        let abajo = banda.max.y - fila.max.y;
+        assert!(
+            (arriba - abajo).abs() < 0.5,
+            "la barra de pestañas deja {arriba:.0} px arriba y {abajo:.0} \
+             abajo: dentro de su banda tiene que ir centrada"
+        );
+    }
+
     /// Un proyecto ya empaquetado: los cinco ficheros de ejemplo más uno roto
     /// que el panel lista pero el motor descarta —la diferencia que señalaba
     /// la review (M2). Devuelve también el directorio temporal para que la

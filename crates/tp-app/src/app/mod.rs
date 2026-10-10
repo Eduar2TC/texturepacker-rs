@@ -507,8 +507,15 @@ impl eframe::App for App {
             .resizable(resizable)
             .default_height(bottom_open)
             .height_range(28.0..=f32::INFINITY);
+        // Plegado, el panel es una banda de 22 px: 2 de marco y 18 de fila,
+        // lo mismo que el menú, la barra de herramientas y la tira de estado.
+        // Los 28 que había venían de 2 + 24 + 2, es decir, de dar por hecho
+        // una fila del objetivo de 24: la barra de pestañas mide
+        // `interact_size.y` —18 px— y la diferencia se quedaba en 6 px de
+        // chrome muerto debajo de la única fila que lleva, con 1 px de aire
+        // entre la línea de arriba y la fila y 8 entre la fila y la de abajo.
         let bottom = if self.bottom_collapsed {
-            bottom.exact_height(28.0)
+            bottom.exact_height(22.0)
         } else {
             bottom
         };
