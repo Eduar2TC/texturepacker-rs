@@ -7,9 +7,14 @@ use eframe::egui;
 pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // Plegar/desplegar el panel (chevron como en cualquier herramienta).
+        //
+        // Es `button` y no `small_button`: en la misma fila convivían dos
+        // alturas, la de las pestañas —`interact_size.y`, 18 px— y la del
+        // `small_button`, 15 px, con lo que la caja del chevron se quedaba
+        // 3 px por encima y por debajo de la de sus vecinas.
         let chevron = if app.bottom_collapsed { "⏵" } else { "⏷" };
         if ui
-            .small_button(chevron)
+            .button(chevron)
             .on_hover_text(if app.bottom_collapsed {
                 t!("Mostrar el panel")
             } else {
@@ -32,10 +37,10 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         let has_errors = app.logs.iter().any(|e| matches!(e.kind, LogKind::Error));
         if has_errors {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Mismo motivo que el chevron: aquí también era `small_button`
+                // y se salía 3 px de la altura de la fila.
                 if ui
-                    .small_button(
-                        egui::RichText::new(t!("✖ Error")).color(ui.visuals().error_fg_color),
-                    )
+                    .button(egui::RichText::new(t!("✖ Error")).color(ui.visuals().error_fg_color))
                     .on_hover_text(t!("Ir al Log"))
                     .clicked()
                 {
@@ -281,7 +286,7 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{idle_input, textos_pintados};
+    use crate::testing::{controles_de, idle_input, textos_pintados};
 
     /// M3: el panel arrancaba con 180 px para tres líneas de log: el hueco
     /// por debajo de lo escrito salía más grande que lo escrito. Con la
@@ -334,6 +339,41 @@ mod tests {
             "{hueco:.0} px de hueco bajo el log: la altura de arranque \
              (BOTTOM_OPEN_HEIGHT) no corresponde con lo que escribe"
         );
+    }
+
+    /// En la barra de pestañas sólo puede haber **una** altura. El chevron
+    /// de plegar y el botón de error eran `small_button` —15 px—, así que
+    /// sus cajas se quedaban 3 px por encima y por debajo de las de las
+    /// pestañas, que miden `interact_size.y` —18 px—: dos filas de bordes
+    /// distintos dentro de una misma fila.
+    #[test]
+    fn la_barra_de_pestañas_no_mezcla_alturas() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        // El botón de error sólo se pinta si el registro tiene errores.
+        app.log(LogKind::Error, "fallo de prueba".into());
+        let _ = app.run_frame(&ctx, idle_input());
+        let out = app.run_frame(&ctx, idle_input());
+
+        let pestaña = controles_de(&out, "Log")
+            .into_iter()
+            .next()
+            .expect("la pestaña Log arranca seleccionada y pintada");
+
+        for rotulo in ["⏷", "✖ Error"] {
+            let caja = controles_de(&out, rotulo)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| panic!("«{rotulo}» debe estar en la barra"));
+            let descuadre = (caja.height() - pestaña.height()).abs();
+            assert!(
+                descuadre < 0.5,
+                "«{rotulo}» mide {:.0} px de alto y la pestaña Log {:.0}: \
+                 en una sola fila no puede haber dos alturas",
+                caja.height(),
+                pestaña.height()
+            );
+        }
     }
 
     /// Un proyecto ya empaquetado: los cinco ficheros de ejemplo más uno roto
