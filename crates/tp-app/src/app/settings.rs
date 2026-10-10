@@ -295,17 +295,36 @@ fn cabecera(titulo: &str, filtrando: bool) -> egui::CollapsingHeader {
     }
 }
 
+/// Una cabecera de sección con sus 24 px de alto (4.3), y el cuerpo
+/// dibujado con el estilo que le tocaba.
+///
+/// `CollapsingHeader` fija su alto en `max(texto + 2·padding,
+/// interact_size)` —17 px con el texto de serie— y para llegar a 24 no
+/// hay otro sitio donde tocar: la API no deja pedir el alto. Se sube
+/// `interact_size.y` sólo mientras egui calcula la cabecera —el estilo se
+/// clona por `Ui`, así que el global no se entera— y se devuelve
+/// **dentro del cuerpo**, que hereda el estilo y volvería a estirar todos
+/// sus botones a 24 px.
+fn seccion(ui: &mut egui::Ui, titulo: &str, filtrando: bool, cuerpo: impl FnOnce(&mut egui::Ui)) {
+    let antes = ui.style().spacing.interact_size.y;
+    ui.style_mut().spacing.interact_size.y = super::OBJETIVO_MIN.y;
+    cabecera(titulo, filtrando).show(ui, |ui| {
+        ui.style_mut().spacing.interact_size.y = antes;
+        cuerpo(ui);
+    });
+    ui.style_mut().spacing.interact_size.y = antes;
+}
+
 /// Panel derecho de Ajustes. Los controles no avisan uno a uno: mutan
 /// `config` y el sondeo por frame (`poll_changes`) detecta el cambio por
 /// huella, repinta y reempaqueta en el frame siguiente. Para notificar en
 /// el mismo frame sigue existiendo [`App::on_config_changed`].
 pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
-    ui.add_space(4.0);
     // La misma jerarquía de título que «Sprites (n)» del panel izquierdo:
     // 13 px seminegrita. Como `heading` (17 px) el título pesaba más que
     // sus propias secciones y las tres zonas no se leían a la misma escala.
     ui.strong(t!("Ajustes"));
-    ui.separator();
+    super::separador(ui);
 
     // Buscador (I3): estrecha el panel a las secciones que coinciden. Los
     // avisos no se esconden nunca: si el atlas va a fallar al publicar, se
@@ -383,7 +402,7 @@ fn interface_section(app: &mut App, ui: &mut egui::Ui) {
 
     // Plegada por defecto (panel derecho del rediseño); abierta si se está
     // buscando, para que el filtro no deje sólo el título.
-    cabecera(t!("Interfaz"), buscando(app)).show(ui, |ui| {
+    seccion(ui, t!("Interfaz"), buscando(app), |ui| {
         ui.label(t!("Idioma"));
         let mut lang = app.prefs().lang_choice();
         egui::ComboBox::from_id_salt("ui_lang")
@@ -467,7 +486,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
     // dos cabeceras anidadas de dentro, o el filtro no llegaría a su
     // contenido).
     let filtrando = buscando(app);
-    cabecera(t!("Datos"), filtrando).show(ui, |ui| {
+    seccion(ui, t!("Datos"), filtrando, |ui| {
         ui.label(t!("Directorio de entrada"));
         ui.horizontal(|ui| {
             ui.add(egui::TextEdit::singleline(&mut app.input_dir_text).desired_width(190.0));
@@ -516,7 +535,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             ("Source file (C++)", &mut app.config.source_file),
             ("Sprite ids file", &mut app.config.spriteids_file),
         ];
-        cabecera(t!("Ficheros extra por framework"), filtrando).show(ui, |ui| {
+        seccion(ui, t!("Ficheros extra por framework"), filtrando, |ui| {
             ui.label(
                 egui::RichText::new(t!(
                     "Vacío = no escribir. Alias CLI: --class-file, --header-file, \
@@ -533,7 +552,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
         });
         // Extras de data format: cache busting (Pixi/Phaser), filtro
         // (LibGDX) y shape debug (contorno dibujado en la hoja).
-        cabecera(t!("Extras del data format"), filtrando).show(ui, |ui| {
+        seccion(ui, t!("Extras del data format"), filtrando, |ui| {
             ui.checkbox(
                 &mut app.config.cache_busting,
                 t!("Cache busting (?v= en la textura citada)"),
@@ -726,321 +745,314 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
 
 fn layout_section(app: &mut App, ui: &mut egui::Ui) {
     let advanced = app.advanced_settings;
-    cabecera(t!("Composición"), buscando(app)).show(ui, |ui| {
-            let sizes = [256i32, 512, 1024, 2048, 4096, 8192, 16384];
-            ui.label(t!("Tamaño máximo"));
-            egui::ComboBox::from_id_salt(t!("Tamaño máximo"))
-                .selected_text(app.config.max_texture_size.to_string())
-                .show_ui(ui, |ui| {
-                    for s in sizes {
-                        ui
-                            .selectable_value(&mut app.config.max_texture_size, s, s.to_string());
-                    }
-                });
-            ui
-                .checkbox(&mut app.config.multipack, t!("Multipack (varias hojas)"))
-                .on_hover_text(
-                    t!("Si los sprites no caben en una hoja se generan varias; con la opción \
-                     desactivada el empaquetado falla"),
-                );
-            ui.label(t!("Separación entre sprites (px)"));
-            ui.add(egui::Slider::new(&mut app.config.padding, 0..=16));
-            ui.label(t!("Extrusión (px)"));
-            ui.add(egui::Slider::new(&mut app.config.extrude, 0..=16));
-            ui
-                .checkbox(&mut app.config.allow_rotation, t!("Permitir rotación 90°"));
-            ui
-                .checkbox(&mut app.config.flip_vertical, t!("Voltear verticalmente (flip Y)"))
-                .on_hover_text(
-                    t!("Solo formatos de hardware (ASTC/ETC2/ETC1/PVRTC); las coordenadas \
-                     de los frames no cambian"),
-                );
-            // Trim mode Polygon cambia el algoritmo a Polygon
-            // automáticamente; se muestra y no se puede elegir a mano.
-            let polygon_auto =
-                app.config.effective_trim_mode() == TrimMode::Polygon || app.config.enable_polygon;
-            let algorithm_label = if polygon_auto {
-                "Polygon (auto: trim mode Polygon)".to_string()
-            } else {
-                app.config.algorithm.as_str().to_string()
-            };
-            ui.add_enabled_ui(!polygon_auto, |ui| {
-                enum_combo(
-                    ui,
-                    t!("Algoritmo"),
-                    &algorithm_label,
-                    |ui, v| {
-                        ui.selectable_value(v, PackingAlgorithm::MaxRects, "MaxRects");
-                        ui.selectable_value(v, PackingAlgorithm::Guillotine, "Guillotine");
-                        ui.selectable_value(v, PackingAlgorithm::Grid, t!("Rejilla (Grid)"));
-                        ui.selectable_value(v, PackingAlgorithm::Basic, t!("Básico (Basic)"));
-                        ui.selectable_value(
-                            v,
-                            PackingAlgorithm::Manual,
-                            t!("Manual (arrastrar en la vista)"),
-                        )
-                        .on_hover_text(
-                            t!("Arrastra los sprites en la vista previa para fijar su posición"),
-                        );
-                    },
-                    &mut app.config.algorithm,
-                );
+    seccion(ui, t!("Composición"), buscando(app), |ui| {
+        let sizes = [256i32, 512, 1024, 2048, 4096, 8192, 16384];
+        ui.label(t!("Tamaño máximo"));
+        egui::ComboBox::from_id_salt(t!("Tamaño máximo"))
+            .selected_text(app.config.max_texture_size.to_string())
+            .show_ui(ui, |ui| {
+                for s in sizes {
+                    ui.selectable_value(&mut app.config.max_texture_size, s, s.to_string());
+                }
             });
-            // Un cambio de algoritmo reacciona al instante (vía selectable_value
-            // dentro del combo, cableado en enum_combo).
-            if matches!(
-                app.config.algorithm,
-                PackingAlgorithm::MaxRects | PackingAlgorithm::Guillotine
-            ) {
-                // Las heurísticas de colocación son comunes; con Guillotine
-                // no van prefijadas por "MaxRects" y desaparece la entrada
-                // legacy (que `resolve()` traduciría en BSSF).
-                let guillotine = app.config.algorithm == PackingAlgorithm::Guillotine;
-                let prefix = if guillotine { "" } else { "MaxRects " };
-                let shown = strategy_display(app.config.packing_strategy, guillotine);
-                enum_combo(
-                    ui,
-                    t!("Heurística"),
-                    &shown,
-                    |ui, v| {
-                        ui.selectable_value(v, PackingStrategy::Bssf, format!("{prefix}BSSF"));
-                        ui.selectable_value(v, PackingStrategy::Baf, format!("{prefix}BAF"));
-                        ui.selectable_value(v, PackingStrategy::Blsf, format!("{prefix}BLSF"));
-                        ui.selectable_value(v, PackingStrategy::Best, t!("Best (probar todas)"));
-                        ui.selectable_value(v, PackingStrategy::BottomLeft, "BottomLeft");
-                        ui.selectable_value(v, PackingStrategy::ContactPoint, "ContactPoint");
-                        if !guillotine {
-                            ui.selectable_value(
-                                v,
-                                PackingStrategy::Guillotine,
-                                "Guillotine (legacy)",
-                            );
-                        }
-                    },
-                    &mut app.config.packing_strategy,
-                );
-            }
+        ui.checkbox(&mut app.config.multipack, t!("Multipack (varias hojas)"))
+            .on_hover_text(t!(
+                "Si los sprites no caben en una hoja se generan varias; con la opción \
+                     desactivada el empaquetado falla"
+            ));
+        ui.label(t!("Separación entre sprites (px)"));
+        ui.add(egui::Slider::new(&mut app.config.padding, 0..=16));
+        ui.label(t!("Extrusión (px)"));
+        ui.add(egui::Slider::new(&mut app.config.extrude, 0..=16));
+        ui.checkbox(&mut app.config.allow_rotation, t!("Permitir rotación 90°"));
+        ui.checkbox(
+            &mut app.config.flip_vertical,
+            t!("Voltear verticalmente (flip Y)"),
+        )
+        .on_hover_text(t!(
+            "Solo formatos de hardware (ASTC/ETC2/ETC1/PVRTC); las coordenadas \
+                     de los frames no cambian"
+        ));
+        // Trim mode Polygon cambia el algoritmo a Polygon
+        // automáticamente; se muestra y no se puede elegir a mano.
+        let polygon_auto =
+            app.config.effective_trim_mode() == TrimMode::Polygon || app.config.enable_polygon;
+        let algorithm_label = if polygon_auto {
+            "Polygon (auto: trim mode Polygon)".to_string()
+        } else {
+            app.config.algorithm.as_str().to_string()
+        };
+        ui.add_enabled_ui(!polygon_auto, |ui| {
             enum_combo(
                 ui,
-                t!("Modo de empaquetado"),
-                app.config.pack_mode.as_str(),
+                t!("Algoritmo"),
+                &algorithm_label,
                 |ui, v| {
-                    ui.selectable_value(v, PackMode::Fast, t!("Fast (recorte simple)"));
-                    ui.selectable_value(v, PackMode::Good, t!("Good (búsqueda rápida)"));
-                    ui.selectable_value(v, PackMode::Best, t!("Best (búsqueda intensiva)"));
-                },
-                &mut app.config.pack_mode,
-            );
-            ui
-                .checkbox(&mut app.config.enable_trim, t!("Trim (recortar transparencia)"));
-
-            if !advanced {
-                return;
-            }
-            ui.label(t!("Margen de borde (px)"));
-            ui
-                .add(egui::Slider::new(&mut app.config.border_padding, 0..=64))
-                .on_hover_text(t!("Margen transparente entre los sprites y el borde del atlas"));
-            enum_combo(
-                ui,
-                t!("Restricción de tamaño"),
-                app.config.size_constraints.as_str(),
-                |ui, v| {
-                    ui.selectable_value(v, SizeConstraint::AnySize, t!("Cualquiera"));
-                    ui.selectable_value(v, SizeConstraint::Pot, t!("POT (potencia de 2)"));
-                    ui.selectable_value(v, SizeConstraint::MultipleOf4, t!("Múltiplo de 4"));
-                    ui.selectable_value(v, SizeConstraint::WordAligned, t!("Alineado a palabra"));
-                },
-                &mut app.config.size_constraints,
-            );
-            ui
-                .checkbox(&mut app.config.force_squared, t!("Atlas cuadrado (force squared)"));
-            ui.label(t!("Tamaño fijo (0 = automático)"));
-            ui.horizontal(|ui| {
-                ui
-                    .add(
-                        egui::DragValue::new(&mut app.config.fixed_width)
-                            .range(0..=8192)
-                            .speed(1),
-                    );
-                ui.label(egui::RichText::new("x").weak());
-                ui
-                    .add(
-                        egui::DragValue::new(&mut app.config.fixed_height)
-                            .range(0..=8192)
-                            .speed(1),
-                    );
-            })
-            .response
-            .on_hover_text(t!("Fija las dimensiones del atlas (tamaño fijo)"));
-            if app.config.algorithm == PackingAlgorithm::Basic {
-                enum_combo(
-                    ui,
-                    t!("Ordenar por (Basic)"),
-                    app.config.basic_sort_by.as_str(),
-                    |ui, v| {
-                        ui.selectable_value(v, BasicSortBy::Best, t!("Best (probar todas)"));
-                        ui.selectable_value(v, BasicSortBy::Name, t!("Nombre"));
-                        ui.selectable_value(v, BasicSortBy::Width, t!("Ancho"));
-                        ui.selectable_value(v, BasicSortBy::Height, t!("Alto"));
-                        ui.selectable_value(v, BasicSortBy::Area, t!("Área"));
-                        ui.selectable_value(
-                            v,
-                            BasicSortBy::Circumference,
-                            t!("Perímetro (circumference)"),
-                        );
-                    },
-                    &mut app.config.basic_sort_by,
-                );
-                enum_combo(
-                    ui,
-                    t!("Orden (Basic)"),
-                    app.config.basic_order.as_str(),
-                    |ui, v| {
-                        ui.selectable_value(v, SortOrder::Ascending, t!("Ascendente"));
-                        ui.selectable_value(v, SortOrder::Descending, t!("Descendente"));
-                    },
-                    &mut app.config.basic_order,
-                );
-            }
-            ui.label(t!("Divisor común"));
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("x").weak());
-                ui
-                    .add(
-                        egui::DragValue::new(&mut app.config.common_divisor_x)
-                            .range(1..=2048)
-                            .speed(1),
-                    );
-                ui.label(egui::RichText::new("y").weak());
-                ui
-                    .add(
-                        egui::DragValue::new(&mut app.config.common_divisor_y)
-                            .range(1..=2048)
-                            .speed(1),
-                    );
-            })
-            .response
-            .on_hover_text(t!("Estira los sprites con transparencia hasta ser divisibles"));
-            ui.label(t!("Alinear a rejilla (0 = off)"));
-            ui
-                .add(egui::Slider::new(&mut app.config.align_to_grid, 0..=64))
-                .on_hover_text(t!("Coloca las esquinas de los sprites en coordenadas múltiplos"));
-            ui.add_enabled_ui(app.config.enable_trim, |ui| {
-                ui.label(t!("Umbral de recorte (1-255)"));
-                ui.add(egui::Slider::new(&mut app.config.trim_threshold, 1..=255));
-            });
-            ui.add_enabled_ui(app.config.enable_trim, |ui| {
-                ui.label(t!("Modo de recorte"));
-                egui::ComboBox::from_id_salt(t!("Modo de recorte"))
-                    .selected_text(trim_mode_name(app.config.trim_mode))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut app.config.trim_mode,
-                            TrimMode::None,
-                            t!("None (sin recorte)"),
-                        );
-                        ui.selectable_value(&mut app.config.trim_mode, TrimMode::Trim, "Trim");
-                        ui.selectable_value(
-                            &mut app.config.trim_mode,
-                            TrimMode::CropKeepPos,
-                            t!("Crop, conservar posición"),
-                        );
-                        ui.selectable_value(
-                            &mut app.config.trim_mode,
-                            TrimMode::Crop,
-                            t!("Crop, fijar en 0/0"),
-                        );
-                        ui.selectable_value(
-                            &mut app.config.trim_mode,
-                            TrimMode::Polygon,
-                            "Polygon (mallas)",
-                        );
-                    });
-            });
-            if app.config.enable_trim && app.config.trim_mode.trims() {
-                ui.label(t!("Margen de recorte (px)"));
-                ui.add(egui::Slider::new(&mut app.config.trim_margin, 0..=16));
-            }
-            if app.config.trim_mode == TrimMode::Polygon {
-                ui.label(
-                    egui::RichText::new(
-                        t!("Polygon activa el empaquetado por contorno y exporta la malla."),
+                    ui.selectable_value(v, PackingAlgorithm::MaxRects, "MaxRects");
+                    ui.selectable_value(v, PackingAlgorithm::Guillotine, "Guillotine");
+                    ui.selectable_value(v, PackingAlgorithm::Grid, t!("Rejilla (Grid)"));
+                    ui.selectable_value(v, PackingAlgorithm::Basic, t!("Básico (Basic)"));
+                    ui.selectable_value(
+                        v,
+                        PackingAlgorithm::Manual,
+                        t!("Manual (arrastrar en la vista)"),
                     )
-                    .weak(),
-                );
-            }
-            ui.checkbox(
-                &mut app.config.enable_aliasing,
-                t!("Detección de duplicados (alias)"),
+                    .on_hover_text(t!(
+                        "Arrastra los sprites en la vista previa para fijar su posición"
+                    ));
+                },
+                &mut app.config.algorithm,
             );
-            ui.checkbox(
-                &mut app.config.enable_normal_maps,
-                t!("Empaquetar mapas de normales"),
+        });
+        // Un cambio de algoritmo reacciona al instante (vía selectable_value
+        // dentro del combo, cableado en enum_combo).
+        if matches!(
+            app.config.algorithm,
+            PackingAlgorithm::MaxRects | PackingAlgorithm::Guillotine
+        ) {
+            // Las heurísticas de colocación son comunes; con Guillotine
+            // no van prefijadas por "MaxRects" y desaparece la entrada
+            // legacy (que `resolve()` traduciría en BSSF).
+            let guillotine = app.config.algorithm == PackingAlgorithm::Guillotine;
+            let prefix = if guillotine { "" } else { "MaxRects " };
+            let shown = strategy_display(app.config.packing_strategy, guillotine);
+            enum_combo(
+                ui,
+                t!("Heurística"),
+                &shown,
+                |ui, v| {
+                    ui.selectable_value(v, PackingStrategy::Bssf, format!("{prefix}BSSF"));
+                    ui.selectable_value(v, PackingStrategy::Baf, format!("{prefix}BAF"));
+                    ui.selectable_value(v, PackingStrategy::Blsf, format!("{prefix}BLSF"));
+                    ui.selectable_value(v, PackingStrategy::Best, t!("Best (probar todas)"));
+                    ui.selectable_value(v, PackingStrategy::BottomLeft, "BottomLeft");
+                    ui.selectable_value(v, PackingStrategy::ContactPoint, "ContactPoint");
+                    if !guillotine {
+                        ui.selectable_value(v, PackingStrategy::Guillotine, "Guillotine (legacy)");
+                    }
+                },
+                &mut app.config.packing_strategy,
             );
-            if app.config.enable_normal_maps {
-                ui.label(t!("Sufijo"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.config.normal_map_suffix)
-                        .desired_width(110.0),
-                );
-                ui.label(t!("Filtro de ruta"));
-                ui.add(
-                    egui::TextEdit::singleline(&mut app.config.normal_map_filter)
-                        .desired_width(130.0),
-                );
-                ui
-                    .checkbox(
-                        &mut app.config.normal_map_auto_detect,
-                        t!("Detectar por color (auto-detect)"),
+        }
+        enum_combo(
+            ui,
+            t!("Modo de empaquetado"),
+            app.config.pack_mode.as_str(),
+            |ui, v| {
+                ui.selectable_value(v, PackMode::Fast, t!("Fast (recorte simple)"));
+                ui.selectable_value(v, PackMode::Good, t!("Good (búsqueda rápida)"));
+                ui.selectable_value(v, PackMode::Best, t!("Best (búsqueda intensiva)"));
+            },
+            &mut app.config.pack_mode,
+        );
+        ui.checkbox(
+            &mut app.config.enable_trim,
+            t!("Trim (recortar transparencia)"),
+        );
+
+        if !advanced {
+            return;
+        }
+        ui.label(t!("Margen de borde (px)"));
+        ui.add(egui::Slider::new(&mut app.config.border_padding, 0..=64))
+            .on_hover_text(t!(
+                "Margen transparente entre los sprites y el borde del atlas"
+            ));
+        enum_combo(
+            ui,
+            t!("Restricción de tamaño"),
+            app.config.size_constraints.as_str(),
+            |ui, v| {
+                ui.selectable_value(v, SizeConstraint::AnySize, t!("Cualquiera"));
+                ui.selectable_value(v, SizeConstraint::Pot, t!("POT (potencia de 2)"));
+                ui.selectable_value(v, SizeConstraint::MultipleOf4, t!("Múltiplo de 4"));
+                ui.selectable_value(v, SizeConstraint::WordAligned, t!("Alineado a palabra"));
+            },
+            &mut app.config.size_constraints,
+        );
+        ui.checkbox(
+            &mut app.config.force_squared,
+            t!("Atlas cuadrado (force squared)"),
+        );
+        ui.label(t!("Tamaño fijo (0 = automático)"));
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut app.config.fixed_width)
+                    .range(0..=8192)
+                    .speed(1),
+            );
+            ui.label(egui::RichText::new("x").weak());
+            ui.add(
+                egui::DragValue::new(&mut app.config.fixed_height)
+                    .range(0..=8192)
+                    .speed(1),
+            );
+        })
+        .response
+        .on_hover_text(t!("Fija las dimensiones del atlas (tamaño fijo)"));
+        if app.config.algorithm == PackingAlgorithm::Basic {
+            enum_combo(
+                ui,
+                t!("Ordenar por (Basic)"),
+                app.config.basic_sort_by.as_str(),
+                |ui, v| {
+                    ui.selectable_value(v, BasicSortBy::Best, t!("Best (probar todas)"));
+                    ui.selectable_value(v, BasicSortBy::Name, t!("Nombre"));
+                    ui.selectable_value(v, BasicSortBy::Width, t!("Ancho"));
+                    ui.selectable_value(v, BasicSortBy::Height, t!("Alto"));
+                    ui.selectable_value(v, BasicSortBy::Area, t!("Área"));
+                    ui.selectable_value(
+                        v,
+                        BasicSortBy::Circumference,
+                        t!("Perímetro (circumference)"),
                     );
-                ui.label(
-                    egui::RichText::new(t!("Hoja de normales (vacío = <imagen>_normal)"))
-                        .weak(),
-                );
-                ui.horizontal(|ui| {
-                    ui
-                        .add(
-                            egui::TextEdit::singleline(&mut app.config.normal_map_sheet)
-                                .desired_width(150.0),
-                        );
+                },
+                &mut app.config.basic_sort_by,
+            );
+            enum_combo(
+                ui,
+                t!("Orden (Basic)"),
+                app.config.basic_order.as_str(),
+                |ui, v| {
+                    ui.selectable_value(v, SortOrder::Ascending, t!("Ascendente"));
+                    ui.selectable_value(v, SortOrder::Descending, t!("Descendente"));
+                },
+                &mut app.config.basic_order,
+            );
+        }
+        ui.label(t!("Divisor común"));
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("x").weak());
+            ui.add(
+                egui::DragValue::new(&mut app.config.common_divisor_x)
+                    .range(1..=2048)
+                    .speed(1),
+            );
+            ui.label(egui::RichText::new("y").weak());
+            ui.add(
+                egui::DragValue::new(&mut app.config.common_divisor_y)
+                    .range(1..=2048)
+                    .speed(1),
+            );
+        })
+        .response
+        .on_hover_text(t!(
+            "Estira los sprites con transparencia hasta ser divisibles"
+        ));
+        ui.label(t!("Alinear a rejilla (0 = off)"));
+        ui.add(egui::Slider::new(&mut app.config.align_to_grid, 0..=64))
+            .on_hover_text(t!(
+                "Coloca las esquinas de los sprites en coordenadas múltiplos"
+            ));
+        ui.add_enabled_ui(app.config.enable_trim, |ui| {
+            ui.label(t!("Umbral de recorte (1-255)"));
+            ui.add(egui::Slider::new(&mut app.config.trim_threshold, 1..=255));
+        });
+        ui.add_enabled_ui(app.config.enable_trim, |ui| {
+            ui.label(t!("Modo de recorte"));
+            egui::ComboBox::from_id_salt(t!("Modo de recorte"))
+                .selected_text(trim_mode_name(app.config.trim_mode))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut app.config.trim_mode,
+                        TrimMode::None,
+                        t!("None (sin recorte)"),
+                    );
+                    ui.selectable_value(&mut app.config.trim_mode, TrimMode::Trim, "Trim");
+                    ui.selectable_value(
+                        &mut app.config.trim_mode,
+                        TrimMode::CropKeepPos,
+                        t!("Crop, conservar posición"),
+                    );
+                    ui.selectable_value(
+                        &mut app.config.trim_mode,
+                        TrimMode::Crop,
+                        t!("Crop, fijar en 0/0"),
+                    );
+                    ui.selectable_value(
+                        &mut app.config.trim_mode,
+                        TrimMode::Polygon,
+                        "Polygon (mallas)",
+                    );
                 });
-            }
-            ui.add_enabled_ui(!polygon_auto, |ui| {
-                ui.checkbox(&mut app.config.enable_polygon, t!("Modo polígono (mallas)"));
+        });
+        if app.config.enable_trim && app.config.trim_mode.trims() {
+            ui.label(t!("Margen de recorte (px)"));
+            ui.add(egui::Slider::new(&mut app.config.trim_margin, 0..=16));
+        }
+        if app.config.trim_mode == TrimMode::Polygon {
+            ui.label(
+                egui::RichText::new(t!(
+                    "Polygon activa el empaquetado por contorno y exporta la malla."
+                ))
+                .weak(),
+            );
+        }
+        ui.checkbox(
+            &mut app.config.enable_aliasing,
+            t!("Detección de duplicados (alias)"),
+        );
+        ui.checkbox(
+            &mut app.config.enable_normal_maps,
+            t!("Empaquetar mapas de normales"),
+        );
+        if app.config.enable_normal_maps {
+            ui.label(t!("Sufijo"));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.config.normal_map_suffix).desired_width(110.0),
+            );
+            ui.label(t!("Filtro de ruta"));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.config.normal_map_filter).desired_width(130.0),
+            );
+            ui.checkbox(
+                &mut app.config.normal_map_auto_detect,
+                t!("Detectar por color (auto-detect)"),
+            );
+            ui.label(egui::RichText::new(t!("Hoja de normales (vacío = <imagen>_normal)")).weak());
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::TextEdit::singleline(&mut app.config.normal_map_sheet)
+                        .desired_width(150.0),
+                );
             });
-            ui.add_enabled_ui(polygon_auto, |ui| {
-                ui.label(t!("Tolerancia (RDP)"));
-                ui.add(egui::Slider::new(&mut app.config.polygon_tolerance, 0.0..=10.0));
-            });
-            if polygon_auto {
-                ui.label(
+        }
+        ui.add_enabled_ui(!polygon_auto, |ui| {
+            ui.checkbox(&mut app.config.enable_polygon, t!("Modo polígono (mallas)"));
+        });
+        ui.add_enabled_ui(polygon_auto, |ui| {
+            ui.label(t!("Tolerancia (RDP)"));
+            ui.add(egui::Slider::new(
+                &mut app.config.polygon_tolerance,
+                0.0..=10.0,
+            ));
+        });
+        if polygon_auto {
+            ui.label(
                     egui::RichText::new(
                         t!("Empaqueta sprites por su contorno (Marching Squares ➡ RDP ➡ Earcut). Activo por el modo de recorte Polígono."),
                     )
                     .weak(),
                 );
-            }
-            ui.label(t!("Pivot por defecto (normalizado 0..1)"));
-            ui.horizontal(|ui| {
-                ui
-                    .add(
-                        egui::DragValue::new(&mut app.config.default_pivot_x)
-                            .range(0.0..=1.0)
-                            .speed(0.01),
-                    );
-                ui
-                    .add(
-                        egui::DragValue::new(&mut app.config.default_pivot_y)
-                            .range(0.0..=1.0)
-                            .speed(0.01),
-                    );
-            });
+        }
+        ui.label(t!("Pivot por defecto (normalizado 0..1)"));
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(&mut app.config.default_pivot_x)
+                    .range(0.0..=1.0)
+                    .speed(0.01),
+            );
+            ui.add(
+                egui::DragValue::new(&mut app.config.default_pivot_y)
+                    .range(0.0..=1.0)
+                    .speed(0.01),
+            );
         });
+    });
 }
 
 fn processing_section(app: &mut App, ui: &mut egui::Ui) {
-    cabecera(t!("Procesamiento"), buscando(app)).show(ui, |ui| {
+    seccion(ui, t!("Procesamiento"), buscando(app), |ui| {
         enum_combo(
             ui,
             t!("Profundidad de color"),
@@ -1126,14 +1138,14 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 ui.selectable_value(v, GpuFormat::Tga, "TGA");
                 ui.selectable_value(v, GpuFormat::Tiff, "TIFF");
                 ui.selectable_value(v, GpuFormat::Dds, "DDS");
-                ui.separator();
+                super::separador(ui);
                 ui.selectable_value(v, GpuFormat::Astc4x4, "ASTC 4x4");
                 ui.selectable_value(v, GpuFormat::Etc2Rgba, "ETC2 RGBA (ktx)");
                 ui.selectable_value(v, GpuFormat::Etc1, "ETC1 (pkm)");
                 ui.selectable_value(v, GpuFormat::Etc1Ktx, t!("ETC1 en KTX (ktx)"));
                 ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP (pvr)");
                 ui.selectable_value(v, GpuFormat::Basis, "Basis (basis)");
-                ui.separator();
+                super::separador(ui);
                 ui.selectable_value(v, GpuFormat::Zktx, t!("KTX con zlib (zktx)"));
                 ui.selectable_value(v, GpuFormat::Ktx2, t!("KTX2 sin comprimir (ktx2)"));
                 ui.selectable_value(v, GpuFormat::Pvr3Gz, t!("PVR3 en gzip (pvr.gz)"));
@@ -1164,7 +1176,7 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     .iter()
                     .any(|(f, _)| f.is_compatible_with(gpu))
                 {
-                    ui.separator();
+                    super::separador(ui);
                     for &(fmt, label) in GPU_PIXEL_FORMATS {
                         if fmt.is_compatible_with(gpu) {
                             ui.selectable_value(v, fmt, label);
@@ -1433,7 +1445,7 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
     if warnings.is_empty() {
         return;
     }
-    ui.add_space(6.0);
+    ui.add_space(12.0);
     ui.label(egui::RichText::new(t!("Avisos")).strong());
     for w in warnings {
         ui.label(egui::RichText::new(t!("- {}", w)).color(ui.visuals().warn_fg_color));
@@ -1486,8 +1498,8 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
     if scales.len() < 2 && app.config.variant_options.is_empty() {
         return;
     }
-    ui.add_space(2.0);
-    ui.collapsing(t!("Opciones por variante"), |ui| {
+    ui.add_space(12.0);
+    seccion(ui, t!("Opciones por variante"), false, |ui| {
         ui.label(
             egui::RichText::new(t!(
                 "«Reutiliza la base» = la hoja empaquetada a escala 1.0 llevada a esta escala \
@@ -1496,7 +1508,7 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
             ))
             .weak(),
         );
-        ui.add_space(3.0);
+        ui.add_space(4.0);
         egui::Grid::new("variant_options_grid")
             .num_columns(6)
             .spacing([8.0, 4.0])
@@ -1721,7 +1733,7 @@ fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
                 .max_height(280.0)
                 .show(ui, |ui| {
                     for &category in tp_core::dataformats::CATEGORIES {
-                        ui.separator();
+                        super::separador(ui);
                         ui.strong(crate::i18n::tr(category));
                         for preset in tp_core::dataformats::data_formats_in_category(category) {
                             ui.selectable_value(
@@ -1756,8 +1768,9 @@ fn data_format_combo(app: &mut App, ui: &mut egui::Ui) {
 /// «Formato de metadatos»: el exportador propio sólo aporta el texto (y
 /// `validate()` sólo acepta ids de formatos oficiales).
 fn custom_exporters_ui(app: &mut App, ui: &mut egui::Ui) {
-    cabecera(t!("Exportadores propios"), buscando(app))
-        .show(ui, |ui| custom_exporters_body(app, ui));
+    seccion(ui, t!("Exportadores propios"), buscando(app), |ui| {
+        custom_exporters_body(app, ui);
+    });
 }
 
 /// Contenido de «Exportadores propios». Devuelve `true` si tocó la config
@@ -1849,8 +1862,9 @@ fn custom_exporters_body(app: &mut App, ui: &mut egui::Ui) -> bool {
 /// `exporterProperties.*` que citan la plantilla de texto plano y los `.hbs`
 /// propios.
 fn template_properties_ui(app: &mut App, ui: &mut egui::Ui) {
-    cabecera(t!("Propiedades de la plantilla"), buscando(app))
-        .show(ui, |ui| template_properties_body(app, ui));
+    seccion(ui, t!("Propiedades de la plantilla"), buscando(app), |ui| {
+        template_properties_body(app, ui);
+    });
 }
 
 /// Contenido de «Propiedades de la plantilla» (ver

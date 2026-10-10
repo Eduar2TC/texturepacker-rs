@@ -98,7 +98,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     });
 
     let Some(spec) = app.split.spec() else {
-        ui.separator();
+        super::separador(ui);
         ui.label(
             egui::RichText::new(t!(
                 "Elige una hoja (sprite sheet) para dividirla en sprites individuales."
@@ -127,7 +127,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     };
     ui.horizontal(|ui| {
         ui.label(format!("{} × {} px", app.split.img_w, app.split.img_h));
-        ui.separator();
+        super::separador(ui);
         ui.label(t!(
             "{} celda(s) de {} px",
             grid_cells(app.split.img_w, app.split.img_h, &spec).len(),

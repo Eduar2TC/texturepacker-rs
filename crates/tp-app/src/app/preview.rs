@@ -80,7 +80,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
             }
             PreviewState::Ok => {}
         }
-        ui.separator();
+        super::separador(ui);
         let pages = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
         if pages > 1 {
             let anterior = ui.button("◀").on_hover_text(t!("Página anterior"));
@@ -92,7 +92,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
             if siguiente.clicked() && app.selected_page + 1 < pages {
                 app.selected_page += 1;
             }
-            ui.separator();
+            super::separador(ui);
         }
 
         // Los controles de zoom ya no viven aquí: están al fondo de la
@@ -109,7 +109,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
 
         // Controles del algoritmo Manual, en un menú para no saturar la barra.
         if app.config.effective_algorithm() == tp_core::config::PackingAlgorithm::Manual {
-            ui.separator();
+            super::separador(ui);
             let grid_label = if let Some(g) = &app.config.manual_grid {
                 t!("Rejilla: {} px", g.step)
             } else {
@@ -147,7 +147,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
                 if grid_changed {
                     app.after_workspace_change();
                 }
-                ui.separator();
+                super::separador(ui);
                 if ui
                     .button(t!("Limpiar posiciones manuales"))
                     .on_hover_text(t!("Borra todas las posiciones manuales: los sprites vuelven al flujo automático"))
@@ -160,7 +160,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
         }
 
         if let Some(name) = &app.selected_sprite {
-            ui.separator();
+            super::separador(ui);
             ui.add(
                 egui::Label::new(egui::RichText::new(t!("Seleccionado: {}", name)).strong())
                     .truncate(),
@@ -216,7 +216,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
             }
             // Último en entrar en un diseño de derecha a izquierda: queda
             // a la izquierda del grupo, separándolo del resto de la barra.
-            ui.separator();
+            super::separador(ui);
             }
         );
     });

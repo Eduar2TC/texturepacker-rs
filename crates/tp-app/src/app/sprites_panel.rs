@@ -170,7 +170,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         ui.strong(t!("Sprites ({})", total));
         let hidden = app.hidden_count();
         if hidden > 0 {
-            ui.separator();
+            super::separador(ui);
             if ui
                 .small_button(t!("↺ Restaurar ({})", hidden))
                 .on_hover_text(t!("Volver a incluir los sprites quitados"))
@@ -207,7 +207,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         filter_response.request_focus();
     }
     app.tree_filter_focused = filter_response.has_focus();
-    ui.separator();
+    super::separador(ui);
 
     groups_ui(app, ui);
 
@@ -253,7 +253,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 for (gi, g) in app.config.folder_groups.iter().enumerate() {
                     render_sheet(app, ui, gi, g, force, &mut walk);
                 }
-                ui.separator();
+                super::separador(ui);
             }
             for node in tree {
                 render_node(app, ui, node, true, &mut walk, force);
@@ -744,7 +744,7 @@ fn dir_menu(
                 }
             }
         });
-        ui.separator();
+        super::separador(ui);
     }
     if node.origin == Origin::Smart && ui.button(t!("Quitar carpeta inteligente")).clicked() {
         *action = Some(TreeAction::RemoveSmart(node.path.clone()));

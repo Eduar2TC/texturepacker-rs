@@ -58,7 +58,7 @@ fn archivo(app: &mut App, ui: &mut egui::Ui) {
         ui.close();
         app.save_project();
     }
-    ui.separator();
+    super::separador(ui);
     // «Restablecer» vive aquí y no en la barra de herramientas: es
     // destructivo, pide confirmación (C5) y no es una acción del día a
     // día —junto a «Guardar» se podía golpear por reflejo (rediseño F1).
@@ -72,7 +72,7 @@ fn archivo(app: &mut App, ui: &mut egui::Ui) {
         ui.close();
         confirm_reset(app);
     }
-    ui.separator();
+    super::separador(ui);
     // «Salir» no cierra: pide el cierre a la ventana, que es quien
     // decide si aún hay cambios sin guardar por preguntar (C2). La tecla
     // se enseña en la propia entrada: es el sitio donde se descubre (Fase
@@ -100,7 +100,7 @@ fn edicion(app: &mut App, ui: &mut egui::Ui) {
         ui.close();
         app.deshacer();
     }
-    ui.separator();
+    super::separador(ui);
     if ui
         .add_enabled(
             !app.selected_paths.is_empty(),
@@ -147,7 +147,7 @@ fn ver(app: &mut App, ui: &mut egui::Ui) {
         app.fit_zoom();
         app.auto_fit = false;
     }
-    ui.separator();
+    super::separador(ui);
     // El menú marca lo que se ve, no lo que se pliega: la casilla está
     // «marcada» mientras el panel esté a la vista.
     let mut visible = !app.bottom_collapsed;
@@ -182,7 +182,7 @@ fn ayuda(app: &mut App, ui: &mut egui::Ui) {
             t!("Abriendo la documentación en el navegador.").into(),
         );
     }
-    ui.separator();
+    super::separador(ui);
     if ui.button(t!("Acerca de")).clicked() {
         ui.close();
         app.show_about = true;

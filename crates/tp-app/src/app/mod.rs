@@ -40,6 +40,9 @@ mod toolbar;
 mod dock_ajustes;
 
 #[cfg(test)]
+mod rejilla;
+
+#[cfg(test)]
 mod ventana_minima;
 
 pub use drag::begin_sprite_drag;
@@ -90,6 +93,47 @@ const ANCHO_DOCK_AJUSTES: f32 = 1100.0;
 /// `interact_size` en global: las dos cosas encarecerían la barra de
 /// herramientas, que es chrome y está medida (44 px con un tope de 50).
 const OBJETIVO_MIN: egui::Vec2 = egui::vec2(24.0, 24.0);
+
+/// Aire (px) que abre un separador de grupo entre sus dos grupos (4.3),
+/// medido de borde a borde de lo que los rodea: la línea queda en medio.
+///
+/// La rejilla pide **16 px** en una pila y **24** en una fila. El medio
+/// no es el mismo en los dos casos porque `item_spacing` tampoco lo es —
+/// egui lo trae a (8, 3): 8 entre widgets que van en fila y 3 entre los
+/// que van en columna— y a ese `item_spacing` hay que sumar el del otro
+/// lado del separador. Con `ui.separator()` de serie (6 px) el hueco era
+/// de 9 px en pila y de 20 en fila: ninguno de los dos en la rejilla.
+///
+/// En fila no se puede llegar a 24 con menos de 8 px de separador: a 0
+/// egui reserva un rectángulo sin área y la línea no llega a pintarse.
+const HUECO_SEPARADOR_PILA: f32 = 16.0;
+const HUECO_SEPARADOR_FILA: f32 = 24.0;
+
+/// Separador de grupo con el hueco de la rejilla ([`HUECO_SEPARADOR_PILA`]
+/// en una pila, [`HUECO_SEPARADOR_FILA`] en una fila).
+///
+/// Los treinta `ui.separator()` del sitio pasan por aquí para que el
+/// hueco sea una sola decisión y no treinta números sueltos: `Separator`
+/// ocupa `spacing` px y pinta la línea en su centro, así que lo que hay
+/// que pedirle es el hueco menos los dos `item_spacing` de al lado.
+pub(crate) fn separador(ui: &mut egui::Ui) {
+    let en_fila = ui.layout().main_dir().is_horizontal();
+    let alrededor = if en_fila {
+        ui.spacing().item_spacing.x
+    } else {
+        ui.spacing().item_spacing.y
+    };
+    let hueco = if en_fila {
+        HUECO_SEPARADOR_FILA
+    } else {
+        HUECO_SEPARADOR_PILA
+    };
+    // Un `spacing` de 0 deja un rectángulo de área nula que egui no pinta:
+    // si un estilo sube el `item_spacing` hasta comerse el hueco, que al
+    // menos siga viéndose la línea.
+    let spacing = (hueco - 2.0 * alrededor).max(1.0);
+    ui.add(egui::Separator::default().spacing(spacing));
+}
 
 /// Estado de frescura de la vista previa (indicador de la barra de zoom).
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -313,7 +357,7 @@ pub struct App {
 /// avanzando de la ingesta a la escritura y termina en el borde.
 fn progreso_en_la_tira(ui: &mut egui::Ui, progreso: &tp_core::progress::Progress) {
     let (cargadas, ficheros) = progreso.loaded();
-    ui.separator();
+    separador(ui);
     ui.label(egui::RichText::new(t!("Empaquetando… {}/{}", cargadas, ficheros)).weak());
 
     let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 6.0), egui::Sense::hover());
@@ -414,7 +458,7 @@ impl eframe::App for App {
                                 );
                             }
                         }
-                        ui.separator();
+                        separador(ui);
                         ui.label(
                             egui::RichText::new(t!(
                                 "{} ficheros · {} sprite(s) · {} alias(es)",
@@ -482,11 +526,20 @@ impl eframe::App for App {
         // invisible: ahora cada zona se reconoce sin necesidad de texto.
         let superficies = superficies(ctx.style().visuals.dark_mode);
 
+        // Los dos docks respiran 8 px por los cuatro lados (4.3): con el
+        // marco por defecto su contenido nacía pegado al borde —el árbol a
+        // 0 px, «Ajustes» con sus 4 px de `add_space`—, mientras las
+        // bandas de arriba ya llevaban 8. El margen va en el marco y no en
+        // un `add_space` porque cubre también los lados y el pie.
         egui::SidePanel::left("sprites_panel")
             .resizable(true)
             .default_width(250.0)
             .min_width(180.0)
-            .frame(egui::Frame::default().fill(superficies.panel))
+            .frame(
+                egui::Frame::default()
+                    .fill(superficies.panel)
+                    .inner_margin(egui::Margin::same(8)),
+            )
             .show(ctx, |ui| sprites_panel::sprites_ui(self, ui));
 
         // El dock de Ajustes sólo se pinta si está pedido: la casilla del
@@ -512,11 +565,18 @@ impl eframe::App for App {
         self.settings_estrecho_antes = estrecho;
 
         if self.show_settings {
+            // El margen de 8 px va aquí y no en un `add_space`: cubre los
+            // cuatro lados y deja el `add_space` de arriba libre para la
+            // jerarquía de la sección.
             egui::SidePanel::right("settings_panel")
                 .resizable(true)
                 .default_width(330.0)
                 .min_width(260.0)
-                .frame(egui::Frame::default().fill(superficies.panel))
+                .frame(
+                    egui::Frame::default()
+                        .fill(superficies.panel)
+                        .inner_margin(egui::Margin::same(8)),
+                )
                 .show(ctx, |ui| settings::settings_ui(self, ui));
         }
 

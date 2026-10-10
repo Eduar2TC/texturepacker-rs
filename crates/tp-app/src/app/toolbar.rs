@@ -43,7 +43,7 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
             {
                 add_smart_folder_dialog(app);
             }
-            ui.separator();
+            super::separador(ui);
 
             // --- Herramientas ---
             let sprite_settings = egui::Button::new("⚙ Sprite").selected(app.show_sprite_settings);

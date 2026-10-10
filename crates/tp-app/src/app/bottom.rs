@@ -45,7 +45,7 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
             });
         }
     });
-    ui.separator();
+    super::separador(ui);
 
     if app.bottom_collapsed {
         return; // solo la tira de pestañas + estado

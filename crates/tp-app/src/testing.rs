@@ -229,6 +229,44 @@ pub fn rellenos_pintados(
     fuera
 }
 
+/// Cada texto que un frame dejó pintado, con la caja del galión entero
+/// (la caja de línea) en vez de con la tinta.
+///
+/// [`textos_pintados`] devuelve `visual_bounding_rect`, que es la tinta:
+/// sirve para mirar si algo se ve, pero no para medir. La tinta empieza
+/// donde el glifo decide —una «ó» con tilde sube más que una «D», y una
+/// «j» baja más—, así que dos rótulos del mismo cuerpo no arrancan a la
+/// misma altura y una diferencia de 2 px puede no ser nada. La caja del
+/// galión sí mide lo que egui reservó para la línea, y es con lo que se
+/// comprueban las alturas de fila y los márgenes de la rejilla (4.3).
+pub fn galones_pintados(output: &eframe::egui::FullOutput) -> Vec<(String, eframe::egui::Rect)> {
+    fn recorre<'a>(
+        shapes: impl IntoIterator<Item = &'a eframe::egui::Shape>,
+        fuera: &mut Vec<(String, eframe::egui::Rect)>,
+    ) {
+        for shape in shapes {
+            match shape {
+                eframe::egui::Shape::Text(t) => {
+                    // `galley.rect` está en el sistema del galión y `pos`
+                    // es su origen en pantalla: sin traducir, todos los
+                    // rótulos parecen estar en la esquina.
+                    fuera.push((
+                        t.galley.job.text.clone(),
+                        t.galley.rect.translate(t.pos.to_vec2()),
+                    ))
+                }
+                eframe::egui::Shape::Vec(hijos) => recorre(hijos, fuera),
+                _ => {}
+            }
+        }
+    }
+    let mut fuera = Vec::new();
+    for forma in &output.shapes {
+        recorre([&forma.shape], &mut fuera);
+    }
+    fuera
+}
+
 /// La caja del control que pinta `glifo`, una por aparición en pantalla.
 ///
 /// La caja de un botón no es texto sino una forma, y egui no devuelve el

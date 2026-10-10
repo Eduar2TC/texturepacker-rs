@@ -41,7 +41,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                         .prefix("Y "),
                 );
             });
-            ui.separator();
+            super::separador(ui);
 
             let indices = app.selected_sprite_indices();
             if indices.is_empty() {
@@ -143,7 +143,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                 }
             });
 
-            ui.separator();
+            super::separador(ui);
 
             // -------- 9-patch / 3-patch --------
             ui.heading(t!("Bordes 9-patch"));
@@ -204,7 +204,7 @@ pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
                 apply_border(app, &indices, border);
             }
 
-            ui.separator();
+            super::separador(ui);
             if ui
                 .button(t!("💾 Guardar pivots en pivots.json"))
                 .on_hover_text(t!(

@@ -291,7 +291,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         );
     });
 
-    ui.separator();
+    super::separador(ui);
     ui.label(egui::RichText::new(format!("{} — {}", current.name, group_label)).weak());
 
     // --- canvas ---------------------------------------------------------
