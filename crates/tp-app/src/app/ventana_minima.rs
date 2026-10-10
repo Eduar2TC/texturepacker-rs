@@ -128,54 +128,181 @@ fn el_lienzo_cabe_entero_en_la_ventana_minima() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
-/// M4: lo esencial de la barra y de los paneles se ve entero.
+/// Alturas que el rediseño dio con medida fija: la banda de menú y la
+/// de herramientas, la de la barra de zoom y la de la tira de estado.
+const BANDA_CHROME: f32 = 22.0;
+const BANDA_ZOOM: f32 = 32.0;
+const BANDA_TIRA: f32 = 22.0;
+
+/// El primer texto pintado que cumple `buscado`, con su rectángulo y el
+/// recorte que egui le puso. Falla si no aparece.
+fn hallado(
+    pintados: &[(String, egui::Rect, egui::Rect)],
+    buscado: &str,
+    exacto: bool,
+) -> (String, egui::Rect, egui::Rect) {
+    pintados
+        .iter()
+        .find(|(texto, _, _)| {
+            if exacto {
+                texto.trim() == buscado
+            } else {
+                texto.contains(buscado)
+            }
+        })
+        .map(|(texto, rect, recorte)| (texto.clone(), *rect, *recorte))
+        .unwrap_or_else(|| panic!("«{buscado}» no se pintó a la ventana mínima"))
+}
+
+/// M4: lo esencial de cada banda se ve entero con la ventana al mínimo.
 ///
-/// Cada control se busca por su texto —los dos últimos, exacto— porque
-/// egui *recorta* las formas que quedan enteramente fuera de su panel:
-/// si un control se va de la barra no aparece ni siquiera como texto
-/// pintado, y que no aparezca es lo que hace fallar la prueba. Lo que
-/// queda pintado a medias se descubre con su rectángulo contra el
-/// recorte que egui le puso y contra la ventana.
+/// Cada control se busca por su texto —los que pueden coincidir con otro
+/// sitio, exacto— porque egui *recorta* las formas que quedan
+/// enteramente fuera de su panel: si un control se va de la barra no
+/// aparece ni siquiera como texto pintado, y que no aparezca es lo que
+/// hace fallar la prueba. Lo que queda pintado a medias se descubre con
+/// su rectángulo contra el recorte que egui le puso y contra la ventana.
+///
+/// Los recortes son las propias bandas, así que de paso se comprueba que
+/// siguen montadas una sobre otra: la de menú empieza en el borde, cada
+/// una continúa donde acaba la anterior y las de medida fija miden lo
+/// que tienen que medir.
 #[test]
 fn lo_esencial_de_la_barra_y_los_paneles_se_ve_entero() {
     let (mut app, ctx, tmp) = demo("barra");
     let out = frame(&mut app, &ctx);
     let pintados = textos_pintados(&out);
+    let pantalla = pantalla();
 
     // (texto buscado, ¿comparación exacta?)
     let buscados = [
-        ("⏏ Publicar", false), // barra de herramientas
-        ("Sprites (", false),  // panel izquierdo
+        // Barra de menú.
+        ("Archivo", false),
+        ("Edición", false),
+        ("Ver", true), // también está dentro de «Vista previa…»
+        ("Ayuda", false),
+        // Barra de herramientas: las acciones de un clic.
+        ("➕ Añadir sprites…", false),
+        ("📁 Añadir carpeta…", false),
+        ("⏏ Publicar", false),
+        ("…", true), // «Más opciones de publicación»
+        // Panel izquierdo.
+        ("Sprites (", false),
+        // Barra de zoom.
+        ("Vista", true), // el log también dice «Vista previa…»
+        ("1:1", true),
+        ("Ajustar", true),
+        // Panel inferior y tira de estado.
+        ("Log", true),
+        ("ficheros", false),
         // Sin «Ajustes»: a 900 px el dock se pliega solo para que el
         // lienzo no quede en una tira (F4) y se recupera con `F9`. Que
         // no aparezca aquí es lo que comprueba el pliegue, y que vuelva
         // lo comprueba `dock_ajustes`.
-        ("Log", true), // pestaña del panel inferior
     ];
     for (buscado, exacto) in buscados {
-        let mut hallado = None;
-        for (texto, rect, recorte) in &pintados {
-            let coincide = if exacto {
-                texto.trim() == buscado
-            } else {
-                texto.contains(buscado)
-            };
-            if coincide {
-                hallado = Some((texto.clone(), *rect, *recorte));
-                break;
-            }
-        }
-        let (texto, rect, recorte) =
-            hallado.unwrap_or_else(|| panic!("«{buscado}» no se pintó a la ventana mínima"));
+        let (texto, rect, recorte) = hallado(&pintados, buscado, exacto);
         assert!(
             cabe(recorte, rect),
             "«{texto}» está cortado por su recorte: {rect:?} no cabe en {recorte:?}"
         );
         assert!(
-            cabe(pantalla(), rect),
+            cabe(pantalla, rect),
             "«{texto}» se sale de la ventana mínima: {rect:?}"
         );
     }
+
+    // Las bandas de arriba son a pantalla completa y siguen la una a la
+    // otra sin dejarse hueco.
+    let (_, _, corte_menu) = hallado(&pintados, "Archivo", false);
+    assert_eq!(
+        corte_menu.min.y, 0.0,
+        "la barra de menú no empieza en el borde: {corte_menu:?}"
+    );
+    assert_eq!(
+        corte_menu.width(),
+        pantalla.width(),
+        "la barra de menú no llega a todo lo ancho: {corte_menu:?}"
+    );
+    assert_eq!(
+        corte_menu.height(),
+        BANDA_CHROME,
+        "la barra de menú no mide {BANDA_CHROME} px: {corte_menu:?}"
+    );
+
+    let (_, _, corte_herr) = hallado(&pintados, "⏏ Publicar", false);
+    assert_eq!(
+        corte_herr.min.y, corte_menu.max.y,
+        "la barra de herramientas no continúa la de menú: {corte_herr:?}"
+    );
+    assert_eq!(
+        corte_herr.width(),
+        pantalla.width(),
+        "la barra de herramientas no llega a todo lo ancho: {corte_herr:?}"
+    );
+    assert_eq!(
+        corte_herr.height(),
+        BANDA_CHROME,
+        "la barra de herramientas no mide {BANDA_CHROME} px: {corte_herr:?}"
+    );
+
+    // El panel izquierdo llega desde el borde, no se come la mitad de la
+    // ventana y acaba donde empieza el panel inferior.
+    let (_, _, corte_izq) = hallado(&pintados, "Sprites (", false);
+    assert_eq!(
+        corte_izq.min.x, 0.0,
+        "el panel izquierdo no llega al borde: {corte_izq:?}"
+    );
+    assert!(
+        corte_izq.max.x < pantalla.width() / 2.0,
+        "el panel izquierdo se come más de la mitad de la ventana: {corte_izq:?}"
+    );
+
+    // El panel inferior llena la ventana de lado a lado.
+    let (_, _, corte_panel) = hallado(&pintados, "Log", true);
+    assert_eq!(
+        corte_panel.width(),
+        pantalla.width(),
+        "el panel inferior no llega a todo lo ancho: {corte_panel:?}"
+    );
+    assert_eq!(
+        corte_izq.max.y, corte_panel.min.y,
+        "el panel izquierdo no acaba donde empieza el inferior: {corte_izq:?} y {corte_panel:?}"
+    );
+
+    // La barra de zoom ocupa la columna central —sin invadir el panel
+    // izquierdo—, se pega al panel inferior y mide sus 32 px.
+    let (_, _, corte_zoom) = hallado(&pintados, "Vista", true);
+    assert!(
+        corte_zoom.min.x >= corte_izq.max.x,
+        "la barra de zoom invade el panel izquierdo: {corte_zoom:?} y {corte_izq:?}"
+    );
+    assert_eq!(
+        corte_zoom.max.y, corte_panel.min.y,
+        "la barra de zoom no se pega al panel inferior: {corte_zoom:?} y {corte_panel:?}"
+    );
+    assert_eq!(
+        corte_zoom.height(),
+        BANDA_ZOOM,
+        "la barra de zoom no mide {BANDA_ZOOM} px: {corte_zoom:?}"
+    );
+
+    // La tira cierra contra el borde de abajo y mide sus 22 px.
+    let (_, _, corte_tira) = hallado(&pintados, "ficheros", false);
+    assert_eq!(
+        corte_tira.min.y, corte_panel.max.y,
+        "la tira no continúa el panel inferior: {corte_tira:?}"
+    );
+    assert_eq!(
+        corte_tira.max.y, pantalla.max.y,
+        "la tira no llega al borde de abajo: {corte_tira:?}"
+    );
+    assert_eq!(
+        corte_tira.height(),
+        BANDA_TIRA,
+        "la tira no mide {BANDA_TIRA} px: {corte_tira:?}"
+    );
+
     std::fs::remove_dir_all(&tmp).ok();
 }
 
