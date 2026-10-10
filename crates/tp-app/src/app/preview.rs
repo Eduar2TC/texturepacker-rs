@@ -55,7 +55,12 @@ fn zoom_bar(app: &mut App, ui: &mut egui::Ui) {
 }
 
 fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
-    ui.horizontal(|ui| {
+    // `ui.horizontal` sólo reparte `interact_size.y` —18 px— y deja la fila
+    // pegada al borde de arriba de la banda; con los 32 px del panel eso eran
+    // 12 px de chrome muertos debajo de los controles y sólo 2 encima.
+    // `horizontal_centered` reserva la altura entera del marco y centra la
+    // fila en ella, de modo que los dos huecos miden lo mismo (4.3).
+    ui.horizontal_centered(|ui| {
         // Indicador de frescura de la vista previa.
         match app.preview_state() {
             PreviewState::Publishing => {
@@ -1860,7 +1865,7 @@ mod error_tests {
 #[cfg(test)]
 mod fase5_tests {
     use super::*;
-    use crate::testing::{idle_input, rellenos_pintados, textos_pintados};
+    use crate::testing::{controles_de, idle_input, rellenos_pintados, textos_pintados};
 
     /// Página sintética de `w`×`h` con la imagen a cero: para probar la
     /// geometría del lienzo sin montar el pipeline ni leer el disco.
@@ -2101,5 +2106,40 @@ mod fase5_tests {
             hueco <= 0.5,
             "la barra debe tocar el panel inferior: hay {hueco} px de hueco"
         );
+    }
+
+    /// Los controles quedan **centrados** en los 32 px de la banda. La
+    /// Fase 5 fijó la altura y el reparto a la derecha; el reparto vertical
+    /// seguía siendo el de `ui.horizontal`, que sólo reparte
+    /// `interact_size.y` —18 px— y pegaba la fila al borde de arriba: 2 px
+    /// de hueco por encima y 12 por debajo. La banda no se toca, sólo se
+    /// centra lo que lleva.
+    #[test]
+    fn la_barra_de_zoom_centra_sus_controles() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let entrada = idle_input();
+        let pantalla = entrada.screen_rect.expect("la prueba trae pantalla");
+        let salida = app.run_frame(&ctx, entrada);
+
+        let chrome = crate::app::superficies(ctx.style().visuals.dark_mode).chrome;
+        let barra = barra_de_zoom(&rellenos_pintados(&salida), chrome, pantalla)
+            .expect("la barra de zoom se pinta con su relleno de 32 px");
+
+        for rotulo in ["Vista", "1:1", "Ajustar"] {
+            let caja = controles_de(&salida, rotulo)
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| panic!("«{rotulo}» debe estar en la barra"));
+            let descentro = (caja.center().y - barra.center().y).abs();
+            assert!(
+                descentro <= 2.0,
+                "«{rotulo}» debe quedar centrado en los 32 px de la banda: su \
+                 caja va de {:.0} a {:.0} y el centro de la barra está en {:.0}",
+                caja.min.y,
+                caja.max.y,
+                barra.center().y
+            );
+        }
     }
 }
