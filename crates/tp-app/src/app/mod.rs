@@ -74,6 +74,17 @@ const JUST_ADDED_HL: std::time::Duration = std::time::Duration::from_secs(8);
 /// 120 las tres líneas caben con un poco de aire y el resto sigue siendo del
 /// atlas; quien necesite más lo estira con el ratón, y quien no lo pliega.
 const BOTTOM_OPEN_HEIGHT: f32 = 120.0;
+/// Identidad de egui del panel inferior según esté abierto o plegado.
+///
+/// El panel guarda su rectángulo en la memoria de egui bajo esa identidad
+/// y lo usa como altura del frame siguiente. Plegado sólo se maqueta la
+/// fila de la barra de pestañas: con una identidad compartida ese valor
+/// sobrescribiría la altura abierta y al desplegar egui restauraría lo
+/// que quedó grabado al plegar en vez de la que había. Con una identidad
+/// por estado cada uno conserva la suya y desplegar devuelve exactamente
+/// lo que había.
+const BOTTOM_PANEL: &str = "bottom_panel";
+const BOTTOM_PANEL_PLEGADO: &str = "bottom_panel_plegado";
 /// Ancho (px) por debajo del cual el dock de Ajustes se pliega solo.
 ///
 /// Con los dos paneles laterales (250 + 330) por debajo de este umbral el
@@ -503,7 +514,12 @@ impl eframe::App for App {
         // Conserva la última altura abierta para restaurarla al desplegar.
         let bottom_open = self.bottom_height.max(64.0);
         let resizable = !self.bottom_collapsed;
-        let bottom = egui::TopBottomPanel::bottom("bottom_panel")
+        let id = if self.bottom_collapsed {
+            BOTTOM_PANEL_PLEGADO
+        } else {
+            BOTTOM_PANEL
+        };
+        let bottom = egui::TopBottomPanel::bottom(id)
             .resizable(resizable)
             .default_height(bottom_open)
             .height_range(28.0..=f32::INFINITY);

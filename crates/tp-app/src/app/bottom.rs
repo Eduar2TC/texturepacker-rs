@@ -5,6 +5,15 @@ use crate::i18n::t;
 use eframe::egui;
 
 pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
+    // El estado con el que `mod.rs` enseñó el panel **este frame**. El clic
+    // del chevron llega aquí dentro y cambia `app.bottom_collapsed`, pero
+    // lo que se maqueta debajo tiene que corresponder a la identidad con
+    // la que egui va a guardar la altura del panel: si el pliegue se
+    // aplicara ya, el frame del clic maquetaría sólo la fila donde el
+    // panel estaba abierto, egui apuntaría 28 px como su altura y al
+    // desplegar no volvería la que tenía —102 px—. El cambio se ve en el
+    // frame siguiente, que es indistinguible.
+    let plegado = app.bottom_collapsed;
     ui.horizontal(|ui| {
         // Plegar/desplegar el panel (chevron como en cualquier herramienta).
         //
@@ -12,17 +21,17 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         // alturas, la de las pestañas —`interact_size.y`, 18 px— y la del
         // `small_button`, 15 px, con lo que la caja del chevron se quedaba
         // 3 px por encima y por debajo de la de sus vecinas.
-        let chevron = if app.bottom_collapsed { "⏵" } else { "⏷" };
+        let chevron = if plegado { "⏵" } else { "⏷" };
         if ui
             .button(chevron)
-            .on_hover_text(if app.bottom_collapsed {
+            .on_hover_text(if plegado {
                 t!("Mostrar el panel")
             } else {
                 t!("Plegar el panel y dejar la vista del atlas en pantalla completa")
             })
             .clicked()
         {
-            app.bottom_collapsed = !app.bottom_collapsed;
+            app.bottom_collapsed = !plegado;
         }
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Log, "Log");
         ui.selectable_value(&mut app.bottom_tab, BottomTab::Output, t!("Salida"));
@@ -45,16 +54,25 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
                     .clicked()
                 {
                     app.bottom_tab = BottomTab::Log;
+                    // Igual que el chevron: el cambio de pliegue se nota
+                    // en el frame siguiente, nunca en el que lo pide.
                     app.bottom_collapsed = false;
                 }
             });
         }
     });
-    super::separador(ui);
-
-    if app.bottom_collapsed {
+    if plegado {
         return; // solo la tira de pestañas + estado
     }
+
+    // La línea va *después* del retorno. `Frame::show` devuelve como
+    // rectángulo del panel lo que maquetó el contenido más sus márgenes y
+    // egui guarda ese rectángulo como altura de la identidad con la que se
+    // enseñó: maquetando la línea con la banda plegada se apuntaba una
+    // altura mayor que la banda —35 px— y era la que después se
+    // restauraba al desplegar.
+    super::separador(ui);
+
     match app.bottom_tab {
         BottomTab::Log => log_view(app, ui),
         BottomTab::Output => output_view(app, ui),
@@ -286,6 +304,7 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{BOTTOM_OPEN_HEIGHT, BOTTOM_PANEL, BOTTOM_PANEL_PLEGADO};
     use crate::testing::{controles_de, idle_input, textos_pintados};
 
     /// M3: el panel arrancaba con 180 px para tres líneas de log: el hueco
@@ -412,6 +431,124 @@ mod tests {
             (arriba - abajo).abs() < 0.5,
             "la barra de pestañas deja {arriba:.0} px arriba y {abajo:.0} \
              abajo: dentro de su banda tiene que ir centrada"
+        );
+    }
+
+    /// La altura de la banda inferior: el recorte de la pestaña Log es el
+    /// del panel entero.
+    fn altura_del_panel(out: &eframe::egui::FullOutput) -> f32 {
+        textos_pintados(out)
+            .into_iter()
+            .filter(|(texto, _, _)| texto.trim() == "Log")
+            .map(|(_, _, recorte)| recorte)
+            .max_by(|a, b| a.min.y.total_cmp(&b.min.y))
+            .expect("la pestaña Log debe seguir pintarse")
+            .height()
+    }
+
+    /// El chevron de la barra, pulsado y soltado como lo haría el ratón
+    /// (en frames distintos, que es como egui distingue un clic de una
+    /// pulsación suelta), y dos frames más para que asiente el tamaño que
+    /// egui guarda del panel.
+    fn clica_el_chevron(app: &mut App, ctx: &egui::Context, glifo: &str) {
+        let out = app.run_frame(ctx, idle_input());
+        let donde = controles_de(&out, glifo)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("el chevron «{glifo}» debe estar en la barra"))
+            .center();
+        let boton = |pressed: bool| egui::Event::PointerButton {
+            pos: donde,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut entrada = idle_input();
+        entrada.events = vec![egui::Event::PointerMoved(donde), boton(true)];
+        let _ = app.run_frame(ctx, entrada);
+        let mut entrada = idle_input();
+        entrada.events = vec![boton(false)];
+        let _ = app.run_frame(ctx, entrada);
+        let _ = app.run_frame(ctx, idle_input());
+        let _ = app.run_frame(ctx, idle_input());
+    }
+
+    /// Plegar y desplegar tiene que devolver la altura que el panel tenía.
+    ///
+    /// El rectángulo que egui guarda para un panel es el que maquetó su
+    /// contenido más los márgenes del marco, no el que se le pidió, y el
+    /// chevron se toca *dentro* de `bottom.show`: si el pliegue se
+    /// aplicara ahí mismo, el frame del clic maquetaría sólo la fila
+    /// donde el panel estaba abierto y egui apuntaría esa altura —28 px—
+    /// como la del panel abierto. Al desplegar no volvería la de 120 sino
+    /// 102, y ya no se recuperaba. Estos tests pulsan el chevron de
+    /// verdad, que es por donde entra el fallo.
+    #[test]
+    fn desplegar_devuelve_la_altura_que_tenia_el_panel() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        // Dos frames: el primero asienta el tamaño del panel.
+        let _ = app.run_frame(&ctx, idle_input());
+        let out = app.run_frame(&ctx, idle_input());
+        let abierta = altura_del_panel(&out);
+        assert!(
+            (abierta - BOTTOM_OPEN_HEIGHT).abs() < 0.5,
+            "el panel arranca con {abierta:.0} px y debe ser {BOTTOM_OPEN_HEIGHT}"
+        );
+
+        clica_el_chevron(&mut app, &ctx, "⏷");
+        let out = app.run_frame(&ctx, idle_input());
+        let plegada = altura_del_panel(&out);
+        assert!(
+            (plegada - 22.0).abs() < 0.5,
+            "la banda plegada mide {plegada:.0} px y debe ser 22"
+        );
+
+        clica_el_chevron(&mut app, &ctx, "⏵");
+        let out = app.run_frame(&ctx, idle_input());
+        let otra_vez = altura_del_panel(&out);
+        assert!(
+            (otra_vez - abierta).abs() < 0.5,
+            "al desplegar el panel mide {otra_vez:.0} px y tenía {abierta:.0}: \
+             la altura abierta se guarda antes de plegar y es la que hay que \
+             devolver"
+        );
+    }
+
+    /// Cada estado del panel guarda su altura bajo su propia identidad.
+    ///
+    /// Es el reverso del test anterior: ahí se mide lo que se ve y aquí lo
+    /// que egui persiste, que es de donde sale la altura del frame
+    /// siguiente. Con el panel plegado, la identidad abierta tiene que
+    /// seguir guardando los 120 px —es la que se restaura— y la plegada
+    /// tiene que guardar exactamente su banda: si la fila maqueta la línea
+    /// que va debajo, ese sobrante se apunta como altura.
+    #[test]
+    fn cada_estado_del_panel_guarda_su_propia_altura() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let _ = app.run_frame(&ctx, idle_input());
+        let _ = app.run_frame(&ctx, idle_input());
+
+        clica_el_chevron(&mut app, &ctx, "⏷");
+
+        let estado = |id: &str| {
+            egui::containers::panel::PanelState::load(&ctx, egui::Id::new(id))
+                .unwrap_or_else(|| panic!("«{id}» no tiene altura guardada"))
+                .rect
+                .height()
+        };
+        let plegada = estado(BOTTOM_PANEL_PLEGADO);
+        assert!(
+            (plegada - 22.0).abs() < 0.5,
+            "la banda plegada guarda {plegada:.0} px de estado: maqueta la \
+             línea que va debajo de su fila y egui la toma por altura"
+        );
+        let abierta = estado(BOTTOM_PANEL);
+        assert!(
+            (abierta - BOTTOM_OPEN_HEIGHT).abs() < 0.5,
+            "al plegar la altura abierta pasa a {abierta:.0} px en vez de \
+             quedarse en {BOTTOM_OPEN_HEIGHT}: es la que se restaura"
         );
     }
 
