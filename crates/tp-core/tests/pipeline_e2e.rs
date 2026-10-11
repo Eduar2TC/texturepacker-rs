@@ -3153,9 +3153,10 @@ fn la_barra_nunca_va_hacia_atras_durante_una_corrida() {
         ..ProjectConfig::default()
     };
 
-    // `Progress` sólo contiene átomos, así que se comparte entre hilos sin
-    // más: un `Arc` resuelve que el hilo lea mientras la corrida escribe en
-    // él desde este ámbito.
+    // `Progress` escribe quien corre la corrida y lee la tira desde otro
+    // hilo: el `Arc` resuelve que el hilo lea mientras la corrida escribe en
+    // él desde este ámbito (el estado va entero tras un candado, que es lo
+    // que impide que la barra baje al leer a caballo de dos fases).
     let progreso = std::sync::Arc::new(Progress::new());
     // El muestreo va en un hilo aparte y se mantiene vivo **hasta que la
     // corrida termina**: un bucle de iteraciones fijas se agota en un

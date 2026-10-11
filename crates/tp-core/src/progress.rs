@@ -19,18 +19,18 @@
 //!   `start + len` de uno es el `start` del siguiente), así que arrancar una
 //!   fase nueva sólo puede empujar la barra hacia delante, aunque la fase
 //!   anterior se haya quedado corta o se haya dado por hecha sin trabajos.
-//! * **Termina en el borde.** El último tramo cierra en1000 milésimas, de
-//!   modo que con todos sus trabajos avisados la fracción es 1.
+//! * **Termina en el borde de salida.** El último tramo cierra en 1000
+//!   milésimas, de modo que con todos sus trabajos avisados la fracción es 1.
 //!
 //! El objeto vive en un `Arc`: lo crea la interfaz al lanzar la publicación,
 //! lo lleva el hilo de la corrida y la tira lo lee mientras esté puesto.
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 /// Porción de la barra: `len` milésimas empezando en la milésima `start`.
 ///
 /// Milésimas y no porcentaje porque los pesos de las fases no reparten huecos
-/// enteros: cinco fases con pesos distintos no cortan100 baldosas.
+/// enteros: cinco fases con pesos distintos no cortan 100 baldosas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Segment {
     pub start: u32,
@@ -73,41 +73,62 @@ impl Segment {
     }
 }
 
-/// Progreso de una corrida.
-///
-/// Sólo escribe quien ejecuta la fase y sólo lee la tira, así que un
-/// orden relajado basta: lo que se pierde es como mucho un frame de retraso
-/// en la barra.
+/// Estado mutable de la barra, leído y escrito siempre entero.
 #[derive(Debug, Default)]
-pub struct Progress {
+struct Estado {
     /// Milésimas donde empieza la fase actual.
-    start: AtomicU32,
+    start: u32,
     /// Milésimas que ocupa la fase actual.
-    len: AtomicU32,
+    len: u32,
     /// Trabajos terminados de la fase actual.
-    done: AtomicUsize,
+    done: usize,
     /// Trabajos que tiene la fase actual.
-    total: AtomicUsize,
+    total: usize,
     /// `true` cuando el total de la fase ya se conoce; mientras es `false`
     /// la fase está anunciada pero sin contar (las dos primeras descubren su
     /// total al escanear los ficheros y al planificar las variantes).
     ///
-    /// Es la diferencia entre «esta fase no tiene nada que hacer» (total0 y
+    /// Es la diferencia entre «esta fase no tiene nada que hacer» (total 0 y
     /// conocido: la barra cierra el tramo de un golpe) y «esta fase aún no
-    /// sabe cuánto hará» (total0 sin conocer: la barra se queda parada en el
+    /// sabe cuánto hará» (total 0 sin conocer: la barra se queda parada en el
     /// borde de entrada a la espera). Sin distinguirlas la barra arrancaba
     /// subiendo al borde de salida del primer tramo (35 %) y, en cuanto la
     /// ingesta fijaba el total, caía de golpe a 0 (re-review B2).
-    conocido: AtomicBool,
+    conocido: bool,
     /// Imágenes que la ingesta ya ha cargado (numerador del contador).
-    loaded: AtomicUsize,
+    loaded: usize,
     /// Imágenes que la ingesta ha descubierto (denominador del contador).
-    files: AtomicUsize,
+    files: usize,
+}
+
+/// Progreso de una corrida.
+///
+/// **Los siete campos van juntos en un `Mutex` y no en átomos sueltos.** La
+/// tira lee desde otro hilo mientras la corrida escribe, y con átomos
+/// independientes la lectura se hacía a caballo de dos fases: `fraction()`
+/// cogía el «total terminado» de la anterior y el tramo de la siguiente, veía
+/// así la barra al borde de salida de una fase que aún no había empezado
+/// (0.45) y, en la lectura siguiente, caía al borde de entrada (0.35). Un
+/// paso atrás en pantalla por una ventana de nanoseundos que la corrida real
+/// alcanzó en CI (re-review B2). Ningún orden de escritura lo arregla: hace
+/// falta que la lectora vea un retrato entero y coherente, y para eso está
+/// el candado —se secciona durante nanoseundos y sólo lo lee o escribe quien
+/// lo tiene.
+#[derive(Debug, Default)]
+pub struct Progress {
+    estado: Mutex<Estado>,
 }
 
 impl Progress {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// El estado, con el pánico de otro hilo ignorado: los campos son
+    /// contadores que siguen siendo válidos aunque quien los fuera tocando
+    /// se cayera, y una barra de progreso no puede quedarse inservible.
+    fn estado(&self) -> MutexGuard<'_, Estado> {
+        self.estado.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     /// Empieza la fase que ocupa `segment` y contiene `items` trabajos.
@@ -121,11 +142,12 @@ impl Progress {
     /// Quien ya conoce su recuento desde el principio debe pasarlo aquí y
     /// no llamar a `set_total`.
     pub fn begin_phase(&self, segment: Segment, items: usize) {
-        self.start.store(segment.start, Ordering::Relaxed);
-        self.len.store(segment.len, Ordering::Relaxed);
-        self.total.store(items, Ordering::Relaxed);
-        self.done.store(0, Ordering::Relaxed);
-        self.conocido.store(items > 0, Ordering::Relaxed);
+        let mut e = self.estado();
+        e.start = segment.start;
+        e.len = segment.len;
+        e.total = items;
+        e.done = 0;
+        e.conocido = items > 0;
     }
 
     /// Fija el total de trabajos de la fase cuando se conoce tarde: la
@@ -134,55 +156,53 @@ impl Progress {
     /// Hasta esta llamada la fase se queda **parada en el borde de entrada**
     /// de su tramo, sin avanzar ni retroceder (re-review B2).
     pub fn set_total(&self, total: usize) {
-        self.total.store(total, Ordering::Relaxed);
-        self.conocido.store(true, Ordering::Relaxed);
+        let mut e = self.estado();
+        e.total = total;
+        e.conocido = true;
     }
 
     /// Trabajos terminados en la fase actual. Pasarse del total no se nota:
     /// la fracción de la fase se queda topeada en 1.
     pub fn add(&self, items: usize) {
-        self.done.fetch_add(items, Ordering::Relaxed);
+        self.estado().done += items;
     }
 
     /// Imágenes que la ingesta va a cargar: el denominador del contador.
     pub fn set_files(&self, files: usize) {
-        self.files.store(files, Ordering::Relaxed);
+        self.estado().files = files;
     }
 
     /// Una imagen cargada más (numerador del contador).
     pub fn add_loaded(&self) {
-        self.loaded.fetch_add(1, Ordering::Relaxed);
+        self.estado().loaded += 1;
     }
 
     /// `(cargadas, descubiertas)` para el texto de la tira.
     pub fn loaded(&self) -> (usize, usize) {
-        (
-            self.loaded.load(Ordering::Relaxed),
-            self.files.load(Ordering::Relaxed),
-        )
+        let e = self.estado();
+        (e.loaded, e.files)
     }
 
-    /// Fracción0..1 de la corrida entera.
+    /// Fracción 0..1 de la corrida entera.
     ///
     /// Una fase cuyo total aún no se conoce queda **parada en el borde de
     /// entrada** de su tramo: no avanza, pero tampoco retrocede. Es lo que
     /// impide el salto de 35 % a 0 del que adolecía el código anterior
     /// (re-review B2), que trataba «total sin conocer» como «fase hecha».
+    ///
+    /// El retrato sale de una sola sección: mezclar el total de una fase con
+    /// el tramo de la siguiente es lo que hacía bajar la barra (ver
+    /// [`Progress`]).
     pub fn fraction(&self) -> f32 {
-        let total = self.total.load(Ordering::Relaxed);
-        let inside = if !self.conocido.load(Ordering::Relaxed) {
+        let e = self.estado();
+        let inside = if !e.conocido {
             0.0
+        } else if e.total == 0 {
+            1.0
         } else {
-            let done = self.done.load(Ordering::Relaxed).min(total);
-            if total == 0 {
-                1.0
-            } else {
-                done as f32 / total as f32
-            }
+            e.done.min(e.total) as f32 / e.total as f32
         };
-        let start = self.start.load(Ordering::Relaxed) as f32;
-        let len = self.len.load(Ordering::Relaxed) as f32;
-        ((start + len * inside) / Segment::FULL.len as f32).clamp(0.0, 1.0)
+        ((e.start as f32 + e.len as f32 * inside) / Segment::FULL.len as f32).clamp(0.0, 1.0)
     }
 }
 
@@ -247,7 +267,7 @@ mod tests {
         let fin_ingesta = mira("ingesta terminada".into());
         assert!((fin_ingesta - 0.35).abs() < 1e-6);
 
-        // Fase sin trabajos: se anuncia con0 y se queda parada en su
+        // Fase sin trabajos: se anuncia con 0 y se queda parada en su
         // borde de entrada hasta que el total la llene (B2). Sólo entonces
         // avanza, y nunca retrocede.
         progreso.begin_phase(tramos[1], 0);
@@ -323,6 +343,79 @@ mod tests {
             progreso.fraction(),
             1.0,
             "los trabajos de más no sacan la barra del tramo"
+        );
+    }
+
+    /// La tira lee desde otro hilo mientras la corrida escribe, y con campos
+    /// sueltos la lectura salía a caballo de dos fases: tomaba el «todo
+    /// terminado» de la anterior y el tramo de la siguiente, veía la barra en
+    /// el borde de salida de una fase que aún no había empezado y, en la
+    /// lectura siguiente, caía a su borde de entrada. Un paso atrás, que es
+    /// exactamente lo que la corrida real cazó en CI (re-review B2).
+    ///
+    /// Aquí se reproduce el mismo baile a escala: un hilo cierra una fase y
+    /// abre la siguiente mientras el otro no deja de leer. Con la barra
+    /// partida en 500 tramos de 2 milésimas, cada traspaso tiene su ventana
+    /// de dos milésimas de salto —4 en lugar de 2— seguida de la caída.
+    #[test]
+    fn la_barra_no_retrocede_aunque_lo_lea_otro_hilo() {
+        const FASES: usize = 500;
+        let progreso = std::sync::Arc::new(Progress::new());
+        let pesos = vec![1u32; FASES];
+        let tramos = Segment::split(Segment::FULL, &pesos);
+        assert_eq!(tramos.len(), FASES);
+        assert!(tramos.iter().all(|t| t.len >= 1), "cada tramo tiene carne");
+
+        let terminado = std::sync::atomic::AtomicBool::new(false);
+        let (retrocesos, escrito) = std::thread::scope(|s| {
+            let lector = s.spawn(|| {
+                let mut maximo = 0.0f32;
+                let mut pasos_atras = Vec::new();
+                while !terminado.load(std::sync::atomic::Ordering::Relaxed) {
+                    // 64 lecturas seguidas y una rendición: seguidas para
+                    // que la ventana de nanoseundos del traspaso no se le
+                    // escape, rendidas para que en una máquina de un solo
+                    // núcleo el hilo que escribe también corra.
+                    for _ in 0..64 {
+                        let ahora = progreso.fraction();
+                        if ahora < maximo - 1e-6 && pasos_atras.len() < 3 {
+                            pasos_atras.push((maximo, ahora));
+                        }
+                        maximo = maximo.max(ahora);
+                    }
+                    std::thread::yield_now();
+                }
+                pasos_atras
+            });
+            let escritor = s.spawn(|| {
+                for tramo in tramos {
+                    progreso.begin_phase(tramo, 10);
+                    // Pausa tras anunciar: es donde la otra hilo tiene que
+                    // coger el estado ya asentado de la fase nueva.
+                    std::thread::yield_now();
+                    progreso.add(10);
+                    std::thread::yield_now();
+                }
+                terminado.store(true, std::sync::atomic::Ordering::Relaxed);
+            });
+            let resultado_escritor = escritor.join();
+            // Pase lo que pase con el escritor, el lector tiene que salir:
+            // si el hilo se cayera, la bandera nunca se levantaría y el
+            // scope esperaría a una lectura que no termina.
+            terminado.store(true, std::sync::atomic::Ordering::Relaxed);
+            let pasos = lector.join().expect("el lector debe terminar");
+            resultado_escritor.expect("el escritor debe terminar");
+            (pasos, progreso.clone())
+        });
+
+        assert!(
+            retrocesos.is_empty(),
+            "la barra retrocedió al leerla desde otro hilo: {retrocesos:?}"
+        );
+        assert_eq!(
+            escrito.fraction(),
+            1.0,
+            "cerradas las 500 fases la barra está en el borde"
         );
     }
 }
