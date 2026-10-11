@@ -367,8 +367,12 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                     app.aviso(
                         LogKind::Info,
                         t!(
+                            // El recuento que se movió de verdad, no el que
+                            // se arrastró: un destino que ya los contiene
+                            // no mueve nada y el mensaje tendría que callarse
+                            // (re-review B5).
                             "{} sprite(s) movido(s) al grupo «{}».",
-                            drag.ids.len(),
+                            moved,
                             target
                         ),
                     );
@@ -1403,5 +1407,86 @@ mod tests {
                 "la caja de «{glifo}» {caja:?} no parece de botón: ¿se quedó sin relleno propio?"
             );
         }
+    }
+
+    /// Un frame del panel izquierdo con los eventos que se le pasen (mismo
+    /// montaje que los miradores de Ajustes, al otro lado de la ventana).
+    fn panel_frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        eventos: Vec<egui::Event>,
+    ) -> eframe::egui::FullOutput {
+        let pantalla = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            events: eventos,
+            ..egui::RawInput::default()
+        };
+        ctx.run(pantalla, |ctx| {
+            egui::SidePanel::left("sprites_panel")
+                .resizable(true)
+                .default_width(250.0)
+                .show(ctx, |ui| sprites_ui(app, ui));
+        })
+    }
+
+    /// B5: el aviso de «movidos al grupo» cuenta lo que se movió de
+    /// verdad, no lo que se arrastró. Soltar tres sprites sobre una hoja
+    /// que ya contiene a uno de ellos mueve dos, y el mensaje decía tres.
+    #[test]
+    fn el_aviso_de_mover_a_grupo_cuenta_lo_que_se_movio() {
+        let (mut app, ctx, _tmp) = proyecto("aviso_grupo");
+        // La hoja destino es la propia carpeta raíz del proyecto, y ya
+        // contiene a uno de los tres que se van a arrastrar.
+        app.config.folder_groups = vec![tp_core::config::FolderGroup {
+            name: "sprites".into(),
+            sprites: vec!["hero.png".into()],
+        }];
+        crate::app::begin_sprite_drag(
+            &app,
+            &ctx,
+            vec![
+                "hero.png".to_string(),
+                "coin.png".to_string(),
+                "bg.png".to_string(),
+            ],
+        );
+
+        // Dónde está la cabecera de la carpeta: el soltar se apoya en ella.
+        let primera = panel_frame(&mut app, &ctx, Vec::new());
+        let donde = crate::testing::textos_pintados(&primera)
+            .iter()
+            .find(|(texto, _, _)| texto.trim() == "sprites")
+            .map(|(_, rect, _)| rect.center())
+            .expect("la carpeta raíz «sprites» se pinta en el árbol");
+
+        // El puntero se acerca con el arrastre en marcha y se levanta.
+        let _ = panel_frame(&mut app, &ctx, vec![egui::Event::PointerMoved(donde)]);
+        let _ = panel_frame(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerButton {
+                pos: donde,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        let aviso = app
+            .log_texts()
+            .into_iter()
+            .find(|l| l.contains("movido"))
+            .expect("soltar sprites sobre una carpeta deja su aviso en el log");
+        assert!(
+            aviso.contains("2 sprites movidos al grupo «sprites»"),
+            "el aviso debe contar los que se movieron (2 de los 3 arrastrados): {aviso}"
+        );
+        assert!(
+            !aviso.contains("3 sprites"),
+            "el aviso sigue contando los arrastrados, no los movidos: {aviso}"
+        );
     }
 }
