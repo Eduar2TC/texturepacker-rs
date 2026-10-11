@@ -125,6 +125,15 @@ pub(super) fn handle_global_file_drop(app: &mut App, ctx: &egui::Context) {
 /// filtro, Supr quitar selección, +/-/0 zoom, F ajustar, Esc cierra
 /// ventanas flotantes.
 pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
+    // Mientras está abierto el diálogo «hay cambios sin guardar» no se
+    // atiende ningún atajo (re-review A2): si no, Ctrl+P publicaría,
+    // F9 giraría Ajustes y Supr seguiría quitando sprites POR DETRÁS del
+    // modal, que es donde el usuario cree que la app está esperando su
+    // decisión. La salida del modal la tramita `project::exit_dialog`
+    // (Esc lo cancela como «Cancelar»), así que no se pierde nada.
+    if app.exit_pending {
+        return;
+    }
     let consume = |ctx: &egui::Context, key: egui::Key| {
         ctx.input(|i| {
             let mods = i.modifiers;
@@ -429,4 +438,53 @@ mod tests {
         );
     }
 
+    /// Re-review A2: mientras el diálogo «hay cambios sin guardar» está
+    /// abierto la app está esperando una decisión, y ningún atajo debe
+    /// trabajar por detrás del modal (Ctrl+P publicando, F9 girando
+    /// Ajustes, Supr quitando sprites).
+    #[test]
+    fn detras_del_dialogo_de_salida_no_se_atiende_ningun_atajo() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let ajustes = app.show_settings;
+        app.exit_pending = true;
+
+        let _ = frame(
+            &mut app,
+            &ctx,
+            egui::Modifiers::NONE,
+            vec![tecla(egui::Key::F9)],
+        );
+        assert_eq!(
+            app.show_settings, ajustes,
+            "F9 no debe girar el dock de Ajustes detrás del modal"
+        );
+        let registros = app.logs.len();
+
+        let _ = ctrl(&mut app, &ctx, egui::Key::P);
+        assert_eq!(
+            app.logs.len(),
+            registros,
+            "Ctrl+P no debe publicar detrás del modal: ni siquiera debe registrar"
+        );
+    }
+
+    /// Control del test anterior: sin el diálogo, las mismas teclas actúan.
+    #[test]
+    fn sin_el_dialogo_de_salida_los_atajos_actuan() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let ajustes = app.show_settings;
+
+        let _ = frame(
+            &mut app,
+            &ctx,
+            egui::Modifiers::NONE,
+            vec![tecla(egui::Key::F9)],
+        );
+        assert_ne!(
+            app.show_settings, ajustes,
+            "F9 debe girar Ajustes cuando no hay diálogo de salida"
+        );
+    }
 }
