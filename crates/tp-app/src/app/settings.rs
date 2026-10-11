@@ -780,7 +780,7 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
         let algorithm_label = if polygon_auto {
             "Polygon (auto: trim mode Polygon)".to_string()
         } else {
-            app.config.algorithm.as_str().to_string()
+            algorithm_name(&app.config.algorithm).to_string()
         };
         ui.add_enabled_ui(!polygon_auto, |ui| {
             enum_combo(
@@ -788,14 +788,30 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
                 t!("Algoritmo"),
                 &algorithm_label,
                 |ui, v| {
-                    ui.selectable_value(v, PackingAlgorithm::MaxRects, "MaxRects");
-                    ui.selectable_value(v, PackingAlgorithm::Guillotine, "Guillotine");
-                    ui.selectable_value(v, PackingAlgorithm::Grid, t!("Rejilla (Grid)"));
-                    ui.selectable_value(v, PackingAlgorithm::Basic, t!("Básico (Basic)"));
+                    ui.selectable_value(
+                        v,
+                        PackingAlgorithm::MaxRects,
+                        algorithm_name(&PackingAlgorithm::MaxRects),
+                    );
+                    ui.selectable_value(
+                        v,
+                        PackingAlgorithm::Guillotine,
+                        algorithm_name(&PackingAlgorithm::Guillotine),
+                    );
+                    ui.selectable_value(
+                        v,
+                        PackingAlgorithm::Grid,
+                        algorithm_name(&PackingAlgorithm::Grid),
+                    );
+                    ui.selectable_value(
+                        v,
+                        PackingAlgorithm::Basic,
+                        algorithm_name(&PackingAlgorithm::Basic),
+                    );
                     ui.selectable_value(
                         v,
                         PackingAlgorithm::Manual,
-                        t!("Manual (arrastrar en la vista)"),
+                        algorithm_name(&PackingAlgorithm::Manual),
                     )
                     .on_hover_text(t!(
                         "Arrastra los sprites en la vista previa para fijar su posición"
@@ -837,11 +853,11 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
         enum_combo(
             ui,
             t!("Modo de empaquetado"),
-            app.config.pack_mode.as_str(),
+            pack_mode_name(&app.config.pack_mode),
             |ui, v| {
-                ui.selectable_value(v, PackMode::Fast, t!("Fast (recorte simple)"));
-                ui.selectable_value(v, PackMode::Good, t!("Good (búsqueda rápida)"));
-                ui.selectable_value(v, PackMode::Best, t!("Best (búsqueda intensiva)"));
+                ui.selectable_value(v, PackMode::Fast, pack_mode_name(&PackMode::Fast));
+                ui.selectable_value(v, PackMode::Good, pack_mode_name(&PackMode::Good));
+                ui.selectable_value(v, PackMode::Best, pack_mode_name(&PackMode::Best));
             },
             &mut app.config.pack_mode,
         );
@@ -861,12 +877,28 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
         enum_combo(
             ui,
             t!("Restricción de tamaño"),
-            app.config.size_constraints.as_str(),
+            size_constraint_name(&app.config.size_constraints),
             |ui, v| {
-                ui.selectable_value(v, SizeConstraint::AnySize, t!("Cualquiera"));
-                ui.selectable_value(v, SizeConstraint::Pot, t!("POT (potencia de 2)"));
-                ui.selectable_value(v, SizeConstraint::MultipleOf4, t!("Múltiplo de 4"));
-                ui.selectable_value(v, SizeConstraint::WordAligned, t!("Alineado a palabra"));
+                ui.selectable_value(
+                    v,
+                    SizeConstraint::AnySize,
+                    size_constraint_name(&SizeConstraint::AnySize),
+                );
+                ui.selectable_value(
+                    v,
+                    SizeConstraint::Pot,
+                    size_constraint_name(&SizeConstraint::Pot),
+                );
+                ui.selectable_value(
+                    v,
+                    SizeConstraint::MultipleOf4,
+                    size_constraint_name(&SizeConstraint::MultipleOf4),
+                );
+                ui.selectable_value(
+                    v,
+                    SizeConstraint::WordAligned,
+                    size_constraint_name(&SizeConstraint::WordAligned),
+                );
             },
             &mut app.config.size_constraints,
         );
@@ -894,17 +926,37 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             enum_combo(
                 ui,
                 t!("Ordenar por (Basic)"),
-                app.config.basic_sort_by.as_str(),
+                basic_sort_by_name(&app.config.basic_sort_by),
                 |ui, v| {
-                    ui.selectable_value(v, BasicSortBy::Best, t!("Best (probar todas)"));
-                    ui.selectable_value(v, BasicSortBy::Name, t!("Nombre"));
-                    ui.selectable_value(v, BasicSortBy::Width, t!("Ancho"));
-                    ui.selectable_value(v, BasicSortBy::Height, t!("Alto"));
-                    ui.selectable_value(v, BasicSortBy::Area, t!("Área"));
+                    ui.selectable_value(
+                        v,
+                        BasicSortBy::Best,
+                        basic_sort_by_name(&BasicSortBy::Best),
+                    );
+                    ui.selectable_value(
+                        v,
+                        BasicSortBy::Name,
+                        basic_sort_by_name(&BasicSortBy::Name),
+                    );
+                    ui.selectable_value(
+                        v,
+                        BasicSortBy::Width,
+                        basic_sort_by_name(&BasicSortBy::Width),
+                    );
+                    ui.selectable_value(
+                        v,
+                        BasicSortBy::Height,
+                        basic_sort_by_name(&BasicSortBy::Height),
+                    );
+                    ui.selectable_value(
+                        v,
+                        BasicSortBy::Area,
+                        basic_sort_by_name(&BasicSortBy::Area),
+                    );
                     ui.selectable_value(
                         v,
                         BasicSortBy::Circumference,
-                        t!("Perímetro (circumference)"),
+                        basic_sort_by_name(&BasicSortBy::Circumference),
                     );
                 },
                 &mut app.config.basic_sort_by,
@@ -912,10 +964,18 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
             enum_combo(
                 ui,
                 t!("Orden (Basic)"),
-                app.config.basic_order.as_str(),
+                sort_order_name(&app.config.basic_order),
                 |ui, v| {
-                    ui.selectable_value(v, SortOrder::Ascending, t!("Ascendente"));
-                    ui.selectable_value(v, SortOrder::Descending, t!("Descendente"));
+                    ui.selectable_value(
+                        v,
+                        SortOrder::Ascending,
+                        sort_order_name(&SortOrder::Ascending),
+                    );
+                    ui.selectable_value(
+                        v,
+                        SortOrder::Descending,
+                        sort_order_name(&SortOrder::Descending),
+                    );
                 },
                 &mut app.config.basic_order,
             );
@@ -951,28 +1011,32 @@ fn layout_section(app: &mut App, ui: &mut egui::Ui) {
         ui.add_enabled_ui(app.config.enable_trim, |ui| {
             ui.label(t!("Modo de recorte"));
             egui::ComboBox::from_id_salt(t!("Modo de recorte"))
-                .selected_text(trim_mode_name(app.config.trim_mode))
+                .selected_text(trim_mode_name(&app.config.trim_mode))
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
                         &mut app.config.trim_mode,
                         TrimMode::None,
-                        t!("None (sin recorte)"),
+                        trim_mode_name(&TrimMode::None),
                     );
-                    ui.selectable_value(&mut app.config.trim_mode, TrimMode::Trim, "Trim");
+                    ui.selectable_value(
+                        &mut app.config.trim_mode,
+                        TrimMode::Trim,
+                        trim_mode_name(&TrimMode::Trim),
+                    );
                     ui.selectable_value(
                         &mut app.config.trim_mode,
                         TrimMode::CropKeepPos,
-                        t!("Crop, conservar posición"),
+                        trim_mode_name(&TrimMode::CropKeepPos),
                     );
                     ui.selectable_value(
                         &mut app.config.trim_mode,
                         TrimMode::Crop,
-                        t!("Crop, fijar en 0/0"),
+                        trim_mode_name(&TrimMode::Crop),
                     );
                     ui.selectable_value(
                         &mut app.config.trim_mode,
                         TrimMode::Polygon,
-                        "Polygon (mallas)",
+                        trim_mode_name(&TrimMode::Polygon),
                     );
                 });
         });
@@ -1067,46 +1131,70 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
         enum_combo(
             ui,
             "Dithering",
-            dither_name(app.config.dithering_algorithm),
+            dither_name(&app.config.dithering_algorithm),
             |ui, v| {
-                ui.selectable_value(v, DitheringAlgorithm::None, t!("Ninguno"));
-                ui.selectable_value(v, DitheringAlgorithm::NearestNeighbour, "Nearest Neighbour");
-                ui.selectable_value(v, DitheringAlgorithm::Linear, "Linear");
-                ui.selectable_value(v, DitheringAlgorithm::FloydSteinberg, "Floyd–Steinberg");
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::None,
+                    dither_name(&DitheringAlgorithm::None),
+                );
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::NearestNeighbour,
+                    dither_name(&DitheringAlgorithm::NearestNeighbour),
+                );
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::Linear,
+                    dither_name(&DitheringAlgorithm::Linear),
+                );
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::FloydSteinberg,
+                    dither_name(&DitheringAlgorithm::FloydSteinberg),
+                );
                 ui.selectable_value(
                     v,
                     DitheringAlgorithm::FloydSteinbergAlpha,
-                    "Floyd–Steinberg + alpha",
+                    dither_name(&DitheringAlgorithm::FloydSteinbergAlpha),
                 );
-                ui.selectable_value(v, DitheringAlgorithm::Atkinson, "Atkinson");
-                ui.selectable_value(v, DitheringAlgorithm::AtkinsonAlpha, "Atkinson + alpha");
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::Atkinson,
+                    dither_name(&DitheringAlgorithm::Atkinson),
+                );
+                ui.selectable_value(
+                    v,
+                    DitheringAlgorithm::AtkinsonAlpha,
+                    dither_name(&DitheringAlgorithm::AtkinsonAlpha),
+                );
             },
             &mut app.config.dithering_algorithm,
         );
         enum_combo(
             ui,
             "Transparencia",
-            alpha_handling_name(app.config.alpha_handling),
+            alpha_handling_name(&app.config.alpha_handling),
             |ui, v| {
                 ui.selectable_value(
                     v,
                     AlphaHandling::KeepTransparentPixels,
-                    t!("Conservar píxeles"),
+                    alpha_handling_name(&AlphaHandling::KeepTransparentPixels),
                 );
                 ui.selectable_value(
                     v,
                     AlphaHandling::ClearTransparentPixels,
-                    "Limpiar transparentes",
+                    alpha_handling_name(&AlphaHandling::ClearTransparentPixels),
                 );
                 ui.selectable_value(
                     v,
                     AlphaHandling::ReduceBorderArtifacts,
-                    "Reducir bordes (bleeding)",
+                    alpha_handling_name(&AlphaHandling::ReduceBorderArtifacts),
                 );
                 ui.selectable_value(
                     v,
                     AlphaHandling::PremultiplyAlpha,
-                    t!("Premultiplicar alpha"),
+                    alpha_handling_name(&AlphaHandling::PremultiplyAlpha),
                 );
             },
             &mut app.config.alpha_handling,
@@ -1114,42 +1202,50 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
         enum_combo(
             ui,
             t!("Escalado de variantes"),
-            app.config.scale_mode.as_str(),
+            scale_mode_name(&app.config.scale_mode),
             |ui, v| {
-                ui.selectable_value(v, ScaleMode::Smooth, t!("Suave (bilineal)"));
-                ui.selectable_value(v, ScaleMode::Fast, t!("Rápido (vecino más cercano)"));
-                ui.selectable_value(v, ScaleMode::Scale2x, "Scale2x (2x)");
-                ui.selectable_value(v, ScaleMode::Scale3x, "Scale3x (3x)");
-                ui.selectable_value(v, ScaleMode::Scale4x, "Scale4x (4x)");
-                ui.selectable_value(v, ScaleMode::Eagle, "Eagle (2x)");
+                ui.selectable_value(v, ScaleMode::Smooth, scale_mode_name(&ScaleMode::Smooth));
+                ui.selectable_value(v, ScaleMode::Fast, scale_mode_name(&ScaleMode::Fast));
+                ui.selectable_value(v, ScaleMode::Scale2x, scale_mode_name(&ScaleMode::Scale2x));
+                ui.selectable_value(v, ScaleMode::Scale3x, scale_mode_name(&ScaleMode::Scale3x));
+                ui.selectable_value(v, ScaleMode::Scale4x, scale_mode_name(&ScaleMode::Scale4x));
+                ui.selectable_value(v, ScaleMode::Eagle, scale_mode_name(&ScaleMode::Eagle));
             },
             &mut app.config.scale_mode,
         );
         enum_combo(
             ui,
             t!("Formato de publicación"),
-            app.config.gpu_format.as_str(),
+            gpu_format_name(&app.config.gpu_format),
             |ui, v| {
-                ui.selectable_value(v, GpuFormat::Png, "PNG");
-                ui.selectable_value(v, GpuFormat::Png8, t!("PNG-8 (indexado)"));
-                ui.selectable_value(v, GpuFormat::Jpg, "JPG");
-                ui.selectable_value(v, GpuFormat::WebP, "WebP");
-                ui.selectable_value(v, GpuFormat::Bmp, "BMP");
-                ui.selectable_value(v, GpuFormat::Tga, "TGA");
-                ui.selectable_value(v, GpuFormat::Tiff, "TIFF");
-                ui.selectable_value(v, GpuFormat::Dds, "DDS");
+                ui.selectable_value(v, GpuFormat::Png, gpu_format_name(&GpuFormat::Png));
+                ui.selectable_value(v, GpuFormat::Png8, gpu_format_name(&GpuFormat::Png8));
+                ui.selectable_value(v, GpuFormat::Jpg, gpu_format_name(&GpuFormat::Jpg));
+                ui.selectable_value(v, GpuFormat::WebP, gpu_format_name(&GpuFormat::WebP));
+                ui.selectable_value(v, GpuFormat::Bmp, gpu_format_name(&GpuFormat::Bmp));
+                ui.selectable_value(v, GpuFormat::Tga, gpu_format_name(&GpuFormat::Tga));
+                ui.selectable_value(v, GpuFormat::Tiff, gpu_format_name(&GpuFormat::Tiff));
+                ui.selectable_value(v, GpuFormat::Dds, gpu_format_name(&GpuFormat::Dds));
                 super::separador(ui);
-                ui.selectable_value(v, GpuFormat::Astc4x4, "ASTC 4x4");
-                ui.selectable_value(v, GpuFormat::Etc2Rgba, "ETC2 RGBA (ktx)");
-                ui.selectable_value(v, GpuFormat::Etc1, "ETC1 (pkm)");
-                ui.selectable_value(v, GpuFormat::Etc1Ktx, t!("ETC1 en KTX (ktx)"));
-                ui.selectable_value(v, GpuFormat::Pvrtc4Bpp, "PVRTC 4BPP (pvr)");
-                ui.selectable_value(v, GpuFormat::Basis, "Basis (basis)");
+                ui.selectable_value(v, GpuFormat::Astc4x4, gpu_format_name(&GpuFormat::Astc4x4));
+                ui.selectable_value(
+                    v,
+                    GpuFormat::Etc2Rgba,
+                    gpu_format_name(&GpuFormat::Etc2Rgba),
+                );
+                ui.selectable_value(v, GpuFormat::Etc1, gpu_format_name(&GpuFormat::Etc1));
+                ui.selectable_value(v, GpuFormat::Etc1Ktx, gpu_format_name(&GpuFormat::Etc1Ktx));
+                ui.selectable_value(
+                    v,
+                    GpuFormat::Pvrtc4Bpp,
+                    gpu_format_name(&GpuFormat::Pvrtc4Bpp),
+                );
+                ui.selectable_value(v, GpuFormat::Basis, gpu_format_name(&GpuFormat::Basis));
                 super::separador(ui);
-                ui.selectable_value(v, GpuFormat::Zktx, t!("KTX con zlib (zktx)"));
-                ui.selectable_value(v, GpuFormat::Ktx2, t!("KTX2 sin comprimir (ktx2)"));
-                ui.selectable_value(v, GpuFormat::Pvr3Gz, t!("PVR3 en gzip (pvr.gz)"));
-                ui.selectable_value(v, GpuFormat::Pvr3Ccz, t!("PVR3 en CCZ (pvr.ccz)"));
+                ui.selectable_value(v, GpuFormat::Zktx, gpu_format_name(&GpuFormat::Zktx));
+                ui.selectable_value(v, GpuFormat::Ktx2, gpu_format_name(&GpuFormat::Ktx2));
+                ui.selectable_value(v, GpuFormat::Pvr3Gz, gpu_format_name(&GpuFormat::Pvr3Gz));
+                ui.selectable_value(v, GpuFormat::Pvr3Ccz, gpu_format_name(&GpuFormat::Pvr3Ccz));
             },
             &mut app.config.gpu_format,
         );
@@ -1284,13 +1380,13 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
             enum_combo(
                 ui,
                 "Modo DXT",
-                app.config.dxt_mode.as_str(),
+                dxt_mode_name(&app.config.dxt_mode),
                 |ui, v| {
-                    ui.selectable_value(v, DxtMode::Linear, t!("DXT_LINEAR (error uniforme)"));
+                    ui.selectable_value(v, DxtMode::Linear, dxt_mode_name(&DxtMode::Linear));
                     ui.selectable_value(
                         v,
                         DxtMode::Perceptual,
-                        t!("DXT_PERCEPTUAL (pondera la luminancia)"),
+                        dxt_mode_name(&DxtMode::Perceptual),
                     );
                 },
                 &mut app.config.dxt_mode,
@@ -1684,19 +1780,19 @@ fn strategy_display(s: PackingStrategy, guillotine: bool) -> String {
     }
 }
 
-fn trim_mode_name(t: TrimMode) -> &'static str {
+fn trim_mode_name(t: &TrimMode) -> &'static str {
     match t {
-        TrimMode::None => "None",
+        TrimMode::None => t!("None (sin recorte)"),
         TrimMode::Trim => "Trim",
         TrimMode::CropKeepPos => t!("Crop, conservar posición"),
         TrimMode::Crop => t!("Crop, fijar en 0/0"),
-        TrimMode::Polygon => "Polygon",
+        TrimMode::Polygon => t!("Polygon (mallas)"),
     }
 }
 
-fn dither_name(d: DitheringAlgorithm) -> &'static str {
+fn dither_name(d: &DitheringAlgorithm) -> &'static str {
     match d {
-        DitheringAlgorithm::None => "Ninguno",
+        DitheringAlgorithm::None => t!("Ninguno"),
         DitheringAlgorithm::NearestNeighbour => "Nearest Neighbour",
         DitheringAlgorithm::Linear => "Linear",
         DitheringAlgorithm::FloydSteinberg => "Floyd–Steinberg",
@@ -1706,12 +1802,116 @@ fn dither_name(d: DitheringAlgorithm) -> &'static str {
     }
 }
 
-fn alpha_handling_name(a: AlphaHandling) -> &'static str {
+fn alpha_handling_name(a: &AlphaHandling) -> &'static str {
     match a {
         AlphaHandling::KeepTransparentPixels => t!("Conservar píxeles"),
-        AlphaHandling::ClearTransparentPixels => "Limpiar transparentes",
-        AlphaHandling::ReduceBorderArtifacts => "Reducir bordes (bleeding)",
-        AlphaHandling::PremultiplyAlpha => "Premultiplicar alpha",
+        AlphaHandling::ClearTransparentPixels => t!("Limpiar transparentes"),
+        AlphaHandling::ReduceBorderArtifacts => t!("Reducir bordes (bleeding)"),
+        AlphaHandling::PremultiplyAlpha => t!("Premultiplicar alpha"),
+    }
+}
+
+// ------------------------------------------------------------------
+// Rótulos de los desplegables (re-review B9/B8).
+//
+// Cada uno es **la única fuente** de su texto: lo usan la entrada del
+// desplegable y el rótulo del control cerrado. Antes cada combo recibía
+// el `as_str()` del enum para lo cerrado y un `t!(…)` distinto para la
+// entrada, así que elegir «PNG-8 (indexado)» dejaba el control diciendo
+// «PNG8» y «Suave (bilineal)» diciendo «Smooth»: el texto cambiaba tras
+// la selección y ya no coincidía con ninguna entrada del menú.
+//
+// Los nombres técnicos que son iguales en los dos idiomas («RGBA8888»,
+// «Linear», «Trim»…) se quedan a pelo: no hay nada que traducir.
+// ------------------------------------------------------------------
+
+fn pack_mode_name(m: &PackMode) -> &'static str {
+    match m {
+        PackMode::Fast => t!("Fast (recorte simple)"),
+        PackMode::Good => t!("Good (búsqueda rápida)"),
+        PackMode::Best => t!("Best (búsqueda intensiva)"),
+    }
+}
+
+fn size_constraint_name(s: &SizeConstraint) -> &'static str {
+    match s {
+        SizeConstraint::AnySize => t!("Cualquiera"),
+        SizeConstraint::Pot => t!("POT (potencia de 2)"),
+        SizeConstraint::MultipleOf4 => t!("Múltiplo de 4"),
+        SizeConstraint::WordAligned => t!("Alineado a palabra"),
+    }
+}
+
+fn algorithm_name(a: &PackingAlgorithm) -> &'static str {
+    match a {
+        PackingAlgorithm::MaxRects => "MaxRects",
+        PackingAlgorithm::Guillotine => "Guillotine",
+        PackingAlgorithm::Grid => t!("Rejilla (Grid)"),
+        PackingAlgorithm::Basic => t!("Básico (Basic)"),
+        PackingAlgorithm::Manual => t!("Manual (arrastrar en la vista)"),
+        // No aparece en el desplegable (lo anuncia el rótulo cerrado como
+        // «Polygon (auto: trim mode Polygon)»), pero el match tiene que
+        // cubrirlo.
+        PackingAlgorithm::Polygon => "Polygon",
+    }
+}
+
+fn basic_sort_by_name(b: &BasicSortBy) -> &'static str {
+    match b {
+        BasicSortBy::Best => t!("Best (probar todas)"),
+        BasicSortBy::Name => t!("Nombre"),
+        BasicSortBy::Width => t!("Ancho"),
+        BasicSortBy::Height => t!("Alto"),
+        BasicSortBy::Area => t!("Área"),
+        BasicSortBy::Circumference => t!("Perímetro (circumference)"),
+    }
+}
+
+fn sort_order_name(o: &SortOrder) -> &'static str {
+    match o {
+        SortOrder::Ascending => t!("Ascendente"),
+        SortOrder::Descending => t!("Descendente"),
+    }
+}
+
+fn scale_mode_name(s: &ScaleMode) -> &'static str {
+    match s {
+        ScaleMode::Smooth => t!("Suave (bilineal)"),
+        ScaleMode::Fast => t!("Rápido (vecino más cercano)"),
+        ScaleMode::Scale2x => "Scale2x (2x)",
+        ScaleMode::Scale3x => "Scale3x (3x)",
+        ScaleMode::Scale4x => "Scale4x (4x)",
+        ScaleMode::Eagle => "Eagle (2x)",
+    }
+}
+
+fn gpu_format_name(g: &GpuFormat) -> &'static str {
+    match g {
+        GpuFormat::Png => "PNG",
+        GpuFormat::Png8 => t!("PNG-8 (indexado)"),
+        GpuFormat::Jpg => "JPG",
+        GpuFormat::WebP => "WebP",
+        GpuFormat::Bmp => "BMP",
+        GpuFormat::Tga => "TGA",
+        GpuFormat::Tiff => "TIFF",
+        GpuFormat::Dds => "DDS",
+        GpuFormat::Astc4x4 => "ASTC 4x4",
+        GpuFormat::Etc2Rgba => "ETC2 RGBA (ktx)",
+        GpuFormat::Etc1 => "ETC1 (pkm)",
+        GpuFormat::Etc1Ktx => t!("ETC1 en KTX (ktx)"),
+        GpuFormat::Pvrtc4Bpp => "PVRTC 4BPP (pvr)",
+        GpuFormat::Basis => "Basis (basis)",
+        GpuFormat::Zktx => t!("KTX con zlib (zktx)"),
+        GpuFormat::Ktx2 => t!("KTX2 sin comprimir (ktx2)"),
+        GpuFormat::Pvr3Gz => t!("PVR3 en gzip (pvr.gz)"),
+        GpuFormat::Pvr3Ccz => t!("PVR3 en CCZ (pvr.ccz)"),
+    }
+}
+
+fn dxt_mode_name(d: &DxtMode) -> &'static str {
+    match d {
+        DxtMode::Linear => t!("DXT_LINEAR (error uniforme)"),
+        DxtMode::Perceptual => t!("DXT_PERCEPTUAL (pondera la luminancia)"),
     }
 }
 
@@ -2400,6 +2600,65 @@ mod tests {
             despues.contains("Tamaño máximo"),
             "un clic en la cabecera despliega «Composición»: {despues}"
         );
+    }
+
+    /// B9: el desplegable cerrado enseña **el mismo** texto que la entrada
+    /// que se eligió. Antes el control recibía el `as_str()` del enum y la
+    /// entrada un `t!(…)` distinto, así que elegir «PNG-8 (indexado)»
+    /// dejaba el control diciendo «PNG8» y «Suave (bilineal)» diciendo
+    /// «Smooth»: el texto cambiaba tras la selección y ya no coincidía con
+    /// ninguna entrada del menú.
+    #[test]
+    fn el_desplegable_cerrado_ensena_el_texto_de_la_entrada_elegida() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.config.gpu_format = GpuFormat::Png8;
+        app.config.scale_mode = ScaleMode::Smooth;
+        app.config.alpha_handling = AlphaHandling::ClearTransparentPixels;
+
+        // Un clic de verdad en la cabecera de la sección: con las secciones
+        // plegadas esos controles no se maquetan. El cuerpo recién abierto
+        // sigue midiendo con la altura que tenía cerrado en el propio frame
+        // del clic, así que deja pasar frames en hueco hasta que se asienta.
+        let primera = ajustes_frame(&mut app, &ctx);
+        let donde = crate::testing::textos_pintados(&primera)
+            .iter()
+            .find(|(texto, _, _)| texto.trim() == "Procesamiento")
+            .map(|(_, rect, _)| rect.center())
+            .expect("la cabecera «Procesamiento» se pinta");
+        let boton = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ajustes_con_eventos(
+            &mut app,
+            &ctx,
+            vec![egui::Event::PointerMoved(donde), boton(donde, true)],
+        );
+        let _ = ajustes_con_eventos(&mut app, &ctx, vec![boton(donde, false)]);
+        let _ = ajustes_frame(&mut app, &ctx);
+        let salida = ajustes_frame(&mut app, &ctx);
+        let vistos: Vec<String> = crate::testing::textos_pintados(&salida)
+            .iter()
+            .map(|(texto, _, _)| texto.trim().to_string())
+            .collect();
+
+        for (entrada, crudo) in [
+            ("PNG-8 (indexado)", "PNG8"),
+            ("Suave (bilineal)", "Smooth"),
+            ("Limpiar transparentes", "ClearTransparentPixels"),
+        ] {
+            assert!(
+                vistos.iter().any(|t| t == entrada),
+                "el control cerrado debe decir {entrada:?}: {vistos:?}"
+            );
+            assert!(
+                !vistos.iter().any(|t| t == crudo),
+                "el control cerrado sigue diciendo el as_str() {crudo:?}: {vistos:?}"
+            );
+        }
     }
 
     /// I3: «Limpiar» no sirve de nada si no está donde se pueda tocar: en

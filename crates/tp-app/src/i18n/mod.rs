@@ -253,6 +253,11 @@ mod tests {
         "shortcut_text",
         "checkbox",
         "menu_button",
+        // Las entradas de un desplegable: `selectable_value(v, X, "…")`
+        // pinta su tercer argumento y el barrido no lo veía —re-review B8.
+        // El argumento no empieza por cadena, así que va por el caso del
+        // «argumento entero», que es el que mira si una macro lo traduce.
+        "selectable_value",
     ];
 
     /// Constructores que también pintan texto, sin el punto delante:
@@ -318,7 +323,35 @@ mod tests {
     /// o «Zoom» y los separadores «x»/«y» de las dimensiones): no merecen
     /// entrada en la tabla y el test de arriba los deja pasar.
     const UI_IGUALES: &[&str] = &[
-        "FPS", "Zoom", "x", "y", "Ctrl + O", "Ctrl + S", "Ctrl + Z", "Ctrl + Q", "F1", "F",
+        "FPS",
+        "Zoom",
+        "x",
+        "y",
+        "Ctrl + O",
+        "Ctrl + S",
+        "Ctrl + Z",
+        "Ctrl + Q",
+        "F1",
+        "F",
+        // Entradas de un desplegable que se leen igual en los dos idiomas:
+        // nombres técnicos (RGBA8888, PngQuant High, Guillotine, Linear…),
+        // pestañas (Log, Sprites) y los idiomas, que cada uno enseña el
+        // suyo —«Español» en español, «English» en inglés—.
+        "RGBA8888",
+        "RGBA4444",
+        "RGB565",
+        "PngQuant Low",
+        "PngQuant Medium",
+        "PngQuant High",
+        "Linear",
+        "Nearest",
+        "BottomLeft",
+        "ContactPoint",
+        "Guillotine (legacy)",
+        "Español",
+        "English",
+        "Log",
+        "Sprites",
     ];
 
     /// El test `cada_clave_en_uso_tiene_traduccion` solo mira lo que ya pasa
