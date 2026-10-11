@@ -161,14 +161,20 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     }
 
     // Zoom de teclado (sin modificadores, como en Figma/Photoshop):
-    // +/- acercan y alejan, 0 restaura 1:1 y F encuadra.
+    // +/- acercan y alejan, 0 restaura 1:1 y F encuadra. Mientras el foco
+    // está en un widget —el filtro, una ruta, un DragValue— la tecla es
+    // del widget: una «f» escrita en «Filtrar sprites…» no debe
+    // reencuadrar el atlas entero (re-review A1). Es la misma guarda que
+    // ya llevan Ctrl+Z (más arriba) y «?», y la que la propia ayuda
+    // promete (`shortcuts.rs`): si no, la letra se escribe Y dispara.
+    let escribiendo = ctx.wants_keyboard_input();
     let (zoom_in, zoom_out, zoom_reset, zoom_fit) = ctx.input(|i| {
         let blocked = i.modifiers.ctrl || i.modifiers.command || i.modifiers.alt;
         (
-            !blocked && i.key_pressed(egui::Key::Equals),
-            !blocked && i.key_pressed(egui::Key::Minus),
-            !blocked && i.key_pressed(egui::Key::Num0),
-            !blocked && i.key_pressed(egui::Key::F),
+            !blocked && !escribiendo && i.key_pressed(egui::Key::Equals),
+            !blocked && !escribiendo && i.key_pressed(egui::Key::Minus),
+            !blocked && !escribiendo && i.key_pressed(egui::Key::Num0),
+            !blocked && !escribiendo && i.key_pressed(egui::Key::F),
         )
     });
     if zoom_in {
@@ -274,6 +280,17 @@ mod tests {
         )
     }
 
+    /// Tecla suelta, sin modificadores (el formato de las pruebas de zoom).
+    fn tecla(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
     fn pide(out: &egui::FullOutput, cmd: egui::ViewportCommand) -> bool {
         out.viewport_output
             .values()
@@ -350,4 +367,66 @@ mod tests {
             "el foco se queda en el filtro, no parpadea"
         );
     }
+
+    /// Re-review A1: con el foco en un campo, las teclas sueltas de zoom
+    /// (+, −, 0 y F) son del campo. En la app real, escribir una «f» en
+    /// «Filtrar sprites…» metía la letra en el campo Y devolvía el atlas
+    /// a 1:1 en el mismo frame.
+    #[test]
+    fn mientras_escribes_en_un_campo_el_zoom_no_se_mueve() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.zoom = 1.0;
+        app.auto_fit = true;
+
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("campo_de_filtro")));
+        assert!(ctx.wants_keyboard_input(), "el campo tiene el foco");
+
+        let _ = frame(
+            &mut app,
+            &ctx,
+            egui::Modifiers::NONE,
+            vec![tecla(egui::Key::Equals), tecla(egui::Key::F)],
+        );
+
+        assert_eq!(
+            app.zoom, 1.0,
+            "ni «+» ni «F» deben tocar el zoom mientras se escribe en un campo"
+        );
+        assert!(app.auto_fit, "tampoco deben apagar el encuadre automático");
+    }
+
+    /// Control del test anterior: sin campo enfocado el zoom de teclado
+    /// sigue funcionando. Sin esta prueba, un «return» incondicional en
+    /// el grupo de zoom pasaría la otra por el motivo equivocado.
+    #[test]
+    fn sin_foco_el_zoom_de_teclado_sigue_funcionando() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.zoom = 1.0;
+
+        let _ = frame(
+            &mut app,
+            &ctx,
+            egui::Modifiers::NONE,
+            vec![tecla(egui::Key::Equals)],
+        );
+        assert_ne!(
+            app.zoom, 1.0,
+            "«+» debe acercar cuando ningún widget tiene el foco"
+        );
+
+        app.auto_fit = true;
+        let _ = frame(
+            &mut app,
+            &ctx,
+            egui::Modifiers::NONE,
+            vec![tecla(egui::Key::F)],
+        );
+        assert!(
+            !app.auto_fit,
+            "«F» debe reencuadrar cuando ningún widget tiene el foco"
+        );
+    }
+
 }
