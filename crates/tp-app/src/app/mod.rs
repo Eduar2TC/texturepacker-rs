@@ -369,7 +369,15 @@ pub struct App {
 fn progreso_en_la_tira(ui: &mut egui::Ui, progreso: &tp_core::progress::Progress) {
     let (cargadas, ficheros) = progreso.loaded();
     separador(ui);
-    ui.label(egui::RichText::new(t!("Empaquetando… {}/{}", cargadas, ficheros)).weak());
+    // El denominador no se conoce hasta que la ingesta termina de descubrir
+    // los ficheros; enseñar «0/0» en ese hueco se lee como «no sabe cuánto
+    // hay», así que hasta entonces sólo se pinta el rótulo (re-review B2).
+    let texto = if ficheros == 0 {
+        t!("Empaquetando…").to_string()
+    } else {
+        t!("Empaquetando… {}/{}", cargadas, ficheros).to_string()
+    };
+    ui.label(egui::RichText::new(texto).weak());
 
     let (rect, _) = ui.allocate_exact_size(egui::vec2(120.0, 6.0), egui::Sense::hover());
     let pintor = ui.painter();

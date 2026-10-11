@@ -205,6 +205,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Publicando desde {} ...", "Publishing from {} ..."),
     ("Empaquetado fallido: {}", "Pack failed: {}"),
     ("Empaquetando… {}/{}", "Packing… {}/{}"),
+    ("Empaquetando…", "Packing…"),
     ("{} sprite(s) restaurado(s).", "{} sprite(s) restored."),
     ("{}: bordes detectados {}", "{}: borders detected {}"),
     ("No se pudo guardar: {}", "Could not save: {}"),

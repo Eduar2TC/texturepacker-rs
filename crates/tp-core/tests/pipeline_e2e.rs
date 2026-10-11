@@ -3117,6 +3117,102 @@ fn la_corrida_plana_llega_al_fondo_de_la_barra() {
     );
 }
 
+/// La barra, muestreada a lo largo de una corrida real: **nunca puede bajar**.
+///
+/// Es el invariante que el módulo de progreso promete y que la re-review pilló
+/// roto (B2): la primera fase se anunciaba sin total, `fraction()` interpretaba
+/// «sin total» como «fase terminada» y la barra arrancaba en el borde de salida
+/// del primer tramo (35 %); en cuanto la ingesta descubría los ficheros y
+/// fijaba el total, la fracción caía de golpe a 0. Un salto de 35 % a 0 en el
+/// primer segundo es exactamente lo que el usuario lee como «esta app está
+/// rota», y va en contra de lo que el propio módulo documenta.
+///
+/// El muestreo va en un hilo aparte con cortes de CPU: la corrida escribe el
+/// progreso en otro hilo y aquí sólo se lee, así que el orden relajado basta.
+/// Dos comprobaciones: la barra nunca baja respecto de la muestra anterior, y
+/// al terminar la corrida se queda en el borde (fracción 1) — que es lo que
+/// la corrida garantiza tras su último `begin_phase` + `add`.
+#[test]
+fn la_barra_nunca_va_hacia_atras_durante_una_corrida() {
+    let fx = Fixture::new("progreso_monotono");
+    let input = make_input_dir(&fx.dir, "in");
+    let output = fx.dir.join("out");
+    for i in 0..12 {
+        write_png(
+            &input.join(format!("s{i}.png")),
+            8,
+            8,
+            [(i * 20) as u8, 90, 200, 255],
+        );
+    }
+    let cfg = ProjectConfig {
+        input_directory: input.clone(),
+        output_directory: output.clone(),
+        max_texture_size: 64,
+        template_format: TemplateFormat::Json,
+        ..ProjectConfig::default()
+    };
+
+    // `Progress` sólo contiene átomos, así que se comparte entre hilos sin
+    // más: un `Arc` resuelve que el hilo lea mientras la corrida escribe en
+    // él desde este ámbito.
+    let progreso = std::sync::Arc::new(Progress::new());
+    // El muestreo va en un hilo aparte y se mantiene vivo **hasta que la
+    // corrida termina**: un bucle de iteraciones fijas se agota en un
+    // microsegundo, antes de que la corrida empiece, y todas las muestras
+    // saldrían 0 sin probar nada. `yield_now` es imprescindible: sin él el
+    // hilo acapara la CPU y el pool de rayon (work-stealing, cooperativo)
+    // no llega a ejecutar la corrida.
+    let (muestras, corrida) = std::thread::scope(|salto| {
+        let terminado = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let bandera = terminado.clone();
+        let vista = progreso.clone();
+        let hilo = salto.spawn(move || {
+            let mut muestras = Vec::new();
+            while !bandera.load(std::sync::atomic::Ordering::Relaxed) {
+                muestras.push(vista.fraction());
+                std::thread::yield_now();
+                if muestras.len() >= 2_000_000 {
+                    break; // red de seguridad: la corrida no se detiene
+                }
+            }
+            muestras.push(vista.fraction());
+            muestras
+        });
+        let corrida = pipeline::run_with_progress(&cfg, &progreso);
+        terminado.store(true, std::sync::atomic::Ordering::Relaxed);
+        (hilo.join().expect("el muestreo debe terminar"), corrida)
+    });
+    corrida.expect("la corrida debe terminar");
+    // La barra no puede retroceder: ninguna muestra por debajo de la
+    // anterior. Un empate es posible (la barra puede estar quieta), un
+    // paso atrás no.
+    let mut maximo = 0.0f32;
+    let mut transiciones: Vec<f32> = Vec::new();
+    for (i, &m) in muestras.iter().enumerate() {
+        if transiciones
+            .last()
+            .is_none_or(|t: &f32| (*t - m).abs() > 1e-6)
+        {
+            transiciones.push(m);
+        }
+        assert!(
+            m >= maximo - 1e-6,
+            "la barra retrocedió en la muestra {i}: de {maximo} a {m}; \
+             transiciones: {transiciones:?}"
+        );
+        maximo = maximo.max(m);
+    }
+    // La corrida avanza de verdad (no se queda clavada en 0) y la última
+    // fase la cierra en el borde: el valor final es el que queda tras el
+    // último `begin_phase` + `add`, y es 1.0.
+    assert_eq!(
+        progreso.fraction(),
+        1.0,
+        "la corrida terminada debe dejar la barra en el borde"
+    );
+}
+
 /// La corrida por grupos tiene otra escalera —la ingesta de arriba y un
 /// tramo repartido entre los grupos— y también tiene que cerrar. Los grupos
 /// sin sprites no se ejecutan y no deben contar como trabajos pendientes.

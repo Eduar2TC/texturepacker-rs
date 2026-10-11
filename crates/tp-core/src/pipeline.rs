@@ -128,7 +128,13 @@ fn execute(
         len: Segment::FULL.len - tramos[0].start - tramos[0].len,
     };
     if let Some(prog) = progreso {
-        // El total de la ingesta lo fija ésta al descubrir los ficheros.
+        // El total lo fija la ingesta al descubrir los ficheros
+        // (`set_total`); aquí la fase se anuncia sin trabajos y, hasta
+        // entonces, `fraction()` la tiene **parada en su propio borde de
+        // entrada**, no en el de salida (re-review B2). Antes se saltaba
+        // al borde de salida (35 %) y en cuanto llegaba el total caía a
+        // 0: la barra arrancaba subiendo y retrocedía, rompiendo el
+        // invariante de `progress.rs` (la barra nunca baja).
         prog.begin_phase(tramos[0], 0);
     }
 
@@ -362,6 +368,11 @@ fn execute(
     // Fase de composición: cinco sub-etapas sin trabajo por sprite que
     // avisar (dentro del empaquetador no hay gancho), así que cada etapa
     // cerrada es un trabajo de la barra.
+    //
+    // El recuento va aquí y no en `0`: la barra sólo espera en el borde de
+    // entrada cuando una fase pasa `0` porque aún no sabe cuánto hará
+    // (re-review B2). Esta fase lo sabe desde el principio, y con `0` se
+    // quedaría clavada al empezar.
     if let Some(prog) = progreso {
         prog.begin_phase(tramos[2], 5);
     }

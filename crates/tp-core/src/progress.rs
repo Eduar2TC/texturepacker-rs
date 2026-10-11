@@ -25,7 +25,7 @@
 //! El objeto vive en un `Arc`: lo crea la interfaz al lanzar la publicación,
 //! lo lleva el hilo de la corrida y la tira lo lee mientras esté puesto.
 
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 
 /// Porción de la barra: `len` milésimas empezando en la milésima `start`.
 ///
@@ -86,9 +86,19 @@ pub struct Progress {
     len: AtomicU32,
     /// Trabajos terminados de la fase actual.
     done: AtomicUsize,
-    /// Trabajos que tiene la fase actual. Con0 la fase se da por hecha en
-    /// cuanto arranca (una fase sin variantes, por ejemplo).
+    /// Trabajos que tiene la fase actual.
     total: AtomicUsize,
+    /// `true` cuando el total de la fase ya se conoce; mientras es `false`
+    /// la fase está anunciada pero sin contar (las dos primeras descubren su
+    /// total al escanear los ficheros y al planificar las variantes).
+    ///
+    /// Es la diferencia entre «esta fase no tiene nada que hacer» (total0 y
+    /// conocido: la barra cierra el tramo de un golpe) y «esta fase aún no
+    /// sabe cuánto hará» (total0 sin conocer: la barra se queda parada en el
+    /// borde de entrada a la espera). Sin distinguirlas la barra arrancaba
+    /// subiendo al borde de salida del primer tramo (35 %) y, en cuanto la
+    /// ingesta fijaba el total, caía de golpe a 0 (re-review B2).
+    conocido: AtomicBool,
     /// Imágenes que la ingesta ya ha cargado (numerador del contador).
     loaded: AtomicUsize,
     /// Imágenes que la ingesta ha descubierto (denominador del contador).
@@ -104,17 +114,28 @@ impl Progress {
     ///
     /// El tramo se fija aquí y no se mueve: los de una corrida son contiguos,
     /// así que esta llamada sólo puede hacer avanzar la barra.
+    ///
+    /// `items == 0` se interpreta como «esta fase todavía no sabe cuántos
+    /// trabajos tiene»: la barra queda parada en el borde de entrada del
+    /// tramo hasta que [`Progress::set_total`] la llene (re-review B2).
+    /// Quien ya conoce su recuento desde el principio debe pasarlo aquí y
+    /// no llamar a `set_total`.
     pub fn begin_phase(&self, segment: Segment, items: usize) {
         self.start.store(segment.start, Ordering::Relaxed);
         self.len.store(segment.len, Ordering::Relaxed);
         self.total.store(items, Ordering::Relaxed);
         self.done.store(0, Ordering::Relaxed);
+        self.conocido.store(items > 0, Ordering::Relaxed);
     }
 
     /// Fija el total de trabajos de la fase cuando se conoce tarde: la
     /// ingesta sólo sabe cuántas imágenes hay al terminar el descubrimiento.
+    ///
+    /// Hasta esta llamada la fase se queda **parada en el borde de entrada**
+    /// de su tramo, sin avanzar ni retroceder (re-review B2).
     pub fn set_total(&self, total: usize) {
         self.total.store(total, Ordering::Relaxed);
+        self.conocido.store(true, Ordering::Relaxed);
     }
 
     /// Trabajos terminados en la fase actual. Pasarse del total no se nota:
@@ -143,15 +164,21 @@ impl Progress {
 
     /// Fracción0..1 de la corrida entera.
     ///
-    /// Con la fase sin total se da por hecha; sin ninguna fase anunciada la
-    /// barra está a cero (el tramo todavía no ocupa nada).
+    /// Una fase cuyo total aún no se conoce queda **parada en el borde de
+    /// entrada** de su tramo: no avanza, pero tampoco retrocede. Es lo que
+    /// impide el salto de 35 % a 0 del que adolecía el código anterior
+    /// (re-review B2), que trataba «total sin conocer» como «fase hecha».
     pub fn fraction(&self) -> f32 {
         let total = self.total.load(Ordering::Relaxed);
-        let done = self.done.load(Ordering::Relaxed).min(total);
-        let inside = if total == 0 {
-            1.0
+        let inside = if !self.conocido.load(Ordering::Relaxed) {
+            0.0
         } else {
-            done as f32 / total as f32
+            let done = self.done.load(Ordering::Relaxed).min(total);
+            if total == 0 {
+                1.0
+            } else {
+                done as f32 / total as f32
+            }
         };
         let start = self.start.load(Ordering::Relaxed) as f32;
         let len = self.len.load(Ordering::Relaxed) as f32;
@@ -220,10 +247,21 @@ mod tests {
         let fin_ingesta = mira("ingesta terminada".into());
         assert!((fin_ingesta - 0.35).abs() < 1e-6);
 
-        // Fase sin trabajos: se da por hecha y la barra salta a su borde.
+        // Fase sin trabajos: se anuncia con0 y se queda parada en su
+        // borde de entrada hasta que el total la llene (B2). Sólo entonces
+        // avanza, y nunca retrocede.
         progreso.begin_phase(tramos[1], 0);
-        let sin_variantes = mira("sin variantes que correr".into());
-        assert!((sin_variantes - 0.45).abs() < 1e-6);
+        let sin_variantes = mira("anunciada sin total".into());
+        assert!((sin_variantes - 0.35).abs() < 1e-6);
+        progreso.set_total(10);
+        let total_fijado = mira("con el total fijado".into());
+        assert!(
+            total_fijado >= sin_variantes,
+            "fijar el total no puede hacer bajar la barra"
+        );
+        progreso.add(10);
+        let fin_variantes = mira("variantes terminadas".into());
+        assert!((fin_variantes - 0.45).abs() < 1e-6);
 
         progreso.begin_phase(tramos[2], 4);
         progreso.add(2);
@@ -255,18 +293,25 @@ mod tests {
     }
 
     /// El total de la ingesta sólo se sabe al descubrir los ficheros, que
-    /// es después de haber anunciado la fase. Hasta entonces no hay
-    /// trabajos y la fase no debe quedarse muerta en el 0 %.
+    /// es después de haber anunciado la fase. Hasta entonces la barra se
+    /// queda **parada en el borde de entrada** del tramo, sin avanzar ni
+    /// retroceder: si saltara al borde de salida (como hacía antes), fijar
+    /// el total la haría caer de golpe, y la barra no puede ir hacia atrás.
     #[test]
-    fn el_total_que_se_conoce_tarde_mueve_la_barra() {
+    fn el_total_que_se_conoce_tarde_no_hace_bajar_la_barra() {
         let progreso = Progress::new();
         progreso.begin_phase(Segment::FULL, 0);
         assert_eq!(
             progreso.fraction(),
-            1.0,
-            "una fase aún sin total se da por hecha"
+            0.0,
+            "una fase aún sin total se queda en su borde de entrada"
         );
         progreso.set_total(10);
+        assert_eq!(
+            progreso.fraction(),
+            0.0,
+            "fijar el total no puede hacer bajar la barra"
+        );
         progreso.add(4);
         assert!(
             (progreso.fraction() - 0.4).abs() < 1e-6,
