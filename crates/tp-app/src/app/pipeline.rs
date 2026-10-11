@@ -504,20 +504,28 @@ impl App {
     pub(super) fn start_pack(&mut self, force: bool) {
         self.commit_paths();
         self.parse_variants();
+        // Todos los desenlaces de una publicación van por `aviso` y no por
+        // `log`: son la respuesta al gesto, y el usuario tiene el ratón en
+        // el botón cuando las recibe (re-review B1). Los tres que siguen no
+        // arrancan ninguna corrida, así que sin el aviso en-situ pulsar
+        // «Publicar» no movía nada en pantalla y se leía como «está rota»;
+        // los otros dos —el resultado del hilo, bueno o malo— llegan
+        // segundos después, con el puntero ya lejos del botón, y el aviso
+        // se ancla entonces al pie de la ventana.
         if let Err(e) = self.config.validate() {
-            self.log(LogKind::Error, e.to_string());
+            self.aviso(LogKind::Error, e.to_string());
             return;
         }
         if self.config.input_directory.as_os_str().is_empty() && self.config.extra_inputs.is_empty()
         {
-            self.log(
+            self.aviso(
                 LogKind::Error,
                 t!("Selecciona un directorio de entrada o añade sprites.").into(),
             );
             return;
         }
         if !force && self.files_written && !self.snapshot_changed() {
-            self.log(
+            self.aviso(
                 LogKind::Info,
                 t!("Nada ha cambiado desde la última publicación; usa «Forzar publicación» para reescribir los ficheros.")
                     .into(),
@@ -586,7 +594,7 @@ impl App {
                 let total = out.result.total_sprites;
                 let aliases = out.result.alias_count;
                 let pages = out.pages.len();
-                self.log(
+                self.aviso(
                     LogKind::Info,
                     t!(
                         "Publicación completa: {} sprite(s) ({} alias(es)), {} página(s).",
@@ -608,7 +616,7 @@ impl App {
                 self.fit_zoom();
             }
             Err(e) => {
-                self.log(
+                self.aviso(
                     LogKind::Error,
                     t!("Empaquetado fallido: {}", crate::i18n::tr(&e.to_string())),
                 );
@@ -1539,6 +1547,95 @@ mod on_demand_tests {
             "el lienzo debe dejar de mostrar el estado vacío tras el drop"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+}
+
+#[cfg(test)]
+mod aviso_publicar_tests {
+    use super::*;
+
+    /// El texto del último aviso, si lo hay.
+    ///
+    /// Se lee del Log y no del struct: `aviso` registra allí exactamente lo
+    /// que pinta (aviso.rs:76), y `Aviso::texto` es privado.
+    fn ultimo_aviso(app: &App) -> Option<String> {
+        app.logs.last().map(|e| e.text.clone())
+    }
+
+    /// El recuadro en-situ está en pantalla.
+    ///
+    /// Ésta es la que distingue `aviso` de `log`: el Log se llena en los
+    /// dos casos (aviso.rs:76 lo registra), pero el recuadro que mira el
+    /// usuario con la mano todavía en el botón sólo lo levanta `aviso`.
+    fn hay_recuadro(app: &App) -> bool {
+        app.aviso.is_some()
+    }
+
+    /// Los tres desenlaces que no arrancan corrida se contestan en-situ
+    /// (re-review B1): el usuario pulsa «Publicar» y espera una respuesta
+    /// donde la tiene el ojo, no en el Log, que suele estar en otra
+    /// pestaña. Sin el aviso, «Nada ha cambiado» no movía nada en pantalla
+    /// y se leía como «el botón no hace nada».
+    #[test]
+    fn los_desenlaces_que_no_publican_se_avisan_en_situ() {
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+
+        // (a) Sin entrada: la configuración no puede publicar.
+        app.config.input_directory = std::path::PathBuf::new();
+        app.config.extra_inputs.clear();
+        app.aviso = None;
+        app.start_pack(false);
+        assert!(
+            app.running.is_none(),
+            "sin entrada no debe arrancar la corrida"
+        );
+        assert!(
+            hay_recuadro(&app),
+            "sin entrada el fallo debe verse en pantalla, no sólo en el Log"
+        );
+        assert!(
+            ultimo_aviso(&app).is_some_and(|t| t.contains("Selecciona un directorio")),
+            "sin entrada el aviso debe decir qué falta: {:?}",
+            ultimo_aviso(&app)
+        );
+
+        // (b) Nada cambiado desde la última publicación: sin «Forzar» no se
+        // reescribe, pero el gesto se contesta igualmente. Hace falta una
+        // entrada de verdad: el chequeo de «sin entrada» (a) va antes.
+        let entrada = std::env::temp_dir().join(format!("tp_b1_{}", std::process::id()));
+        std::fs::create_dir_all(&entrada).expect("tmp");
+        app.input_dir_text = entrada.display().to_string();
+        app.output_dir_text = std::env::temp_dir()
+            .join(format!("tp_b1_out_{}", std::process::id()))
+            .display()
+            .to_string();
+        app.commit_paths();
+        app.files_written = true;
+        app.packed_snapshot = Some(app.workspace_snapshot());
+        app.aviso = None;
+        app.start_pack(false);
+        assert!(
+            app.running.is_none(),
+            "sin cambios no debe reescribir los ficheros"
+        );
+        assert!(
+            hay_recuadro(&app),
+            "pulsar «Publicar» sin nada que hacer debe contestar en-situ (B1)"
+        );
+        assert!(
+            ultimo_aviso(&app).is_some_and(|t| t.contains("Nada ha cambiado")),
+            "el usuario debe enterarse de por qué no pasó nada: {:?}",
+            ultimo_aviso(&app)
+        );
+
+        // La fuerza sí publica: el aviso del «nada» no puede quedarse
+        // pisando el de la corrida que acaba de arrancar.
+        app.start_pack(true);
+        assert!(
+            app.running.is_some(),
+            "«Forzar publicación» debe arrancar la corrida"
+        );
     }
 }
 

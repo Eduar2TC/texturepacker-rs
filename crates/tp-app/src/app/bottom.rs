@@ -662,4 +662,46 @@ mod tests {
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
+
+    /// Un error dentro de un panel plegado no se ve: `log()` ya saltaba a la
+    /// pestaña Log, pero con el panel en banda de 22 px la pestaña es lo
+    /// único que hay y el mensaje queda oculto (re-review B1). El error
+    /// despliega el panel además de cambiar de pestaña.
+    #[test]
+    fn un_error_con_el_panel_plegado_lo_despliega() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.bottom_collapsed = true;
+        app.bottom_tab = BottomTab::Sprites;
+
+        app.log(LogKind::Error, "algo fue mal".into());
+
+        assert!(
+            !app.bottom_collapsed,
+            "el error debe desplegar el panel para que el mensaje se vea"
+        );
+        assert!(
+            app.bottom_tab == BottomTab::Log,
+            "y debe saltar a la pestaña que lo contiene"
+        );
+    }
+
+    /// Control del anterior: un Info no mueve ni el pliegue ni la pestaña.
+    /// Sin esta prueba, desplegar el panel en cualquier registro pasaría la
+    /// otra por el motivo equivocado.
+    #[test]
+    fn un_info_no_despliega_ni_salta_de_pestana() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.bottom_collapsed = true;
+        app.bottom_tab = BottomTab::Sprites;
+
+        app.log(LogKind::Info, "todo bien".into());
+
+        assert!(app.bottom_collapsed, "un Info deja el panel como estaba");
+        assert!(
+            app.bottom_tab == BottomTab::Sprites,
+            "y deja la pestaña donde el usuario la tenía"
+        );
+    }
 }
