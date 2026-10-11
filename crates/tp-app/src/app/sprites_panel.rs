@@ -278,12 +278,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
 
     match walk.action {
         Some(TreeAction::Select(path, toggle)) => apply_selection(app, path, toggle),
-        Some(TreeAction::Remove(path)) => {
-            let removed = app.remove_path(&path);
-            app.selected_paths.remove(&path);
-            app.aviso(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
-            app.after_workspace_change();
-        }
+        Some(TreeAction::Remove(path)) => app.remove_from_tree(&path),
         Some(TreeAction::RemoveSmart(dir)) => app.remove_smart_folder(&dir),
         Some(TreeAction::AssignIds(ids, sheet_index)) => {
             let name = app
@@ -1166,14 +1161,10 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                 });
             }
             if let Some(i) = remove {
-                let name = app.config.folder_groups[i].name.clone();
-                app.config.folder_groups.remove(i);
-                app.aviso(LogKind::Info, t!("Grupo «{}» eliminado.", name));
-                app.after_workspace_change();
+                app.delete_group(i);
             }
             if let Some(i) = clear {
-                app.config.folder_groups[i].sprites.clear();
-                app.after_workspace_change();
+                app.empty_group(i);
             }
             if let Some(i) = assign {
                 let moved = app.assign_selected_to_group(i);

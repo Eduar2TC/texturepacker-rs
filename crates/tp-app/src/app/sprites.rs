@@ -236,6 +236,25 @@ impl App {
         }
     }
 
+    /// Quita un sprite —o una carpeta entera— desde el árbol del panel.
+    ///
+    /// Un paso de deshacer por gesto, y sólo si el gesto quita algo
+    /// (re-review B4): el árbol borraba sin anotar nada, de modo que
+    /// `Ctrl+Z` aplicaba el paso anterior —el del gesto de antes—, que es
+    /// un deshacer peor que no tener.
+    pub(super) fn remove_from_tree(&mut self, path: &Path) {
+        self.anotar_deshacer();
+        let removed = self.remove_path(path);
+        if removed == 0 {
+            // Carpeta sin imágenes: el paso en blanco no debe consumir el
+            // primer `Ctrl+Z`.
+            self.desanotar_deshacer();
+        }
+        self.selected_paths.remove(path);
+        self.aviso(LogKind::Info, t!("{} sprite(s) quitado(s).", removed));
+        self.after_workspace_change();
+    }
+
     /// Drop a smart folder from `extra_inputs` (its files come back from disk
     /// the next time a project with that folder is opened).
     pub(super) fn remove_smart_folder(&mut self, dir: &Path) {
@@ -248,10 +267,14 @@ impl App {
             return;
         }
         let before = self.config.extra_inputs.len();
+        self.anotar_deshacer();
         self.config
             .extra_inputs
             .retain(|p| tp_core::ingest::normalize_path(p) != norm);
         if self.config.extra_inputs.len() == before {
+            // No estaba: el paso no debe quedarse en la pila consumiendo el
+            // primer Ctrl+Z (re-review B4).
+            self.desanotar_deshacer();
             return;
         }
         // Stale exclusions under the removed folder are meaningless now.
@@ -284,6 +307,7 @@ impl App {
         if count == 0 {
             return;
         }
+        self.anotar_deshacer();
         self.config.excluded_inputs.clear();
         self.aviso(LogKind::Info, t!("{} sprite(s) restaurado(s).", count));
         self.change_seq += 1;
@@ -292,6 +316,47 @@ impl App {
 
     pub(super) fn hidden_count(&self) -> usize {
         self.config.excluded_inputs.len()
+    }
+
+    /// Borra un grupo del proyecto: sus sprites vuelven a la hoja principal
+    /// por el reparto de `run_groups`.
+    pub(super) fn delete_group(&mut self, index: usize) {
+        let Some(g) = self.config.folder_groups.get(index) else {
+            return;
+        };
+        let name = g.name.clone();
+        self.anotar_deshacer();
+        self.config.folder_groups.remove(index);
+        self.aviso(LogKind::Info, t!("Grupo «{}» eliminado.", name));
+        self.after_workspace_change();
+    }
+
+    /// Vacía un grupo: sus sprites vuelven a la hoja principal.
+    ///
+    /// Era el único gesto destructivo de la app que no dejaba rastro
+    /// alguno —ni aviso ni paso de deshacer— (re-review B3/B4). Ahora
+    /// avisa con el nombre del grupo y con cuántos sprites devuelve, y
+    /// `Ctrl+Z` recupera la asignación.
+    pub(super) fn empty_group(&mut self, index: usize) {
+        let Some(g) = self.config.folder_groups.get_mut(index) else {
+            return;
+        };
+        if g.name.is_empty() || g.sprites.is_empty() {
+            return;
+        }
+        let name = g.name.clone();
+        let cuantos = g.sprites.len();
+        self.anotar_deshacer();
+        self.config.folder_groups[index].sprites.clear();
+        self.aviso(
+            LogKind::Info,
+            t!(
+                "Grupo «{}» vaciado: {} sprite(s) devuelto(s) a la hoja principal.",
+                name,
+                cuantos
+            ),
+        );
+        self.after_workspace_change();
     }
 
     /// Highlight a sprite from the preview/table and sync the sprites panel.

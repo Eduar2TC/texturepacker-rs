@@ -30,6 +30,15 @@ impl App {
         self.deshacer.push(self.config.clone());
     }
 
+    /// Quita el paso recién anotado, para cuando el gesto acaba **sin tocar
+    /// nada** (una carpeta vacía, un nombre ya excluido, un grupo que no
+    /// existe). Sin esto, el paso en blanco se consumiría con el primer
+    /// `Ctrl+Z` y parecería que el deshacer se saltaba un paso real
+    /// (re-review B4).
+    pub(super) fn desanotar_deshacer(&mut self) {
+        self.deshacer.pop();
+    }
+
     /// Deshace el último paso (`Ctrl+Z`). Sin pasos no hace nada: no es
     /// un error, simplemente no hay nada que deshacer.
     pub(super) fn deshacer(&mut self) {
@@ -239,6 +248,178 @@ mod tests {
             app.deshacer.first().map(|c| c.padding),
             Some(8),
             "los pasos más viejos son los que se caen primero"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Re-review B4: cinco gestos tocaban la configuración sin anotar
+    // instantánea. Como `deshacer()` hace un `pop()` ciego, `Ctrl+Z`
+    // aplicaba entonces el paso **anterior** —el del gesto de antes—: un
+    // deshacer imprevisible, peor que no tener.
+    // ------------------------------------------------------------------
+
+    /// Quitar un sprite desde el árbol anota su paso y lo recupera.
+    #[test]
+    fn el_arbol_quita_sprites_con_su_paso_de_deshacer() {
+        let (mut app, _ctx) = app();
+        let fantasma = std::path::Path::new("/tmp/tp_b4_fantasma.png");
+
+        app.remove_from_tree(fantasma);
+
+        assert_eq!(
+            app.config.excluded_inputs.len(),
+            1,
+            "el sprite queda excluido"
+        );
+        app.deshacer();
+        assert!(
+            app.config.excluded_inputs.is_empty(),
+            "Ctrl+Z recupera el sprite que quitó el árbol"
+        );
+    }
+
+    /// Una carpeta sin imágenes no quita nada, y su paso en blanco no debe
+    /// consumir el primer `Ctrl+Z`: parecería que el deshacer se saltaba
+    /// un paso real.
+    #[test]
+    fn una_carpeta_vacia_no_deja_un_paso_en_blanco() {
+        let (mut app, _ctx) = app();
+        // Sin anotar nada antes a propósito: si el gesto dejara un paso en
+        // blanco, `Ctrl+Z` lo aplicaría y tocaría esta misma exclusión.
+        app.config
+            .excluded_inputs
+            .push("/tmp/tp_b4_base.png".into());
+        let vacia = std::env::temp_dir().join(format!("tp_b4_vacia_{}", std::process::id()));
+        std::fs::create_dir_all(&vacia).expect("tmp");
+
+        app.remove_from_tree(&vacia);
+
+        assert_eq!(
+            app.deshacer.len(),
+            0,
+            "sin nada que quitar no debe quedar un paso en blanco"
+        );
+        app.deshacer();
+        assert_eq!(
+            app.config.excluded_inputs.len(),
+            1,
+            "Ctrl+Z no debe tocar nada: el gesto no quitó nada"
+        );
+        std::fs::remove_dir_all(&vacia).ok();
+    }
+
+    /// «Vaciar» un grupo avisaba de cero: era el único gesto destructivo
+    /// de la app sin rastro (re-review B3). Ahora avisa y se deshace.
+    #[test]
+    fn vaciar_un_grupo_avisa_y_es_deshacible() {
+        let (mut app, _ctx) = app();
+        app.config.folder_groups = vec![tp_core::config::FolderGroup {
+            name: "ui".into(),
+            sprites: vec!["a".into(), "b".into()],
+        }];
+
+        app.empty_group(0);
+
+        assert!(
+            app.config.folder_groups[0].sprites.is_empty(),
+            "el grupo queda vacío"
+        );
+        assert!(
+            app.logs
+                .last()
+                .is_some_and(|l| l.text.contains("vaciado") && l.text.contains("2 sprite")),
+            "el aviso debe decir qué grupo y cuántos sprites devolvía: {:?}",
+            app.logs.last().map(|l| l.text.clone())
+        );
+        app.deshacer();
+        assert_eq!(
+            app.config.folder_groups[0].sprites.len(),
+            2,
+            "Ctrl+Z recupera la asignación que vació el grupo"
+        );
+    }
+
+    /// Control del anterior: un grupo ya vacío no se toca, así que no debe
+    /// anotar paso. Sin esto, un `anotar_deshacer()` incondicional pasaría
+    /// la otra prueba dejando pasos que no cambian nada.
+    #[test]
+    fn vaciar_un_grupo_imposible_no_anota_paso() {
+        let (mut app, _ctx) = app();
+        app.config.folder_groups = vec![tp_core::config::FolderGroup {
+            name: "ui".into(),
+            sprites: vec![],
+        }];
+
+        app.empty_group(0);
+
+        assert_eq!(
+            app.deshacer.len(),
+            0,
+            "sin nada que vaciar no debe anotar un paso"
+        );
+    }
+
+    /// Borrar un grupo también deja su paso.
+    #[test]
+    fn borrar_un_grupo_es_deshacible() {
+        let (mut app, _ctx) = app();
+        app.config.folder_groups = vec![
+            tp_core::config::FolderGroup {
+                name: "ui".into(),
+                sprites: vec!["a".into()],
+            },
+            tp_core::config::FolderGroup {
+                name: "fx".into(),
+                sprites: vec!["b".into()],
+            },
+        ];
+
+        app.delete_group(0);
+        assert_eq!(app.config.folder_groups.len(), 1, "el grupo desaparece");
+
+        app.deshacer();
+        assert_eq!(
+            app.config.folder_groups.len(),
+            2,
+            "Ctrl+Z recupera el grupo"
+        );
+        assert_eq!(app.config.folder_groups[0].name, "ui", "y en su sitio");
+    }
+
+    /// «↺ Restaurar» borraba todas las exclusiones sin anotar nada.
+    #[test]
+    fn restaurar_exclusiones_es_deshacible() {
+        let (mut app, _ctx) = app();
+        app.config
+            .excluded_inputs
+            .push("/tmp/tp_b4_excluido.png".into());
+
+        app.restore_excluded();
+        assert!(app.config.excluded_inputs.is_empty(), "quedan a la vista");
+
+        app.deshacer();
+        assert_eq!(
+            app.config.excluded_inputs.len(),
+            1,
+            "Ctrl+Z recupera las exclusiones"
+        );
+    }
+
+    /// Quitar una carpeta inteligente también anota su paso.
+    #[test]
+    fn quitar_carpeta_inteligente_es_deshacible() {
+        let (mut app, _ctx) = app();
+        let dir = std::env::temp_dir().join(format!("tp_b4_smart_{}", std::process::id()));
+        app.config.extra_inputs.push(dir.clone());
+
+        app.remove_smart_folder(&dir);
+        assert!(app.config.extra_inputs.is_empty(), "la carpeta desaparece");
+
+        app.deshacer();
+        assert_eq!(
+            app.config.extra_inputs.len(),
+            1,
+            "Ctrl+Z recupera la carpeta inteligente"
         );
     }
 }

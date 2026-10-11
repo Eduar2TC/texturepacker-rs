@@ -199,6 +199,10 @@ pub static EN: &[(&str, &str)] = &[
     ("{} sprite(s) quitado(s).", "{} sprite(s) removed."),
     ("Ruta copiada: {}", "Path copied: {}"),
     ("Grupo «{}» eliminado.", "Group «{}» removed."),
+    (
+        "Grupo «{}» vaciado: {} sprite(s) devuelto(s) a la hoja principal.",
+        "Group «{}» emptied: {} sprite(s) returned to the main sheet.",
+    ),
     ("Hoja «{}» creada.", "Sheet «{}» created."),
 
     ("Vista previa: {}", "Preview: {}"),
