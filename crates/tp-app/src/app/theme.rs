@@ -5,29 +5,36 @@
 use eframe::egui;
 
 /// Verde del resaltado «recién añadido», legible sobre los dos temas.
+///
+/// El claro era `(0, 132, 74)`: 4,08:1 sobre la barra, por debajo de AA
+/// (re-review V1).
 pub(crate) fn just_added_color(v: &egui::Visuals) -> egui::Color32 {
     if v.dark_mode {
         egui::Color32::from_rgb(130, 220, 160)
     } else {
-        egui::Color32::from_rgb(0, 132, 74)
+        egui::Color32::from_rgb(0, 110, 60)
     }
 }
 
 /// Ámbar de aviso (carpetas inteligentes, «empaqueta sola», avisos).
+///
+/// El claro era `(150, 105, 0)`: 4,15:1 sobre la barra (re-review V1).
 pub(crate) fn amber_color(v: &egui::Visuals) -> egui::Color32 {
     if v.dark_mode {
         egui::Color32::from_rgb(230, 190, 60)
     } else {
-        egui::Color32::from_rgb(150, 105, 0)
+        egui::Color32::from_rgb(135, 85, 0)
     }
 }
 
 /// Azul informativo (carpetas anidadas, «publicando…», «actualizando…»).
+///
+/// El claro era `(20, 100, 205)`: 4,34:1 sobre el panel (re-review V1).
 pub(crate) fn info_color(v: &egui::Visuals) -> egui::Color32 {
     if v.dark_mode {
         egui::Color32::from_rgb(120, 170, 255)
     } else {
-        egui::Color32::from_rgb(20, 100, 205)
+        egui::Color32::from_rgb(16, 88, 180)
     }
 }
 
@@ -41,11 +48,14 @@ pub(crate) fn muted_color(v: &egui::Visuals) -> egui::Color32 {
 }
 
 /// El mismo gris, pero en su variante de «pasado por encima».
+///
+/// En claro comparte valor con [`info_color`], que era su color: 4,34:1
+/// sobre el panel (re-review V1).
 pub(crate) fn muted_hover_color(v: &egui::Visuals) -> egui::Color32 {
     if v.dark_mode {
         egui::Color32::from_rgb(180, 225, 255)
     } else {
-        egui::Color32::from_rgb(20, 100, 205)
+        egui::Color32::from_rgb(16, 88, 180)
     }
 }
 
@@ -152,6 +162,17 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: crate::ui_prefs::Theme) {
         } else {
             egui::Color32::from_rgb(0, 94, 190)
         };
+        // El ámbar y el rojo de serie de egui están elegidos para su
+        // fondo, no para el nuestro: en claro el aviso (255, 100, 0) se
+        // queda en 2,29:1 sobre el panel y el error (255, 0, 0) en
+        // 3,09:1; en oscuro el error se queda en 3,88:1 sobre el panel.
+        // WCAG AA pide 4,5:1 para texto (re-review V1).
+        if v.dark_mode {
+            v.error_fg_color = egui::Color32::from_rgb(255, 90, 90);
+        } else {
+            v.warn_fg_color = egui::Color32::from_rgb(135, 85, 0);
+            v.error_fg_color = egui::Color32::from_rgb(170, 0, 0);
+        }
         v.slider_trailing_fill = true;
         v.handle_shape = egui::style::HandleShape::Rect { aspect_ratio: 0.4 };
         v.collapsing_header_frame = true;
@@ -363,5 +384,82 @@ mod tests {
             panel >= pantalla.height() * 0.4,
             "el dock más alto mide {panel:.0} px y debe llegar ≥40 % de la ventana"
         );
+    }
+
+    /// Los visuals completos como los deja [`apply_theme`] sobre un
+    /// contexto de verdad: incluye los ajustes que `estilo()` no toca
+    /// (`warn_fg_color`, `error_fg_color`, la selección…).
+    fn aplicado(tema: crate::ui_prefs::Theme) -> egui::Visuals {
+        let ctx = egui::Context::default();
+        apply_theme(&ctx, tema);
+        ctx.style().visuals.clone()
+    }
+
+    /// V1 (validación de la re-review): con el tema claro —el que
+    /// recibe un escritorio Linux en modo claro, porque el
+    /// predeterminado es `system`—, varios colores que `visuals()` y los
+    /// tokens de la app dan al texto se caían por debajo de AA: el ámbar
+    /// de aviso (2,29:1), el rojo de error (3,09:1), el ámbar de tokens
+    /// (4,15:1), el azul informativo (4,34:1) y el verde «recién
+    /// añadido» (4,08:1); en oscuro, el rojo de error tampoco llegaba
+    /// (3,88:1 sobre el panel). Aquí queda la tabla entera de la review
+    /// vigilando los dos temas contra las tres superficies.
+    ///
+    /// Las filas que la review daba por rotas midiendo el píxel
+    /// —cabecera, log, texto débil, placeholder, pestaña, deshabilitado—
+    /// pasan por color especificado (negro o gris en su sitio): lo que
+    /// medía eran los bordes anti-alias de los glifos de 13 px, y WCAG
+    /// juzga el color especificado. El deshabilitado, además, está
+    /// exento (1.4.3) y aquí se le pide el umbral gráfico de 3:1.
+    #[test]
+    fn los_avisos_y_los_tokens_cumplen_wcag_aa_en_los_dos_temas() {
+        for dark_mode in temas() {
+            let tema = if dark_mode { "oscuro" } else { "claro" };
+            let v = aplicado(if dark_mode {
+                crate::ui_prefs::Theme::Dark
+            } else {
+                crate::ui_prefs::Theme::Light
+            });
+            let s = superficies(dark_mode);
+            let filas = [
+                ("aviso de «Avisos» (ámbar)", v.warn_fg_color, 4.5),
+                ("cabecera de sección / log (info)", v.text_color(), 4.5),
+                ("texto del Log (error)", v.error_fg_color, 4.5),
+                ("texto débil / placeholder", v.weak_text_color(), 4.5),
+                ("hipervínculo", v.hyperlink_color, 4.5),
+                (
+                    "botón deshabilitado (fuente)",
+                    v.widgets.inactive.fg_stroke.color,
+                    3.0,
+                ),
+                ("ámbar de tokens", amber_color(&v), 4.5),
+                ("azul informativo", info_color(&v), 4.5),
+                ("gris tenue (arrastre)", muted_color(&v), 4.5),
+                ("gris tenue al pasar", muted_hover_color(&v), 4.5),
+                ("recién añadido", just_added_color(&v), 4.5),
+            ];
+            for (nombre, color, umbral) in filas {
+                for (sup_nom, sup) in [
+                    ("lienzo", s.lienzo),
+                    ("chrome", s.chrome),
+                    ("panel", s.panel),
+                ] {
+                    let r = razon(sobre(color, sup), sup);
+                    assert!(
+                        r >= umbral,
+                        "{tema}: «{nombre}» sobre {sup_nom} son {r:.2}:1,                          hace falta {umbral}:1"
+                    );
+                }
+            }
+            // La pestaña activa: su texto contra el relleno de selección.
+            let activa = razon(
+                sobre(v.text_color(), v.selection.bg_fill),
+                v.selection.bg_fill,
+            );
+            assert!(
+                activa >= 4.5,
+                "{tema}: el texto de la pestaña activa son {activa:.2}:1,                  hace falta 4.5:1"
+            );
+        }
     }
 }
