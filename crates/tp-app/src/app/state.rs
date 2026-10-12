@@ -188,11 +188,20 @@ impl App {
     }
 
     /// Guarda `ui.toml`; si falla se avisa en el log en lugar de romper.
+    ///
+    /// El aviso va con [`App::aviso`] y no sólo con `log`: el cambio de
+    /// tema o de tamaño de letra ya ha vuelto a la ventana, y sin ese
+    /// cartel el usuario se queda con la sensación de que quedó guardado
+    /// cuando no (re-review B11). El motivo, además, se traduce: el que
+    /// devuelve el SO viene en su idioma.
     pub(super) fn persist_prefs(&mut self) {
         if let Err(err) = self.prefs.save_to(&self.prefs_path) {
-            self.log(
+            self.aviso(
                 LogKind::Warning,
-                t!("No se pudieron guardar los ajustes de interfaz: {}", err),
+                t!(
+                    "No se pudieron guardar los ajustes de interfaz: {}",
+                    crate::i18n::io_motivo(&err)
+                ),
             );
         }
     }
@@ -353,5 +362,56 @@ impl App {
     /// llamarla al terminar (`commit_paths`, `parse_variants`).
     pub(super) fn refresh_config_fingerprint(&mut self) {
         self.config_fingerprint = Some(format!("{:?}", self.config));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// B11: si guardar `ui.toml` no puede, el cambio —tema, tamaño de
+    /// letra— ya está aplicado a la ventana y el usuario se queda con la
+    /// sensación de que quedó guardado. El fallo tiene que salir como
+    /// aviso (el cartel junto al gesto), no sólo como una línea suelta
+    /// en un registro que nadie tiene abierto, y con el motivo en
+    /// nuestro idioma: el del SO viene en el suyo.
+    #[test]
+    fn si_no_se_pueden_guardar_las_preferencias_se_avisa() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+
+        // La ruta de las preferencias cae dentro de un fichero, así que
+        // crear ese directorio no puede salir bien en ningún SO. El test
+        // provoca el mismo fallo que va a sufrir el guardado y le pide el
+        // motivo traducido a quien lo traduce: cada SO devuelve un tipo
+        // distinto y la frase que toca no es la misma en los dos.
+        let bloque = std::env::temp_dir().join(format!("tp_prefs_{}.txt", std::process::id()));
+        std::fs::write(&bloque, b"x").unwrap();
+        let intento = std::fs::create_dir_all(&bloque).unwrap_err();
+        let esperado = crate::i18n::io_motivo(&intento);
+        app.prefs_path = bloque.join("ui.toml");
+
+        app.persist_prefs();
+
+        assert!(
+            app.aviso.is_some(),
+            "sin cartel el usuario cree que quedó guardado; registro: {:?}",
+            app.log_texts()
+        );
+        let linea = app
+            .log_texts()
+            .into_iter()
+            .find(|l| l.contains("No se pudieron guardar los ajustes de interfaz"))
+            .expect("el fallo tiene que quedarse en el registro");
+        assert!(
+            linea.contains(&esperado),
+            "el motivo tiene que venir localizado («{esperado}»): {linea}"
+        );
+        assert!(
+            !linea.contains("os error"),
+            "el texto crudo del SO se ha colado en el aviso: {linea}"
+        );
+
+        std::fs::remove_file(&bloque).ok();
     }
 }
