@@ -852,4 +852,21 @@ mod tests {
         }
         assert_eq!(LangChoice::from_id("otra-cosa"), LangChoice::System);
     }
+
+    /// El inglés escribe con comillas inglesas: las anguilletes « » son
+    /// españolas y se habían quedado en cadenas ya traducidas —el propio
+    /// «Publicar» de la bienvenida— (re-review V3).
+    #[test]
+    fn el_ingles_no_usa_anguilletes() {
+        let malas: Vec<&str> = en::EN
+            .iter()
+            .map(|(_, en)| *en)
+            .filter(|en| en.contains('«') || en.contains('»'))
+            .collect();
+        assert!(
+            malas.is_empty(),
+            "cadenas inglesas con anguilletes españolas:\n  {}",
+            malas.join("\n  ")
+        );
+    }
 }
