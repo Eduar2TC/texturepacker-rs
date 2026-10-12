@@ -742,6 +742,7 @@ pub static EN: &[(&str, &str)] = &[
     // Buscador de Ajustes (I3).
     ("Buscar ajuste…", "Search settings…"),
     ("Limpiar", "Clear"),
+    ("No hay nada que limpiar", "Nothing to clear"),
     ("Ningún ajuste coincide con la búsqueda.", "No settings match the search."),
 
     // Registro del panel inferior (B12).

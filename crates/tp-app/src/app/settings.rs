@@ -323,31 +323,33 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
     // La misma jerarquía de título que «Sprites (n)» del panel izquierdo:
     // 13 px seminegrita. Como `heading` (17 px) el título pesaba más que
     // sus propias secciones y las tres zonas no se leían a la misma escala.
-    ui.strong(t!("Ajustes"));
-    super::separador(ui);
+    let hay_filtro = !app.settings_filter.is_empty();
+    // La misma receta de cabecera que el dock izquierdo (re-review D5):
+    // título arriba a la izquierda, acciones arriba a la derecha, 24 px
+    // de alto y buscador debajo.
+    super::cabecera_dock(ui, t!("Ajustes"), |ui| {
+        // «Limpiar» va con las acciones de la cabecera, no dentro de la
+        // fila del buscador: allí su tamaño estrechaba el campo de unos
+        // 70 px de golpe en cuanto empezaba a escribirse. Siempre a la
+        // vista —así el ancho del campo no depende de lo escrito— y
+        // apagado con su motivo cuando no hay nada que limpiar.
+        let limpiar = ui
+            .add_enabled(hay_filtro, egui::Button::new(t!("Limpiar")))
+            .on_disabled_hover_text(t!("No hay nada que limpiar"));
+        if limpiar.clicked() {
+            app.settings_filter.clear();
+        }
+    });
 
     // Buscador (I3): estrecha el panel a las secciones que coinciden. Los
     // avisos no se esconden nunca: si el atlas va a fallar al publicar, se
-    // ve aunque se esté buscando otra cosa.
-    let hay_filtro = !app.settings_filter.is_empty();
-    // La fila va de derecha a izquierda para que «Limpiar» quede pegado al
-    // borde y la caja se quede con lo que sobra. Al revés, el ancho
-    // infinito de la caja empuja el botón fuera del panel: se pinta, pero
-    // el usuario no lo ve. El `horizontal` de fuera no es adorno: sin él,
-    // `with_layout` hereda la altura que sobra y la fila se estira hasta
-    // comerse el `ScrollArea` de debajo.
-    ui.horizontal(|ui| {
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if hay_filtro && ui.button(t!("Limpiar")).clicked() {
-                app.settings_filter.clear();
-            }
-            ui.add(
-                egui::TextEdit::singleline(&mut app.settings_filter)
-                    .hint_text(t!("Buscar ajuste…"))
-                    .desired_width(f32::INFINITY),
-            );
-        });
-    });
+    // ve aunque se esté buscando otra cosa. Ocupa la fila entera, como el
+    // del dock izquierdo.
+    ui.add(
+        egui::TextEdit::singleline(&mut app.settings_filter)
+            .hint_text(t!("Buscar ajuste…"))
+            .desired_width(f32::INFINITY),
+    );
 
     // «Avanzados» no es un ajuste del proyecto: decide **cuánto** se ve de
     // este panel. Como cualquier otra línea, con la etiqueta a la vista y
@@ -358,6 +360,11 @@ pub(super) fn settings_ui(app: &mut App, ui: &mut egui::Ui) {
         ui.checkbox(&mut app.advanced_settings, t!("Avanzados"));
         ui.label(egui::RichText::new(t!("Mostrar todas las opciones")).weak());
     });
+
+    // El separador cierra la cabecera —título, buscador y alcance— y abre
+    // las secciones; en el dock izquierdo va en ese mismo sitio, después
+    // del buscador (re-review D5), no entre el título y el buscador.
+    super::separador(ui);
 
     let filtro = normaliza(app.settings_filter.trim());
     if !filtro.is_empty()
@@ -2853,14 +2860,15 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
-    /// I3: «Limpiar» no sirve de nada si no está donde se pueda tocar: en
-    /// la misma fila que la caja, a su derecha y sin salirse del panel.
+    /// I3/D5: «Limpiar» no sirve de nada si no está donde se pueda tocar,
+    /// y tampoco si para estarlo deforma la caja: va en la cabecera, con
+    /// el título, encima de la caja y acabando en su mismo borde derecho.
     /// El texto pintado no lo delata —se pinta igual, hasta debajo de otra
     /// cosa y tapado por ella—, así que el test compara rectángulos y
-    /// recortes. Sin este mirador, un `TextEdit` con ancho infinito empuja
-    /// el botón fuera de la fila y el test sigue en verde.
+    /// recortes. En la fila de la caja su ancho estrechaba el buscador de
+    /// unos 70 px en cuanto aparecía (re-review D5).
     #[test]
-    fn el_boton_de_limpiar_esta_en_la_fila_de_la_busqueda() {
+    fn el_boton_de_limpiar_esta_en_la_cabecera_de_ajustes() {
         let ctx = egui::Context::default();
         let mut app = App::new_for_testing(ctx.clone(), None);
         app.settings_filter = "extrusión".into();
@@ -2883,9 +2891,9 @@ mod tests {
              botón={rect:?} recorte={recorte:?}"
         );
         assert!(
-            rect.min.x >= caja.max.x - 1.0 && rect.min.y < caja.max.y && rect.max.y > caja.min.y,
-            "«Limpiar» no queda en la fila de la caja, a su derecha: \
-             botón={rect:?} caja={caja:?}"
+            rect.max.y <= caja.min.y && (rect.max.x - caja.max.x).abs() <= 2.0,
+            "«Limpiar» no queda en la cabecera, sobre la caja y con su \
+             mismo borde derecho: botón={rect:?} caja={caja:?}"
         );
     }
 

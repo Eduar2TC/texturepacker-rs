@@ -146,6 +146,50 @@ pub(crate) fn separador(ui: &mut egui::Ui) {
     ui.add(egui::Separator::default().spacing(spacing));
 }
 
+/// La cabecera de los dos docks espejo —Sprites y Ajustes—: el título
+/// arriba a la izquierda, sus acciones arriba a la derecha y la fila a
+/// `OBJETIVO_MIN` de alto. El buscador va **debajo** de esta fila y el
+/// separador **después** del buscador, que es el orden que ya traía el
+/// panel izquierdo.
+///
+/// Hasta la re-review D5 cada dock montaba la suya: a la izquierda una
+/// fila de 24 px con «+»/«−», a la derecha un `strong` suelto de 17 px;
+/// el separador por delante del filtro en el derecho y por detrás en el
+/// izquierdo; y «Limpiar» sólo en el derecho, dentro de la propia fila
+/// del buscador, donde al aparecer estrechaba el campo de unos 70 px de
+/// golpe. La receta vive aquí; cada dock sólo cuenta qué acciones pone.
+pub(crate) fn cabecera_dock(
+    ui: &mut egui::Ui,
+    titulo: impl Into<egui::RichText>,
+    acciones: impl FnOnce(&mut egui::Ui),
+) {
+    // Dos decisiones dentro de la fila. `interact_size` es lo que fija el
+    // alto: un `Button` no pequeño sube su `min_size` hasta ahí, así que
+    // cualquier acción de la cabecera mide 24 px —que es lo que ya medía
+    // el «+» de la izquierda— y las dos filas miden lo mismo sin que cada
+    // dock repita el número. Y `Align::Min` las pega al techo, para que
+    // el título nazca a 8 px del panel en los dos lados: con
+    // `ui.horizontal` —que centra en vertical— el título se quedaría a
+    // media fila en cuanto la fila midiera 24.
+    //
+    // El alto va puesto en la reserva y no dejado a la suerte:
+    // `ui.with_layout` da al hijo el rectángulo que sobra entero, con lo
+    // que el padre salta hasta el final de su panel y el buscador de
+    // debajo cae fuera. El estilo se clona por `Ui`, así que el cambio
+    // no se sale de esta fila.
+    let antes = ui.style().spacing.interact_size.y;
+    ui.style_mut().spacing.interact_size.y = OBJETIVO_MIN.y;
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), OBJETIVO_MIN.y),
+        egui::Layout::left_to_right(egui::Align::Min),
+        |ui| {
+            ui.strong(titulo);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), acciones);
+        },
+    );
+    ui.style_mut().spacing.interact_size.y = antes;
+}
+
 /// Estado de frescura de la vista previa (indicador de la barra de zoom).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PreviewState {

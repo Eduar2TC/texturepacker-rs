@@ -155,9 +155,28 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
     let tree = &cache.arbol;
     let total = count_files(tree);
 
-    ui.horizontal(|ui| {
-        ui.strong(t!("Sprites ({})", total));
-        let hidden = app.hidden_count();
+    let hidden = app.hidden_count();
+    // La cabecera es la receta compartida con «Ajustes» (re-review D5):
+    // el título solo a la izquierda y todo lo pulsable a la derecha, a
+    // 24 px y pegado al techo del panel.
+    super::cabecera_dock(ui, t!("Sprites ({})", total), |ui| {
+        if ui
+            .add(egui::Button::new("−").min_size(OBJETIVO_MIN))
+            .on_hover_text(t!("Plegar todas las carpetas"))
+            .clicked()
+        {
+            app.tree_force_open = Some(false);
+        }
+        if ui
+            .add(egui::Button::new("+").min_size(OBJETIVO_MIN))
+            .on_hover_text(t!("Desplegar todas las carpetas"))
+            .clicked()
+        {
+            app.tree_force_open = Some(true);
+        }
+        // El distintivo de ocultos va con las acciones, no pegado al
+        // título: al aparecer sólo agranda el grupo de la derecha y
+        // no mueve ni el título ni el buscador de debajo.
         if hidden > 0 {
             super::separador(ui);
             if ui
@@ -168,22 +187,6 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
                 app.restore_excluded();
             }
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add(egui::Button::new("−").min_size(OBJETIVO_MIN))
-                .on_hover_text(t!("Plegar todas las carpetas"))
-                .clicked()
-            {
-                app.tree_force_open = Some(false);
-            }
-            if ui
-                .add(egui::Button::new("+").min_size(OBJETIVO_MIN))
-                .on_hover_text(t!("Desplegar todas las carpetas"))
-                .clicked()
-            {
-                app.tree_force_open = Some(true);
-            }
-        });
     });
     let filter_response = ui.add(
         egui::TextEdit::singleline(&mut app.tree_filter)

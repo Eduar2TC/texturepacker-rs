@@ -228,3 +228,89 @@ fn las_cabeceras_de_seccion_miden_veinticuatro_px() {
         ctx.style().spacing.item_spacing.y
     );
 }
+
+/// D5: los dos docks espejo montan la misma cabecera.
+///
+/// Tres medidas de la receta [`super::cabecera_dock`]: las dos filas
+/// miden lo mismo —el «+» con su propio `min_size` y «Limpiar», que no
+/// lo trae y sólo tiene el `interact_size` de la receta—, los dos
+/// controles nacen a 8 px del techo de su panel, y el hueco entre el
+/// título y el buscador es el mismo en las dos cajas, que es la forma de
+/// ver que el separador va **después** del buscador en las dos y no antes
+/// en una.
+#[test]
+fn las_dos_cabeceras_de_dock_siguen_la_misma_receta() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let superficie = superficies(ctx.style().visuals.dark_mode).panel;
+
+    let mas = controles_de(&salida, "+")
+        .into_iter()
+        .find(|rect| rect.max.x < 250.0)
+        .expect("el «+» del árbol debe estar pintado");
+    // El «Limpiar» del registro vive en el panel de abajo; el de la
+    // cabecera, arriba del todo.
+    let limpiar = controles_de(&salida, "Limpiar")
+        .into_iter()
+        .find(|rect| rect.min.y < 200.0)
+        .expect("el «Limpiar» de Ajustes debe estar pintado");
+
+    for (nombre, boton) in [("«+»", mas), ("«Limpiar»", limpiar)] {
+        assert!(
+            boton.height() >= OBJETIVO_MIN.y,
+            "{nombre} mide {:.0} px de alto y la cabecera de dock pide {}",
+            boton.height(),
+            OBJETIVO_MIN.y
+        );
+        let panel = panel_de(&salida, superficie, boton.center());
+        assert_eq!(
+            boton.min.y - panel.min.y,
+            8.0,
+            "{nombre} no nace a 8 px del techo de su panel: {boton:?} sobre {panel:?}"
+        );
+    }
+
+    let titulo_izq = galones_pintados(&salida)
+        .into_iter()
+        .find(|(texto, _)| texto.starts_with("Sprites ("))
+        .map(|(_, rect)| rect)
+        .expect("el título del dock izquierdo debe estar pintado");
+    let titulo_der = galion_de(&salida, "Ajustes");
+    let campo_izq = relleno_de(&salida, galion_de(&salida, "Filtrar sprites…").center());
+    let campo_der = relleno_de(&salida, galion_de(&salida, "Buscar ajuste…").center());
+
+    let hueco_izq = campo_izq.min.y - titulo_izq.max.y;
+    let hueco_der = campo_der.min.y - titulo_der.max.y;
+    assert!(
+        (hueco_izq - hueco_der).abs() <= 0.5,
+        "los dos docks dejan {hueco_izq:.1} y {hueco_der:.1} px entre su \
+         título y su buscador: en uno de los dos hay algo en medio"
+    );
+}
+
+/// D5: «Limpiar» vive en la cabecera y la caja del buscador no se mueve.
+///
+/// Con el botón dentro de la fila de la caja, el ancho de la caja
+/// dependía de lo escrito: al primer carácter aparecía «Limpiar» y el
+/// campo se estrechaba de unos 70 px de golpe, con el texto ya puesto
+/// encima. Los dos frames —sin filtro y con— deben pintar exactamente la
+/// misma caja.
+#[test]
+fn limpiar_no_estrecha_el_buscador_de_ajustes() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+    let vacio = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let caja_vacia = relleno_de(&vacio, galion_de(&vacio, "Buscar ajuste…").center());
+
+    app.settings_filter = "composición".into();
+    let escrito = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let caja_llena = relleno_de(&escrito, galion_de(&escrito, "composición").center());
+
+    assert_eq!(
+        caja_vacia, caja_llena,
+        "el buscador cambia de caja al aparecer «Limpiar»: con la caja a \
+         la izquierda y el botón dentro de su fila, el ancho depende de \
+         lo escrito"
+    );
+}
