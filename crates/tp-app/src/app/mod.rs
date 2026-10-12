@@ -309,6 +309,10 @@ pub struct App {
     pending_seq: Option<(u64, std::time::Instant)>,
     /// Snapshot of the inputs of the last packed run (dynamic workspace).
     packed_snapshot: Option<WorkspaceSnapshot>,
+    /// Ficheros de entrada de ese pack: el recuento del pie del estado.
+    /// El del panel está filtrado por la vista y no comparte alcance con
+    /// los sprites del atlas, que salen del empaquetado (re-review V4).
+    packed_files: usize,
     /// La configuración cambió por UI: el próximo `request_preview` no
     /// necesita comparar snapshots (ahorra re-escanear el disco por frame).
     pending_force: bool,
@@ -455,10 +459,13 @@ impl eframe::App for App {
             .exact_height(22.0)
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
-                    // Los ficheros de entrada van delante: es el recuento del
-                    // panel izquierdo, y con él se entiende por qué el de
-                    // sprites de la derecha es menor (M2).
-                    let ficheros = self.input_file_count();
+                    // Los ficheros de entrada van delante: son los del pack
+                    // que enseña el atlas, y con ellos se entiende por qué el
+                    // de sprites es menor (un fichero que el motor descarta:
+                    // M2). El filtro de la vista no los toca: contar el árbol
+                    // filtrado junto a los sprites del empaquetado mezclaba
+                    // dos alcances en la misma frase (V4).
+                    let ficheros = self.packed_files;
                     if let Some(out) = &self.result {
                         let pages = out.pages.len();
                         if let Some(p) = out.pages.get(self.selected_page) {

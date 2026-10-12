@@ -660,6 +660,54 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
+    /// Texto del resumen del pie («N ficheros · M sprite(s) · K alias(es)»),
+    /// pintado una sola vez. Corre un frame para que la tira se pinte.
+    fn tira_de(app: &mut App, ctx: &egui::Context) -> String {
+        // Varios frames: el pie se pinta al principio del frame y algunas
+        // de sus cifras (las filas del árbol) se actualizan al final del
+        // anterior, así que una sola vuelta enseñaría datos con desfase.
+        let mut out = app.run_frame(ctx, idle_input());
+        for _ in 0..2 {
+            out = app.run_frame(ctx, idle_input());
+        }
+        let mut tiras: Vec<String> = textos_pintados(&out)
+            .iter()
+            .filter(|(texto, _, _)| texto.trim().contains("ficheros · "))
+            .map(|(texto, _, _)| texto.trim().to_string())
+            .collect();
+        assert_eq!(
+            tiras.len(),
+            1,
+            "el resumen sólo puede pintarse una vez: {tiras:?}"
+        );
+        tiras.pop().expect("al menos una tira")
+    }
+
+    /// V4: el pie mezclaba dos alcances —los ficheros salían del árbol de la
+    /// vista, filtrado si hay filtro, y los sprites del último empaquetado,
+    /// siempre global—, así que con un filtro activo enseñaba «0 ficheros ·
+    /// 600 sprites»: dos respuestas distintas en la misma frase. Los tres
+    /// números salen ahora del pack, que es lo que enseña el atlas, y el
+    /// filtro de la vista no los mueve.
+    #[test]
+    fn el_filtro_de_la_vista_no_mueve_los_recuentos_del_pie() {
+        let (ctx, mut app, tmp) = app_empaquetada("v4");
+        let sin_filtro = tira_de(&mut app, &ctx);
+        assert!(
+            sin_filtro.contains("6 ficheros") && sin_filtro.contains("5 sprites"),
+            "el pie cuenta los ficheros del pack y los sprites que salen: {sin_filtro}"
+        );
+
+        // «hero» deja dos de los seis ficheros en el panel.
+        app.tree_filter = "hero".into();
+        let con_filtro = tira_de(&mut app, &ctx);
+        assert_eq!(
+            sin_filtro, con_filtro,
+            "el filtro de la vista no debe mover los recuentos del pie"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     /// Fase 3: la página se numera desde 1 en todas partes. La tira dice
     /// «Página 1» y la pestaña Salida imprimía el índice del motor, que empieza
     /// en 0 («Página 0»): el mismo dato con dos números distintos.

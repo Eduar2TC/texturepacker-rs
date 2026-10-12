@@ -98,6 +98,7 @@ impl App {
             change_seq: 0,
             pending_seq: None,
             packed_snapshot: None,
+            packed_files: 0,
             pending_force: false,
             // `None` = sin muestrear: el primer frame de `poll_changes` toma
             // la huella sin notificar (ver `App::config_fingerprint`).

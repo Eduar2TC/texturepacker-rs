@@ -107,20 +107,9 @@ impl App {
         self.tree_cache = Some(cache);
     }
 
-    /// Ficheros de entrada que lista el árbol: el mismo número que enseña
-    /// la cabecera «Sprites (N)» del panel.
-    ///
-    /// La barra de estado contaba sprites —«12 sprites · 1 alias»— mientras
-    /// el panel contaba ficheros —«Sprites (13)»—, y la diferencia (un
-    /// fichero que el motor descarta, un mapa de normales…) no salía en
-    /// ninguna parte (M2). Con este recuento a mano, la barra empieza por
-    /// los ficheros del panel y los dos números se leen juntos.
-    pub(super) fn input_file_count(&mut self) -> usize {
-        let cache = self.take_tree();
-        let n = count_files(&cache.arbol);
-        self.keep_tree(cache);
-        n
-    }
+    // V4: el recuento de ficheros del pie del estado vive ahora en `App`
+    // como `packed_files` (los del pack, mismo alcance que los sprites);
+    // el del panel sigue contando lo que lista el árbol, filtrado o no.
 }
 
 enum TreeAction {

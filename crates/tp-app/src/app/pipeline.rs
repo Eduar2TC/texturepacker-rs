@@ -383,6 +383,15 @@ impl App {
     ) {
         self.selected_page = self.selected_page.min(out.pages.len().saturating_sub(1));
         self.files_written = files_written;
+        // El pie del estado cuenta los ficheros de **este** pack, que es el
+        // alcance de los sprites que enseña el atlas: contar los del panel
+        // mezclaría un recuento filtrado con otro que no lo está (re-review
+        // V4). Si el config cambió durante la corrida y limpió el snapshot,
+        // se conserva el recuento del pack anterior, que sigue siendo el
+        // último aplicado.
+        if let Some(snap) = &self.packed_snapshot {
+            self.packed_files = snap.files.len();
+        }
         self.result = Some(out);
         self.preview_retry_used = false;
         self.rebuild_textures(ctx);
