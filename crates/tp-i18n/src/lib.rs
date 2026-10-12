@@ -760,14 +760,18 @@ mod tests {
     fn tr_del_motor_traduce_entero_por_patron_y_por_argumentos() {
         // Mensaje completo: búsqueda exacta.
         assert_eq!(tr_in(Lang::En, "ASTC demasiado corto"), "ASTC too short");
-        // Mensaje ya formateado: patrón con huecos.
+        // Mensaje ya formateado: patrón con huecos. Los dos prefijos se
+        // apilan —el del app («No se pudo guardar: …») envolviendo el del
+        // motor («Configuración inválida: …»)— y cada uno se traduce en su
+        // propio nivel: así no queda el mismo prefijo dos veces.
         assert_eq!(
             tr_in(
                 Lang::En,
-                "Config inválida: max_texture_size debe ser una potencia de dos positiva \
-                 (se obtuvo 3000)"
+                "No se pudo guardar: Configuración inválida: max_texture_size debe ser una \
+                 potencia de dos positiva (se obtuvo 3000)"
             ),
-            "Invalid config: max_texture_size must be a positive power of two (got 3000)"
+            "Could not save: Invalid configuration: max_texture_size must be a positive power \
+             of two (got 3000)"
         );
         // Los argumentos recogidos también se traducen.
         assert_eq!(

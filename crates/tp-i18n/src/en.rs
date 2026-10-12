@@ -215,7 +215,6 @@ pub static EN: &[(&str, &str)] = &[
     ("{}: bordes detectados {}", "{}: borders detected {}"),
     ("No se pudo guardar: {}", "Could not save: {}"),
     ("No se pudo serializar: {}", "Could not serialize: {}"),
-    ("Config inválida: {}", "Invalid config: {}"),
     ("Proyecto inválido: {}", "Invalid project: {}"),
     ("No se pudo leer: {}", "Could not read: {}"),
     // Motivos de `io::Error` en el idioma de la interfaz (M7): el texto

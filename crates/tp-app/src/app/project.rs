@@ -6,6 +6,18 @@ use eframe::egui;
 use std::path::PathBuf;
 use tp_core::config::ProjectConfig;
 
+/// El motivo de un guardado que falla, con la acción delante. El motor ya
+/// envuelve el detalle con su propio prefijo («Configuración inválida: …»,
+/// «Error TOML: …»), así que aquí no se le pone otro parecido: el envoltorio
+/// anterior —«Config inválida: {motivo}»— dejaba el prefijo dos veces, y en
+/// inglés salía «Invalid config: Invalid configuration: …» (re-review RB5).
+/// El aviso traduce el texto que recibe, pero los argumentos de `t!` van
+/// crudos (no se traducen solos), así que el motivo del motor se traduce
+/// aquí a mano; criterio de [`crate::i18n::io_motivo`] y de `motivo_clave`.
+fn motivo_de_guardado(e: &tp_core::TpError) -> String {
+    t!("No se pudo guardar: {}", crate::i18n::tr(&e.to_string()))
+}
+
 impl App {
     pub(super) fn save_project(&mut self) {
         self.commit_paths();
@@ -23,10 +35,7 @@ impl App {
             match self.config.to_toml() {
                 Ok(text) => Some(text),
                 Err(e) => {
-                    self.aviso(
-                        LogKind::Error,
-                        t!("Config inválida: {}", crate::i18n::tr(&e.to_string())),
-                    );
+                    self.aviso(LogKind::Error, motivo_de_guardado(&e));
                     None
                 }
             }
@@ -338,6 +347,30 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, egui::ViewportCommand::CancelClose))
         })
+    }
+
+    /// RB5: el envoltorio repetía el prefijo que el motor ya pone sobre el
+    /// detalle: «Config inválida: Configuración inválida: …» en español y
+    /// «Invalid config: Invalid configuration: …» en inglés.
+    #[test]
+    fn el_motivo_de_un_guardado_fallido_no_repite_el_prefijo() {
+        let detalle = "max_texture_size debe ser una potencia de dos positiva (se obtuvo 3000)";
+        let motor = tp_core::TpError::Config(detalle.to_string());
+        assert_eq!(
+            motivo_de_guardado(&motor),
+            format!("No se pudo guardar: Configuración inválida: {detalle}")
+        );
+
+        // El fallo que `to_toml` puede devolver de verdad es de
+        // serialización: la acción se cuenta una vez y el motivo queda tal
+        // como lo escribe el motor, con su prefijo y sin repetirlo.
+        let claves: std::collections::HashMap<i32, u8> = [(1, 2)].into();
+        let ser = toml::to_string_pretty(&claves).expect_err("las claves enteras no son TOML");
+        let texto = motivo_de_guardado(&tp_core::TpError::TomlSer(ser));
+        assert!(
+            texto.starts_with("No se pudo guardar: Error TOML: "),
+            "acción y motivo, un solo prefijo por nivel: {texto}"
+        );
     }
 
     /// C2: la huella de «sin guardar» acompaña a la configuración: cambia
