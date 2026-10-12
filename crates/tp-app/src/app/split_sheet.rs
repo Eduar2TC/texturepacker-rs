@@ -234,6 +234,15 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         if ui
             .add_enabled(can_split, egui::Button::new(t!("Dividir")))
             .on_hover_text(t!("Escribe cada celda como PNG y la añade al proyecto"))
+            // RB4: con el botón apagado egui no enseña el de arriba, pero
+            // la ayuda no puede quedarse en blanco: hay que decir por qué
+            // no se puede dividir y qué tocar para que se pueda. Las dos
+            // cuadrículas fallan por sitios distintos.
+            .on_disabled_hover_text(if app.split.use_grid {
+                t!("No hay celdas con la cuadrícula actual: baja el margen o el espaciado, o reduce las columnas y filas")
+            } else {
+                t!("No hay celdas con la cuadrícula actual: baja el margen, o la celda no cabe en la hoja")
+            })
             .clicked()
         {
             run_split(app, &spec, cells.len());
@@ -322,5 +331,140 @@ fn run_split(app: &mut App, spec: &SplitSpec, expected: usize) {
                 crate::i18n::tr(&e.to_string())
             ),
         ),
+    }
+}
+
+/// RB4: «Dividir» deshabilitada conservaba la ayuda de la versión activa
+/// («Escribe cada celda…») sin decir por qué no se puede usar.
+#[cfg(test)]
+mod dividir_deshabilitada_tests {
+    use super::*;
+    use crate::testing::textos_pintados;
+
+    /// Un frame sólo de la ventana de división, con el reloj a mano: la
+    /// ayuda tarda medio segundo de puntero quieto en salir, así que es
+    /// el test quien mueve el tiempo.
+    fn frame(
+        app: &mut App,
+        ctx: &egui::Context,
+        t: f64,
+        eventos: Vec<egui::Event>,
+    ) -> egui::FullOutput {
+        let entrada = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            time: Some(t),
+            events: eventos,
+            ..egui::RawInput::default()
+        };
+        ctx.run(entrada, |_| split_window(app, ctx))
+    }
+
+    /// Hoja de 64×64 px con `margen` píxeles: con 40 no cabe ninguna
+    /// celda y el botón se queda apagado.
+    fn hoja(margen: i32) -> (App, egui::Context) {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.show_split = true;
+        app.split.source = Some(PathBuf::from("/tmp/hoja.png"));
+        app.split.img_w = 64;
+        app.split.img_h = 64;
+        app.split.margin = margen;
+        (app, ctx)
+    }
+
+    /// Punto del rótulo «Dividir». La ventana abre en dos pasadas (la
+    /// primera sólo guarda su área), así que se pinta un par de frames
+    /// antes de buscarlo.
+    fn dividi(app: &mut App, ctx: &egui::Context) -> egui::Pos2 {
+        for t in [0.1, 0.2, 0.3] {
+            let out = frame(app, ctx, t, Vec::new());
+            if let Some(donde) = textos_pintados(&out)
+                .iter()
+                .filter(|(texto, rect, recorte)| {
+                    texto.trim() == "Dividir" && recorte.contains(rect.center())
+                })
+                .map(|(_, rect, _)| rect.center())
+                .next()
+            {
+                return donde;
+            }
+        }
+        panic!("el botón «Dividir» debe estar en la ventana de división");
+    }
+
+    /// Toda la ayuda pintada tras dejar el puntero quieto encima del
+    /// botón (egui espera medio segundo de quietud).
+    fn ayuda_sobre(app: &mut App, ctx: &egui::Context, donde: egui::Pos2) -> String {
+        frame(app, ctx, 0.5, vec![egui::Event::PointerMoved(donde)]);
+        frame(app, ctx, 1.0, Vec::new());
+        frame(app, ctx, 1.1, Vec::new());
+        frame(app, ctx, 1.2, Vec::new());
+        let out = frame(app, ctx, 1.3, Vec::new());
+        textos_pintados(&out)
+            .iter()
+            .map(|(texto, _, _)| texto.clone())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn dividir_deshabilitada_explica_el_motivo() {
+        // Sin celdas (40 px de margen en una hoja de 64): el botón apagado
+        // explica por qué y qué tocar.
+        let (mut app, ctx) = hoja(40);
+        let spec = app.split.spec().expect("la hoja está elegida");
+        assert!(
+            grid_cells(app.split.img_w, app.split.img_h, &spec).is_empty(),
+            "la primera mitad necesita una cuadrícula sin celdas"
+        );
+        let donde = dividi(&mut app, &ctx);
+        let ayuda = ayuda_sobre(&mut app, &ctx, donde);
+        assert!(
+            ayuda.contains("No hay celdas con la cuadrícula actual"),
+            "el botón apagado debe explicar el motivo: {ayuda}"
+        );
+        assert!(
+            !ayuda.contains("Escribe cada celda"),
+            "la ayuda de la versión activa no debe acompañar a la apagada: {ayuda}"
+        );
+
+        // Control: con celdas, la misma posición enseña la ayuda de
+        // siempre —sin esta mitad, la primera no distinguiría nada—.
+        let (mut app, ctx) = hoja(0);
+        let donde = dividi(&mut app, &ctx);
+        let ayuda = ayuda_sobre(&mut app, &ctx, donde);
+        assert!(
+            ayuda.contains("Escribe cada celda"),
+            "control: con celdas la ayuda es la de siempre: {ayuda}"
+        );
+        assert!(
+            !ayuda.contains("No hay celdas"),
+            "con celdas no debe avisarse de que no las hay: {ayuda}"
+        );
+
+        // La otra cuadrícula falla por otro sitio —una celda de 128 px no
+        // cabe en 64— y el motivo debe nombrar sus propios controles.
+        let (mut app, ctx) = hoja(0);
+        app.split.use_grid = false;
+        app.split.cell_w = 128;
+        app.split.cell_h = 32;
+        let spec = app.split.spec().expect("la hoja está elegida");
+        assert!(
+            grid_cells(app.split.img_w, app.split.img_h, &spec).is_empty(),
+            "esta mitad necesita una celda más grande que la hoja"
+        );
+        let donde = dividi(&mut app, &ctx);
+        let ayuda = ayuda_sobre(&mut app, &ctx, donde);
+        assert!(
+            ayuda.contains("la celda no cabe en la hoja"),
+            "en tamaño fijo el motivo nombra el tamaño de celda: {ayuda}"
+        );
+        assert!(
+            !ayuda.contains("reduce las columnas y filas"),
+            "el motivo de la otra cuadrícula no debe confundir los controles: {ayuda}"
+        );
     }
 }

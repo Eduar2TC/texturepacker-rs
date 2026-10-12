@@ -390,6 +390,14 @@ pub static EN: &[(&str, &str)] = &[
     ("Publicar al terminar", "Publish when done"),
     ("Dividir", "Split"),
     ("Escribe cada celda como PNG y la añade al proyecto", "Writes each cell as a PNG and adds it to the project"),
+    (
+        "No hay celdas con la cuadrícula actual: baja el margen o el espaciado, o reduce las columnas y filas",
+        "No cells with the current grid: lower the margin or the spacing, or reduce the columns and rows",
+    ),
+    (
+        "No hay celdas con la cuadrícula actual: baja el margen, o la celda no cabe en la hoja",
+        "No cells with the current grid: lower the margin, or the cell does not fit in the sheet",
+    ),
 
     ("Ajustes de sprite", "Sprite settings"),
     ("Pivot por defecto para sprites nuevos", "Default pivot for new sprites"),
