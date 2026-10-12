@@ -124,6 +124,15 @@ pub fn font_id(base: f32, ctx: &eframe::egui::Context) -> eframe::egui::FontId {
     eframe::egui::FontId::proportional(base * escala_actual(ctx))
 }
 
+/// Altura de banda con la escala del usuario aplicada: `exact_height`
+/// clava los píxeles y con la letra a «Enorme» el texto crecía dentro de
+/// una banda que no, que dejaba de medir lo que promete (re-review V2).
+/// Las alturas que el código fija a mano pasan por aquí, igual que los
+/// tamaños de letra por [`font_id`].
+pub fn altura(base: f32, ctx: &eframe::egui::Context) -> f32 {
+    base * escala_actual(ctx)
+}
+
 /// Identidad de la escala dentro de la memoria de egui.
 fn egui_id() -> eframe::egui::Id {
     eframe::egui::Id::new("tp_font_scale")

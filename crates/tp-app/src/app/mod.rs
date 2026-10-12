@@ -456,7 +456,7 @@ impl eframe::App for App {
         // altura a la vista.
         egui::TopBottomPanel::bottom("status_bar")
             .resizable(false)
-            .exact_height(22.0)
+            .exact_height(crate::ui_prefs::altura(22.0, ctx))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
                     // Los ficheros de entrada van delante: son los del pack
@@ -558,8 +558,10 @@ impl eframe::App for App {
         // `interact_size.y` —18 px— y la diferencia se quedaba en 6 px de
         // chrome muerto debajo de la única fila que lleva, con 1 px de aire
         // entre la línea de arriba y la fila y 8 entre la fila y la de abajo.
+        // La altura va con la escala de la letra: es la misma banda que la
+        // tira de estado (V2).
         let bottom = if self.bottom_collapsed {
-            bottom.exact_height(22.0)
+            bottom.exact_height(crate::ui_prefs::altura(22.0, ctx))
         } else {
             bottom
         };

@@ -28,7 +28,7 @@ pub(super) fn preview_ui(app: &mut App, ui: &mut egui::Ui) {
     }
     egui::TopBottomPanel::bottom("zoom_bar")
         .resizable(false)
-        .exact_height(32.0)
+        .exact_height(crate::ui_prefs::altura(32.0, ui.ctx()))
         .show_inside(ui, |ui| zoom_bar(app, ui));
     // El lienzo de verdad (el que lleva scroll): el token de la zona de
     // trabajo, el mismo que lleva el `CentralPanel` que lo envuelve. Sin

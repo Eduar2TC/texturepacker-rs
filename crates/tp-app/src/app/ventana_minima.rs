@@ -306,6 +306,51 @@ fn lo_esencial_de_la_barra_y_los_paneles_se_ve_entero() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+/// V2: `FontScale::Larger` (+40 %) sólo movía `text_styles`, y las dos
+/// bandas con la altura clavada —la barra de zoom (`exact_height(32)`) y
+/// la tira de estado (`exact_height(22)`)— seguían midiendo lo mismo
+/// mientras su texto crecía: dejaban de medir lo que prometen. Las
+/// alturas que el código fija a mano pasan ahora por `ui_prefs::altura`,
+/// la misma escala que `font_id` para los tamaños de letra.
+#[test]
+fn las_bandas_de_altura_clavada_crecen_con_la_letra() {
+    let (mut app, ctx, tmp) = demo("banda_enorme");
+    app.set_font_scale(crate::ui_prefs::FontScale::Larger);
+    let escala = crate::ui_prefs::FontScale::Larger.factor();
+    let out = frame(&mut app, &ctx);
+    let pintados = textos_pintados(&out);
+
+    let (_, rect_zoom, corte_zoom) = hallado(&pintados, "Vista", true);
+    let zoom_esperada = BANDA_ZOOM * escala;
+    assert!(
+        (corte_zoom.height() - zoom_esperada).abs() < 0.5,
+        "la barra de zoom no crece con la letra: mide {} y con la escala \
+         {escala} debería medir {zoom_esperada}",
+        corte_zoom.height()
+    );
+    assert!(
+        cabe(corte_zoom, rect_zoom),
+        "«Vista» queda cortada en la barra de zoom: {rect_zoom:?} no cabe \
+         en {corte_zoom:?}"
+    );
+
+    let (_, rect_tira, corte_tira) = hallado(&pintados, "ficheros", false);
+    let tira_esperada = BANDA_TIRA * escala;
+    assert!(
+        (corte_tira.height() - tira_esperada).abs() < 0.5,
+        "la tira de estado no crece con la letra: mide {} y con la escala \
+         {escala} debería medir {tira_esperada}",
+        corte_tira.height()
+    );
+    assert!(
+        cabe(corte_tira, rect_tira),
+        "el resumen queda cortado en la tira: {rect_tira:?} no cabe en \
+         {corte_tira:?}"
+    );
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
 /// M4: las cinco ventanas flotantes caben en la ventana mínima.
 ///
 /// Se abren con la ventana al mínimo y luego se miden en una pantalla
