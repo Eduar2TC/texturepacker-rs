@@ -256,6 +256,21 @@ impl App {
         self.unreadable_dirs = fallidos;
     }
 
+    /// Avisa de las vigilancias de disco que fallaron sin repetir el mismo
+    /// mensaje en cada `start_watcher` —que se llama al cargar, deshacer,
+    /// añadir sprites…—: si una ruta deja de fallar el aviso se olvida y un
+    /// fallo posterior vuelve a salir (re-review RB1, mismo criterio que
+    /// [`App::report_unreadable`]).
+    pub(super) fn report_watch_fallidos(&mut self, fallidos: Vec<String>) {
+        for aviso in &fallidos {
+            if self.watch_fallidos.contains(aviso) {
+                continue;
+            }
+            self.log(LogKind::Warning, aviso.clone());
+        }
+        self.watch_fallidos = fallidos;
+    }
+
     /// Every sprite file on disk with its mtime (ms) and size, sorted:
     /// detects sprites edited, added or removed on the input directories.
     ///
@@ -300,8 +315,8 @@ impl App {
     /// detects the real change via the mtime snapshot in `poll_changes`.
     pub(super) fn start_watcher(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher =
-            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let mut watcher = match notify::recommended_watcher(
+            move |res: notify::Result<notify::Event>| {
                 if let Ok(event) = res {
                     // Solo lo que cambia el contenido: las aperturas que
                     // genera la propia app no despiertan a nadie (véase
@@ -311,13 +326,22 @@ impl App {
                     }
                     let _ = tx.send(event);
                 }
-            }) {
-                Ok(w) => w,
-                Err(_) => {
-                    self.watcher = None;
-                    return;
-                }
-            };
+            },
+        ) {
+            Ok(w) => w,
+            Err(_) => {
+                self.watcher = None;
+                // RB1: sin vigilante no hay nadie que despierte a la UI
+                // con los cambios del disco, y «la vista previa se
+                // calcula sola» deja de ser verdad. En silencio el
+                // usuario se queda sin saber por qué.
+                self.report_watch_fallidos(vec![t!(
+                        "No se pudo vigilar el disco: la vista previa no se refrescará sola con los cambios en disco"
+                    )
+                    .to_string()]);
+                return;
+            }
+        };
         use notify::Watcher;
         let mut roots: Vec<PathBuf> = Vec::new();
         if !self.config.input_directory.as_os_str().is_empty() {
@@ -334,12 +358,24 @@ impl App {
         }
         roots.sort();
         roots.dedup();
+        let mut fallidos: Vec<String> = Vec::new();
         for root in roots {
-            if root.exists() {
-                let _ = watcher.watch(&root, notify::RecursiveMode::Recursive);
+            if root.exists()
+                && watcher
+                    .watch(&root, notify::RecursiveMode::Recursive)
+                    .is_err()
+            {
+                // RB1: una raíz que no se puede suscribir (p. ej. sin
+                // permisos) queda fuera del refresco automático: se avisa
+                // con su ruta para que se sepa cuál es.
+                fallidos.push(t!(
+                    "No se pudo vigilar {}: la vista previa no se refrescará sola con los cambios de esa carpeta",
+                    root.display()
+                ));
             }
         }
         self.watcher = Some(watcher); // al soltarlo muere el hilo anterior
+        self.report_watch_fallidos(fallidos);
 
         // Hilo que despierta la UI con cada evento del disco. El hilo es el
         // único consumidor del canal: drena hasta 500 ms de calma y devuelve
@@ -1907,6 +1943,92 @@ mod aviso_carpeta_tests {
             "sin carpeta no hay sprites que listar"
         );
         assert_eq!(avisos(&app), 1, "el snapshot es quien avisa");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+}
+
+/// Sólo Linux: el test hace que `inotify` rechace una suscripción con
+/// `EACCES`, y ni macOS (FSEvents) ni Windows (ReadDirectoryChangesW) lo
+/// garantizan (CI compila el resto de plataformas, así que el módulo no
+/// puede quedar con código sin usar allí).
+#[cfg(all(test, target_os = "linux"))]
+mod aviso_watch_tests {
+    use super::*;
+
+    fn avisos_watch(app: &App) -> usize {
+        app.logs
+            .iter()
+            .filter(|e| e.text.contains("No se pudo vigilar"))
+            .count()
+    }
+
+    /// RB1: el vigilante del disco se creaba y se descartaba en silencio.
+    /// Si una raíz no se puede suscribir, esa carpeta queda fuera del
+    /// refresco automático y «la vista previa se calcula sola» deja de ser
+    /// verdad sin que el usuario se entere. Además el aviso no debe
+    /// repetirse en cada gesto que reinicia el vigilante (cargar, deshacer,
+    /// añadir sprites…), ni perderse si el fallo se recupera y vuelve.
+    #[test]
+    fn un_watch_fallido_se_avisa_sin_repadir() {
+        use std::os::unix::fs::PermissionsExt;
+
+        // Como root los permisos no impiden nada y el test no podría romper
+        // la vigilancia: se salta en lugar de mentir.
+        let uid = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("Uid:"))
+                    .and_then(|l| l.split_whitespace().nth(1).map(str::to_string))
+            });
+        if uid.as_deref() == Some("0") {
+            eprintln!("aviso: prueba saltada, corre como root");
+            return;
+        }
+
+        let dir = std::env::temp_dir().join(format!("tp_watch_gap_{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).expect("se crea el directorio de prueba");
+
+        let ctx = eframe::egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+        app.config.input_directory = dir.clone();
+
+        // Sin permisos de lectura `inotify_add_watch` devuelve `EACCES` y
+        // la raíz no entra en el vigilante.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000))
+            .expect("se quitan los permisos");
+        app.start_watcher();
+        assert_eq!(
+            avisos_watch(&app),
+            1,
+            "una vigilancia que falla debe avisarse exactamente una vez"
+        );
+
+        app.start_watcher();
+        assert_eq!(
+            avisos_watch(&app),
+            1,
+            "el mismo fallo no debe repetirse en cada gesto que reinicia el vigilante"
+        );
+
+        // Si se recupera, el aviso se olvida (no es noticia); si vuelve a
+        // fallar, se vuelve a avisar.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+            .expect("se devuelven los permisos");
+        app.start_watcher();
+        assert_eq!(avisos_watch(&app), 1, "recuperarse no es noticia");
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o000))
+            .expect("se vuelven a quitar");
+        app.start_watcher();
+        assert_eq!(
+            avisos_watch(&app),
+            2,
+            "un fallo nuevo tras haberse recuperado debe avisarse otra vez"
+        );
+
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("limpieza");
         std::fs::remove_dir_all(&dir).ok();
     }
 }

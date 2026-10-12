@@ -282,6 +282,12 @@ pub struct App {
     /// Directorios que ya se avisó que no se pudieron leer: evita repetir el
     /// mismo aviso en cada repaso del snapshot (se olvidan al recuperarse).
     unreadable_dirs: Vec<PathBuf>,
+    /// Vigilancias de disco que ya se avisó que fallaron. Mismo criterio que
+    /// `unreadable_dirs`: `start_watcher` se llama en muchos gestos (cargar,
+    /// deshacer, añadir sprites…) y el mismo fallo no debe repetirse, pero
+    /// si se recupera el aviso se olvida y un fallo posterior vuelve a salir
+    /// (re-review RB1).
+    watch_fallidos: Vec<String>,
     project_path: Option<PathBuf>,
     /// Huella TOML de la última versión del proyecto escrita (o cargada) en
     /// disco: mientras la configuración no se separe de ella no hay nada que

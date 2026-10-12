@@ -519,6 +519,14 @@ pub static EN: &[(&str, &str)] = &[
         "Could not read folder {}: some of its sprites will not make it into the workspace",
     ),
     (
+        "No se pudo vigilar el disco: la vista previa no se refrescará sola con los cambios en disco",
+        "Could not watch the disk: the preview will no longer refresh itself on disk changes",
+    ),
+    (
+        "No se pudo vigilar {}: la vista previa no se refrescará sola con los cambios de esa carpeta",
+        "Could not watch {}: the preview will no longer refresh itself with changes in that folder",
+    ),
+    (
         "{} sprite(s) colocado(s) en ({}, {}): se reempaqueta al instante.",
         "{} sprite(s) placed at ({}, {}): repacking right away.",
     ),

@@ -86,6 +86,7 @@ impl App {
             error_pendiente: false,
             calidad_aviso: None,
             unreadable_dirs: Vec::new(),
+            watch_fallidos: Vec::new(),
             project_path: None,
             saved_config: String::new(),
             exit_pending: false,
