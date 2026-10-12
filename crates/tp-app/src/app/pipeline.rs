@@ -141,6 +141,17 @@ impl App {
         match rx.try_recv() {
             Ok(msg) => {
                 self.pending = None;
+                // El marcador de la corrida se retira con ella: su trabajo
+                // era mantener la UI pintando mientras el hilo trabajaba
+                // (el sondeo del snapshot, que es quien programa el repack,
+                // necesita frames para correr), y con la corrida terminada
+                // `auto_repaint` seguiría pidiendo un frame cada 50 ms para
+                // un cambio que ya no espera nada: la app no dormiría nunca
+                // y la CPU se quedaría pegada en reposo. Lo que quede por
+                // reempaquetar lo decide `preview_stale` más abajo, que
+                // vuelve a programar por su cuenta si el disco cambió
+                // mientras la corrida corría.
+                self.pending_seq = None;
                 match msg.result {
                     Ok(out) => {
                         self.preview_error = None;
@@ -189,6 +200,8 @@ impl App {
             }
             Err(TryRecvError::Disconnected) => {
                 self.pending = None;
+                // Mismo retiro que arriba: sin hilo no hay nada que pintar.
+                self.pending_seq = None;
                 self.log(
                     LogKind::Error,
                     t!("El hilo de vista previa terminó inesperadamente.").into(),
@@ -287,17 +300,18 @@ impl App {
     /// detects the real change via the mtime snapshot in `poll_changes`.
     pub(super) fn start_watcher(&mut self) {
         let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher = match notify::recommended_watcher(move |res| {
-            if let Ok(event) = res {
-                let _ = tx.send(event);
-            }
-        }) {
-            Ok(w) => w,
-            Err(_) => {
-                self.watcher = None;
-                return;
-            }
-        };
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if let Ok(event) = res {
+                    let _ = tx.send(event);
+                }
+            }) {
+                Ok(w) => w,
+                Err(_) => {
+                    self.watcher = None;
+                    return;
+                }
+            };
         use notify::Watcher;
         let mut roots: Vec<PathBuf> = Vec::new();
         if !self.config.input_directory.as_os_str().is_empty() {
@@ -762,6 +776,68 @@ mod on_demand_tests {
         assert!(
             preview_updates(&app) > before,
             "el preview debe reempaquetar tras cambiar un ajuste"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Tras una vista previa al día, la app duerme.
+    ///
+    /// El marcador `pending_seq` existe para mantener la UI pintando
+    /// mientras el hilo empaqueta: el sondeo del snapshot, que es quien
+    /// programa el repack, necesita frames para correr. En la app real esa
+    /// corrida dura segundos y el sondeo cae dentro de ella varias veces,
+    /// con lo que el marcador queda puesto; si nadie lo retira al terminar,
+    /// `auto_repaint` pide un frame cada 50 ms para siempre y el hilo
+    /// principal no descansa nunca (CPU al 100 % en reposo).
+    ///
+    /// La prueba se queda con el resultado de la corrida y se lo devuelve
+    /// después: el sondeo tiene que correr **con la corrida viva**, y con
+    /// un proyecto de cinco sprites esa carrera no se ganaría a pulso.
+    #[test]
+    fn tras_terminar_la_previa_la_app_deja_de_pedir_frames() {
+        let (mut app, ctx, tmp) = demo("duerme");
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview de arranque: {boot:?}");
+        let before = preview_updates(&app);
+
+        // Arranca una corrida de verdad: el aviso es debounced, así que el
+        // hijo nace con el primer sondeo del snapshot, no en el del cambio.
+        app.config.padding += 4;
+        app.on_config_changed();
+        let boot2 = pump_on_demand(&mut app, &ctx, |a| a.pending.is_some(), TIMEOUT);
+        assert!(
+            app.pending.is_some(),
+            "el cambio debe arrancar una vista previa: {boot2:?}"
+        );
+
+        // Mientras la corrida vive llega un aviso de cambio que no cambia
+        // nada (los controles avisan aunque el valor quede igual): es el
+        // camino que deja `pending_seq` marcado, y como el config ya cuadra
+        // con lo empaquetado, no queda ningún repack que pudiera retirarlo.
+        app.on_config_changed();
+        assert!(
+            app.pending_seq.is_some(),
+            "un aviso durante la corrida debe dejar el marcador puesto"
+        );
+
+        // El resultado se aplica y con él se retira el marcador.
+        let out = pump_on_demand(&mut app, &ctx, |a| a.pending.is_none(), TIMEOUT);
+        assert!(
+            preview_updates(&app) > before,
+            "el resultado de la corrida debe aplicarse: {out:?}"
+        );
+        assert!(
+            app.pending_seq.is_none(),
+            "la vista previa terminó y el marcador siguió puesto: \
+             auto_repaint pediría un frame cada 50 ms para siempre"
+        );
+
+        // Y el frame siguiente no programa el suyo.
+        let slot = settle_until_quiet(&mut app, &ctx);
+        let _ = app.run_frame(&ctx, crate::testing::idle_input());
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "la app no duerme con la vista previa al día"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
