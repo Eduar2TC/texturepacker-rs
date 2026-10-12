@@ -696,17 +696,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                 .on_hover_text(t!("Guarda la clave escrita arriba con este nombre"))
                 .clicked()
             {
-                let key = app.config.encryption_key.clone().unwrap_or_default();
-                match tp_core::keys::put(&name, &key) {
-                    Ok(()) => {
-                        app.config.encryption_key_name = Some(name.clone());
-                        app.aviso(
-                            super::LogKind::Info,
-                            t!("Clave global «{}» guardada.", name),
-                        );
-                    }
-                    Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
-                }
+                guardar_clave_global(app, &name);
             }
             if ui
                 .button(t!("Borrar"))
@@ -714,14 +704,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
                 .clicked()
                 && !name.is_empty()
             {
-                match tp_core::keys::remove(&name) {
-                    Ok(true) => {
-                        app.config.encryption_key_name = None;
-                        app.aviso(super::LogKind::Info, t!("Clave global «{}» borrada.", name));
-                    }
-                    Ok(false) => {}
-                    Err(e) => app.aviso(super::LogKind::Warning, e.to_string()),
-                }
+                borrar_clave_global(app, &name);
             }
         });
         if ui
@@ -739,6 +722,60 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
             };
         }
     });
+}
+
+/// El motivo de un fallo del almacén de claves, en el idioma de la
+/// interfaz. El motor devuelve `TpError`, y su parte de E/S trae el
+/// motivo crudo del sistema («Permission denied (os error 13)»), que
+/// salía en inglés en mitad de un mensaje español: aquí se traduce por
+/// lo que describe, que es lo único que da pie a corregirlo. Mismo
+/// criterio que [`crate::i18n::io_motivo`] (M7); el resto de variantes
+/// ya llegan en español.
+fn motivo_clave(e: &tp_core::TpError) -> String {
+    match e {
+        tp_core::TpError::Io(io) => crate::i18n::io_motivo(io),
+        otro => otro.to_string(),
+    }
+}
+
+/// Guarda la clave global con el nombre del desplegable. Los dos gestos
+/// del bloque «Clave global» viven aquí, fuera del montaje del panel,
+/// para poderlos probar sin tener que abrir la sección entera.
+fn guardar_clave_global(app: &mut App, name: &str) {
+    let key = app.config.encryption_key.clone().unwrap_or_default();
+    match tp_core::keys::put(name, &key) {
+        Ok(()) => {
+            app.config.encryption_key_name = Some(name.to_string());
+            app.aviso(
+                super::LogKind::Info,
+                t!("Clave global «{}» guardada.", name),
+            );
+        }
+        Err(e) => app.aviso(
+            super::LogKind::Warning,
+            t!("No se pudo guardar la clave global: {}", motivo_clave(&e)),
+        ),
+    }
+}
+
+/// Borra la clave global seleccionada. Un nombre que no existe también
+/// se avisa: antes el botón se quedaba callado y daba igual cuántas
+/// veces se pulsara (re-review B10).
+fn borrar_clave_global(app: &mut App, name: &str) {
+    match tp_core::keys::remove(name) {
+        Ok(true) => {
+            app.config.encryption_key_name = None;
+            app.aviso(super::LogKind::Info, t!("Clave global «{}» borrada.", name));
+        }
+        Ok(false) => app.aviso(
+            super::LogKind::Warning,
+            t!("No existe la clave global «{}».", name),
+        ),
+        Err(e) => app.aviso(
+            super::LogKind::Warning,
+            t!("No se pudo borrar la clave global: {}", motivo_clave(&e)),
+        ),
+    }
 }
 
 fn layout_section(app: &mut App, ui: &mut egui::Ui) {
@@ -2738,6 +2775,80 @@ mod tests {
             1,
             "un arrastre entero debe dejar una sola línea, no una por frame: {lineas:?}"
         );
+    }
+
+    /// B10: los dos gestos de «Clave global» hablan el idioma de la
+    /// interfaz y ninguno se queda callado. Borrar un nombre que no
+    /// existía no decía nada, y cuando el almacén fallaba de verdad el
+    /// aviso traía el motivo crudo del SO en inglés («Permission denied
+    /// (os error 13)») en mitad de un mensaje español.
+    #[test]
+    fn la_clave_global_avisa_en_el_idioma_de_la_interfaz() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_keys_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&tmp).unwrap();
+        // El almacén apunta a un sitio de mentira, para no tocar el que
+        // tiene el usuario (mismo truco que la corrida e2e de tp-core).
+        std::env::set_var("TEXTUREPACKER_KEYS_FILE", tmp.join("keys.toml"));
+
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        // 1) Borrar un nombre que no existe: antes el botón no decía nada.
+        borrar_clave_global(&mut app, "fantasma");
+        let aviso = app
+            .log_texts()
+            .into_iter()
+            .find(|l| l.contains("fantasma"))
+            .expect("borrar una clave inexistente tiene que avisar");
+        assert!(
+            aviso.contains("No existe la clave global «fantasma»"),
+            "el aviso tiene que decir que ese nombre no estaba: {aviso}"
+        );
+
+        // 2) Un nombre vacío: el motivo del motor, ya en nuestro idioma.
+        guardar_clave_global(&mut app, "   ");
+        let aviso = app
+            .log_texts()
+            .into_iter()
+            .find(|l| l.contains("No se pudo guardar la clave global: El nombre"))
+            .expect("guardar sin nombre tiene que avisar");
+        assert!(
+            aviso.contains("El nombre de la clave está vacío"),
+            "el motivo del motor tiene que llegar entero: {aviso}"
+        );
+
+        // 3) Un fallo de E/S de verdad: la ruta de la clave cae dentro de
+        //    un fichero, así que crear esa carpeta no puede salir bien.
+        std::fs::write(tmp.join("bloqueado.txt"), b"x").unwrap();
+        std::env::set_var(
+            "TEXTUREPACKER_KEYS_FILE",
+            tmp.join("bloqueado.txt").join("hijo").join("keys.toml"),
+        );
+        app.config.encryption_key = Some("secreto".into());
+        guardar_clave_global(&mut app, "demo");
+        let aviso = app
+            .log_texts()
+            .into_iter()
+            .find(|l| l.contains("el destino no es una carpeta"))
+            .expect("un fallo de E/S tiene que llegar traducido");
+        assert!(
+            aviso.contains("No se pudo guardar la clave global: el destino no es una carpeta"),
+            "el motivo tiene que venir en el idioma de la interfaz: {aviso}"
+        );
+        assert!(
+            !aviso.contains("os error") && !aviso.contains("Not a directory"),
+            "el texto crudo del SO se ha colado en el aviso: {aviso}"
+        );
+
+        std::env::remove_var("TEXTUREPACKER_KEYS_FILE");
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     /// I3: «Limpiar» no sirve de nada si no está donde se pueda tocar: en

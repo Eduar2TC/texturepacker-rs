@@ -65,16 +65,24 @@ fn read_file(path: &Path) -> KeyFile {
 fn write_file(path: &Path, file: &KeyFile) -> Result<()> {
     if let Some(dir) = path.parent() {
         if !dir.as_os_str().is_empty() {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| TpError::Other(format!("No se pudo crear {}: {e}", dir.display())))?;
+            std::fs::create_dir_all(dir).map_err(|e| TpError::Io(con_ruta(e, dir)))?;
         }
     }
     let text = toml::to_string_pretty(file)
         .map_err(|e| TpError::Other(format!("No se pudo serializar las claves: {e}")))?;
-    std::fs::write(path, text)
-        .map_err(|e| TpError::Other(format!("No se pudo escribir {}: {e}", path.display())))?;
+    std::fs::write(path, text).map_err(|e| TpError::Io(con_ruta(e, path)))?;
     restrict(path);
     Ok(())
+}
+
+/// Un fallo de E/S con la ruta por la que falló dentro del mensaje, para
+/// que quien lo pinte sepa dónde mirar. Va como `TpError::Io` y no como
+/// texto armado a mano: así el tipo de fallo (`kind`) llega entero a la
+/// app, que es lo que le permite decir el motivo en el idioma de la
+/// interfaz en vez del texto crudo del sistema (re-review B10). El
+/// prefijo que envuelve cada mensaje, en cambio, es el de siempre.
+fn con_ruta(e: std::io::Error, ruta: &Path) -> std::io::Error {
+    std::io::Error::new(e.kind(), format!("{}: {e}", ruta.display()))
 }
 
 /// Permiso 600 en el fichero de claves (solo el usuario).

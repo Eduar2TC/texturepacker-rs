@@ -576,6 +576,9 @@ pub static EN: &[(&str, &str)] = &[
 
     ("Clave global «{}» guardada.", "Global key «{}» saved."),
     ("Clave global «{}» borrada.", "Global key «{}» deleted."),
+    ("No se pudo guardar la clave global: {}", "Could not save the global key: {}"),
+    ("No se pudo borrar la clave global: {}", "Could not delete the global key: {}"),
+    ("No existe la clave global «{}».", "There is no global key named «{}»."),
     ("El extrude ({}) se limita internamente al padding ({}).", "The extrude ({}) is internally capped by the padding ({})."),
     ("La plantilla {} no existe: el empaquetado fallará.", "The template {} does not exist: packing will fail."),
     ("No hay <id>.hbs en {}: no se podrá elegir un exportador propio.", "No <id>.hbs in {}: a custom exporter cannot be chosen."),
