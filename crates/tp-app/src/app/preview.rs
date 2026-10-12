@@ -303,7 +303,7 @@ fn drop_target(ui: &mut egui::Ui, hovering: bool) {
     ui.painter().text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
-        t!("⤵  Arrastra aquí imágenes o carpetas"),
+        t!("⤵ Arrastra aquí imágenes o carpetas"),
         crate::ui_prefs::font_id(16.0, ui.ctx()),
         if hovering {
             super::muted_hover_color(ui.visuals())
@@ -329,7 +329,7 @@ fn drop_strip(ui: &mut egui::Ui, hovering: bool) {
         if hovering {
             t!("Suelta para añadir al workspace")
         } else {
-            t!("⤵  Sigue soltando imágenes o carpetas")
+            t!("⤵ Sigue soltando imágenes o carpetas")
         },
         crate::ui_prefs::font_id(14.0, ui.ctx()),
         if hovering {

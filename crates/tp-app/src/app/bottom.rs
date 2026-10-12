@@ -117,7 +117,7 @@ fn output_view(app: &App, ui: &mut egui::Ui) {
             } else {
                 (
                     t!("Archivos que se publicarán"),
-                    t!("Vista previa: aún no existen; esta es la lista exacta que                      escribirá «Publicar»."),
+                    t!("Vista previa: aún no existen; esta es la lista exacta que escribirá «Publicar»."),
                 )
             };
             ui.label(egui::RichText::new(title).strong()).on_hover_text(hint);

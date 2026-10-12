@@ -383,6 +383,61 @@ mod tests {
         );
     }
 
+    /// B7: dos espacios seguidos dentro de un texto son un hueco visible a
+    /// mitad de frase, y nadie lo pone a propósito —salió de pegar un texto
+    /// partido en dos líneas de editor—. El barrido mira todo lo que la
+    /// interfaz puede pintar en los dos idiomas: las claves `t!(…)` de
+    /// esta app y las tres tablas del espejo, claves y traducciones. No
+    /// cuentan las guías iniciales (el sangrado de la lista de tiempos del
+    /// log) ni los huecos que separan dos líneas.
+    #[test]
+    fn ningun_texto_de_la_ui_tiene_dos_espacios_seguidos() {
+        let mut culpables = Vec::new();
+        for clave in used_keys() {
+            if hay_racha(&clave) {
+                culpables.push(format!("t! en tp-app: {clave:?}"));
+            }
+        }
+        let espejo = en::EN
+            .iter()
+            .chain(en_core::EN_CORE.iter())
+            .chain(en_cli::EN_CLI.iter());
+        for (es, en) in espejo {
+            if hay_racha(es) {
+                culpables.push(format!("clave de en.rs: {es:?}"));
+            }
+            if hay_racha(en) {
+                culpables.push(format!("traducción de en.rs: {en:?}"));
+            }
+        }
+        assert!(
+            culpables.is_empty(),
+            "textos con dos espacios seguidos a mitad de frase:\n  {}",
+            culpables.join("\n  ")
+        );
+    }
+
+    /// ¿Tiene el texto una racha de dos o más espacios **entre** cosas que
+    /// no son espacio? Una guía inicial o un `\n` no cuentan: son sangrado,
+    /// no un hueco en medio de una frase.
+    fn hay_racha(texto: &str) -> bool {
+        let mut espacios = 0usize;
+        let mut frase_antes = false;
+        for c in texto.chars() {
+            if c == ' ' {
+                espacios += 1;
+                continue;
+            }
+            let frase_despues = !c.is_whitespace();
+            if espacios >= 2 && frase_antes && frase_despues {
+                return true;
+            }
+            frase_antes = frase_despues;
+            espacios = 0;
+        }
+        false
+    }
+
     /// Los literales crudos que `src` pinta sin pasar por `t!(…)`, con
     /// su origen. Los dos patrones pintan igual: `.button("…")` y
     /// `egui::Button::new("…")` son dos maneras de ponerle texto a un

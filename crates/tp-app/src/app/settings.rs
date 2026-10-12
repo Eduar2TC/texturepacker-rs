@@ -519,9 +519,7 @@ fn data_section(app: &mut App, ui: &mut egui::Ui) {
         });
         ui.label(t!("Nombre base de los archivos"));
         ui.add(egui::TextEdit::singleline(&mut app.config.base_file_name).desired_width(190.0));
-        ui.label(
-            egui::RichText::new(t!("Placeholders: {n} {n1} {v}  (p. ej. hoja{n1}{v})")).weak(),
-        );
+        ui.label(egui::RichText::new(t!("Placeholders: {n} {n1} {v} (p. ej. hoja{n1}{v})")).weak());
         data_format_combo(app, ui);
 
         if !advanced {
@@ -1467,7 +1465,7 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
         .is_compatible_with(app.config.gpu_format)
     {
         warnings.push(t!(
-            "El formato de píxel {} no está soportado por el formato de textura {};              se usará RGBA8888 al publicar.",
+            "El formato de píxel {} no está soportado por el formato de textura {}; se usará RGBA8888 al publicar.",
             app.config.pixel_format.as_str(),
             app.config.gpu_format.as_str()
         ));
