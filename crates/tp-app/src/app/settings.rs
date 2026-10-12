@@ -2831,19 +2831,21 @@ mod tests {
             "TEXTUREPACKER_KEYS_FILE",
             tmp.join("bloqueado.txt").join("hijo").join("keys.toml"),
         );
+        // El mismo intento fallido lo reproduce aquí el test: cada SO
+        // devuelve un tipo distinto para esa ruta (Linux NotADirectory,
+        // Windows NotFound), y el motivo localizado tiene que ser el que
+        // toca en el sitio donde corra.
+        let intento = std::fs::create_dir_all(tmp.join("bloqueado.txt").join("hijo")).unwrap_err();
+        let esperado = crate::i18n::io_motivo(&intento);
         app.config.encryption_key = Some("secreto".into());
         guardar_clave_global(&mut app, "demo");
         let aviso = app
             .log_texts()
             .into_iter()
-            .find(|l| l.contains("el destino no es una carpeta"))
+            .find(|l| l.contains("No se pudo guardar la clave global") && l.contains(&esperado))
             .expect("un fallo de E/S tiene que llegar traducido");
         assert!(
-            aviso.contains("No se pudo guardar la clave global: el destino no es una carpeta"),
-            "el motivo tiene que venir en el idioma de la interfaz: {aviso}"
-        );
-        assert!(
-            !aviso.contains("os error") && !aviso.contains("Not a directory"),
+            !aviso.contains("os error"),
             "el texto crudo del SO se ha colado en el aviso: {aviso}"
         );
 
