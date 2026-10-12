@@ -280,7 +280,15 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
             let size = egui::vec2(tw * scale, th * scale);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
             let painter = ui.painter();
-            painter.rect_filled(rect, 2.0, egui::Color32::from_gray(20));
+            painter.rect_filled(rect, 2.0, super::visores(ui.visuals().dark_mode).suelo);
+            // Los contornos cogen el azul informativo y el rojo de error
+            // del tema: los pasteles de siempre (120, 220, 255) sólo se
+            // leían sobre la losa oscura fija que traían de serie
+            // (re-review D4).
+            let (contorno, hueco) = {
+                let v = ui.visuals();
+                (super::info_color(v), v.error_fg_color)
+            };
             for contour in &sprite.contours {
                 let pts: Vec<egui::Pos2> = contour
                     .points
@@ -288,11 +296,7 @@ fn mesh_view(app: &App, ui: &mut egui::Ui) {
                     .map(|p| egui::pos2(rect.min.x + p.x * scale, rect.min.y + p.y * scale))
                     .collect();
                 if pts.len() >= 2 {
-                    let color = if contour.is_hole {
-                        egui::Color32::from_rgb(255, 120, 120)
-                    } else {
-                        egui::Color32::from_rgb(120, 220, 255)
-                    };
+                    let color = if contour.is_hole { hueco } else { contorno };
                     for w in pts.windows(2) {
                         painter.line_segment([w[0], w[1]], egui::Stroke::new(1.5_f32, color));
                     }

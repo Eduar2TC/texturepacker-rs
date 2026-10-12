@@ -569,22 +569,23 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             app.canvas_rect = Some(rect);
             let painter = ui.painter();
             // Fondo y textura del lienzo ANTES que el resalte del arrastre:
-            // pintados después, el relleno gris y la imagen taparían el
+            // pintados después, el relleno y la imagen taparían el
             // resalte y la fantasma de soltado del panel izquierdo.
-            painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
+            let visor = super::visores(ui.visuals().dark_mode);
+            painter.rect_filled(rect, 0.0, visor.hoja);
             painter.image(
                 tex.id(),
                 rect,
                 egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 egui::Color32::WHITE,
             );
-            // Límite de la página. El fondo de la hoja es gris 30 fijo
-            // (`from_gray(30)`) y el del lienzo es ahora el token de la
-            // zona de trabajo (gris 12 en oscuro), así que la hoja ya se
-            // separa sola; el trazo se mantiene pintado FUERA de la hoja,
-            // sobre el lienzo, para que el contraste sea siempre contra el
-            // fondo del lienzo (y no contra la propia hoja) y funcione igual
-            // en tema claro y oscuro (review C1).
+            // Límite de la página. El fondo de la hoja viene de su token
+            // (gris 30 en oscuro, 210 en claro, re-review D4) y el del
+            // lienzo es el de la zona de trabajo (gris 12 en oscuro), así
+            // que la hoja ya se separa sola; el trazo se mantiene pintado
+            // FUERA de la hoja, sobre el lienzo, para que el contraste sea
+            // siempre contra el fondo del lienzo (y no contra la propia
+            // hoja) y funcione igual en tema claro y oscuro (review C1).
             painter.rect_stroke(
                 rect,
                 0.0,

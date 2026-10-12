@@ -109,11 +109,14 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         let size = egui::vec2(ui.available_width(), 220.0);
         let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 4.0, egui::Color32::from_gray(22));
+        // Un visor vacío enseña su suelo (re-review D3: el gris fijo 22
+        // sobre un diálogo de 226 dejaba el texto a 4,10:1 en claro).
+        let visor = super::visores(ui.visuals().dark_mode);
+        painter.rect_filled(rect, 4.0, visor.suelo);
         painter.rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(60)),
+            egui::Stroke::new(1.0_f32, visor.borde),
             egui::StrokeKind::Inside,
         );
         painter.text(
@@ -121,7 +124,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             egui::Align2::CENTER_CENTER,
             t!("Sin hoja seleccionada"),
             crate::ui_prefs::font_id(13.0, ui.ctx()),
-            egui::Color32::from_gray(120),
+            visor.texto,
         );
         return;
     };
@@ -195,7 +198,7 @@ fn split_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             .show(ui, |ui| {
                 let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
                 let painter = ui.painter_at(rect);
-                painter.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
+                painter.rect_filled(rect, 0.0, super::visores(ui.visuals().dark_mode).hoja);
                 painter.image(
                     texture.id(),
                     rect,

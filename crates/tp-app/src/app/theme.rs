@@ -111,6 +111,49 @@ pub(crate) fn superficies(dark_mode: bool) -> Superficies {
     }
 }
 
+/// Los tokens de las zonas que enseñan una imagen o una malla: el fondo
+/// de la hoja (dónde se pinta la textura y se transparentan sus huecos),
+/// el suelo del visor que la rodea, el marco de 1 px que la delimita y el
+/// texto de los estados vacíos.
+///
+/// Hasta la re-review D3/D4 estos grises venían fijos y asumían fondo
+/// oscuro: en tema claro el lienzo (252) llevaba encima una losa de gris
+/// 30 por cada píxel transparente del atlas, el visor del pivot era otra
+/// losa de 45 y el estado vacío de «Dividir hoja» quedaba con el texto a
+/// 4,10:1. Cada rol coge ahora su valor del tema, y la prueba
+/// `los_visores_cumplen_wcag_y_se_ajustan_al_tema` mide los cuatro.
+pub(crate) struct Visores {
+    /// Detrás de la textura: un paso hacia el gris medio desde el suelo,
+    /// para que la hoja se lea como una pieza apoyada y no como un
+    /// refresco del lienzo.
+    pub(crate) hoja: egui::Color32,
+    /// El fondo del visor: dónde descansa la hoja o se enseña la malla.
+    pub(crate) suelo: egui::Color32,
+    /// Marco de la imagen original: ≥3:1 contra el suelo (WCAG 1.4.11).
+    pub(crate) borde: egui::Color32,
+    /// Texto de los estados vacíos del visor: ≥4,5:1 sobre el suelo.
+    pub(crate) texto: egui::Color32,
+}
+
+/// Los tokens de [`Visores`] para el tema dado.
+pub(crate) fn visores(dark_mode: bool) -> Visores {
+    if dark_mode {
+        Visores {
+            hoja: egui::Color32::from_gray(30),
+            suelo: egui::Color32::from_gray(20),
+            borde: egui::Color32::from_gray(120),
+            texto: egui::Color32::from_gray(150),
+        }
+    } else {
+        Visores {
+            hoja: egui::Color32::from_gray(210),
+            suelo: egui::Color32::from_gray(237),
+            borde: egui::Color32::from_gray(125),
+            texto: egui::Color32::from_gray(100),
+        }
+    }
+}
+
 /// Pinta un estilo con los tokens de [`Superficies`].
 ///
 /// `panel_fill` es el marco por defecto de las barras (`TopBottomPanel`),
@@ -460,6 +503,51 @@ mod tests {
                 activa >= 4.5,
                 "{tema}: el texto de la pestaña activa son {activa:.2}:1,                  hace falta 4.5:1"
             );
+        }
+    }
+
+    /// Re-review D3/D4: los rellenos de los visores venían fijos en grises
+    /// que asumían fondo oscuro —gris 30 detrás de la textura sobre un
+    /// lienzo claro de 252, losa de 45 en el pivot y gris 20 en la
+    /// malla— y el estado vacío de «Dividir hoja» pintaba su texto a
+    /// 4,10:1. Aquí quedan medidos los cuatro roles del token.
+    #[test]
+    fn los_visores_cumplen_wcag_y_se_ajustan_al_tema() {
+        for dark_mode in temas() {
+            let tema = if dark_mode { "oscuro" } else { "claro" };
+            let s = superficies(dark_mode);
+            let v = visores(dark_mode);
+
+            let texto = razon(v.texto, v.suelo);
+            assert!(
+                texto >= 4.5,
+                "{tema}: el texto del estado vacío sobre el suelo son {texto:.2}:1,                  hace falta 4.5:1"
+            );
+            let borde = razon(v.borde, v.suelo);
+            assert!(
+                borde >= 3.0,
+                "{tema}: el marco del visor sobre el suelo son {borde:.2}:1,                  hace falta 3:1"
+            );
+            let hoja_suelo = separacion(v.hoja, v.suelo);
+            let hoja_lienzo = separacion(v.hoja, s.lienzo);
+            assert!(
+                hoja_suelo >= 3.0,
+                "{tema}: la hoja y el suelo sólo se separan {hoja_suelo:.1} L*,                  hace falta 3"
+            );
+            assert!(
+                hoja_lienzo >= 3.0,
+                "{tema}: la hoja y el lienzo sólo se separan {hoja_lienzo:.1} L*,                  hace falta 3"
+            );
+            // Lo que en oscuro queda por debajo del gris medio en claro
+            // tiene que quedar por encima: ese es el fallo de «asumir
+            // fondo oscuro» que la re-review medía píxel a píxel.
+            for (nombre, color) in [("la hoja", v.hoja), ("el suelo", v.suelo)] {
+                assert_eq!(
+                    luz_percibida(color) > 50.0,
+                    !dark_mode,
+                    "{tema}: {nombre} no pinta su tema"
+                );
+            }
         }
     }
 }

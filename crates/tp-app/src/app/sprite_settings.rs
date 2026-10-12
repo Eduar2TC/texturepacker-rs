@@ -334,8 +334,9 @@ fn pivot_preview(
         .on_hover_text(t!("Arrastra para colocar el pivot."))
         .on_hover_cursor(egui::CursorIcon::Crosshair);
 
+    let visor = super::visores(ui.visuals().dark_mode);
     let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_gray(45));
+    painter.rect_filled(rect, 0.0, visor.suelo);
 
     let (rw, rh) = (view.raw_w as f32, view.raw_h as f32);
     let scale = (((rect.width() - 24.0) / rw).min((rect.height() - 24.0) / rh))
@@ -347,7 +348,7 @@ fn pivot_preview(
     painter.rect_stroke(
         orig,
         0.0,
-        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(120)),
+        egui::Stroke::new(1.0_f32, visor.borde),
         egui::StrokeKind::Inside,
     );
 

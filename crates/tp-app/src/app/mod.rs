@@ -50,7 +50,7 @@ pub(crate) use drag::{SpriteDrag, DRAG_THRESHOLD_PX, GHOST_MIN_SIZE_PX};
 use events::{handle_global_file_drop, handle_shortcuts};
 pub(crate) use theme::{
     amber_color, apply_theme, drop_tint, info_color, just_added_color, muted_color,
-    muted_hover_color, superficies,
+    muted_hover_color, superficies, visores,
 };
 
 use crate::i18n::t;
