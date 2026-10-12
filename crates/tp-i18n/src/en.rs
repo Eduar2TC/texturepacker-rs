@@ -43,6 +43,7 @@ pub static EN: &[(&str, &str)] = &[
         "Settings reset to their defaults.",
     ),
     ("Cambio deshecho.", "Change undone."),
+    ("No hay nada que deshacer.", "Nothing to undo."),
     ("Hay cambios sin guardar", "Unsaved changes"),
     (
         "¿Guardar los cambios antes de salir?",

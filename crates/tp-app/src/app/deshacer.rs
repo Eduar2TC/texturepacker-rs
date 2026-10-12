@@ -39,10 +39,19 @@ impl App {
         self.deshacer.pop();
     }
 
-    /// Deshace el último paso (`Ctrl+Z`). Sin pasos no hace nada: no es
-    /// un error, simplemente no hay nada que deshacer.
+    /// Deshace el último paso (`Ctrl+Z`). Sin pasos no hay nada que
+    /// deshacer —no es un error—, pero eso se dice: el atajo seguía vivo
+    /// con la pila vacía y se quedaba en un no-op silencioso, sin que el
+    /// usuario llegara a saber si la tecla le había hecho caso (re-review
+    /// RB3).
     pub(super) fn deshacer(&mut self) {
         let Some(config) = self.deshacer.pop() else {
+            // `Ctrl+Z` mantenido repite el evento: mientras el recuadro del
+            // aviso siga en pantalla no hace falta anotar la línea otra vez.
+            let texto = t!("No hay nada que deshacer.").to_string();
+            if self.aviso_en_pantalla() != Some(texto.as_str()) {
+                self.aviso(LogKind::Info, texto);
+            }
             return;
         };
         self.config = config;
@@ -231,6 +240,51 @@ mod tests {
             app.config.padding,
             por_defecto.padding + 7,
             "deshacer sin pila no puede inventarse un estado"
+        );
+    }
+
+    /// RB3: el no-op de arriba era además silencioso. El menú apaga su
+    /// entrada con la pila vacía, pero `Ctrl+Z` seguía vivo y no decía
+    /// nada: el usuario no llegaba a saber si la tecla le había hecho
+    /// caso. Y con la tecla mantenida —que repite el evento— el mismo
+    /// aviso no debe repetirse en el registro mientras está en pantalla.
+    #[test]
+    fn deshacer_sin_nada_que_hacer_se_avisa_sin_repetirse() {
+        let (mut app, _ctx) = app();
+        assert!(
+            app.deshacer.is_empty(),
+            "la prueba empieza sin nada que deshacer"
+        );
+
+        app.deshacer();
+        assert_eq!(app.deshacer.len(), 0, "sin pila no hay nada que deshacer");
+        assert!(
+            app.aviso.is_some(),
+            "el atajo con la pila vacía debe responder en pantalla"
+        );
+        assert!(
+            app.logs
+                .last()
+                .is_some_and(|l| l.text.contains("No hay nada que deshacer")),
+            "y debe quedarse anotado en el registro"
+        );
+        let anotadas = app.logs.len();
+
+        app.deshacer();
+        assert_eq!(
+            app.logs.len(),
+            anotadas,
+            "mientras el aviso está en pantalla no debe repetirse en el registro"
+        );
+
+        // Expirado el recuadro, volver a pulsar vuelve a avisar: la
+        // deduplicación no puede devolver el silencio.
+        app.aviso = None;
+        app.deshacer();
+        assert_eq!(
+            app.logs.len(),
+            anotadas + 1,
+            "sin aviso en pantalla se vuelve a avisar"
         );
     }
 

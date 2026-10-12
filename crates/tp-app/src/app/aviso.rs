@@ -83,6 +83,14 @@ impl App {
         });
     }
 
+    /// Mensaje que se está enseñando ahora, o `None` si no hay aviso en
+    /// pantalla. Sirve para no repetir el mismo aviso mientras el usuario
+    /// aún lo está viendo: `Ctrl+Z` mantenido con la pila vacía repetiría
+    /// el evento y llenaría el registro de la misma línea (re-review RB3).
+    pub(super) fn aviso_en_pantalla(&self) -> Option<&str> {
+        self.aviso.as_ref().map(|a| a.texto.as_str())
+    }
+
     /// Un aviso de Ajustes que se anota en el registro una sola vez por
     /// racha de cambios.
     ///
