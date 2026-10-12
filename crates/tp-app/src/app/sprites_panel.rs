@@ -437,6 +437,11 @@ fn collect_sprite_ids(app: &App, path: &Path) -> Vec<String> {
 /// Nodo hoja (sheet): contiene sus sprites como
 /// hijos, acepta sprites arrastrados desde el árbol o de otras hojas y se
 /// puede renombrar/quitar por menú contextual.
+///
+/// El estado abierto/cerrado es del usuario (se persiste como en las
+/// carpetas): sólo el «+»/«−» global lo escribe a mano. Antes se
+/// forzaba `open(Some(...))` en cada frame y la hoja se volvía a plegar
+/// al instante, así que desplegarla a mano era imposible.
 fn render_sheet(
     app: &App,
     ui: &mut egui::Ui,
@@ -445,22 +450,34 @@ fn render_sheet(
     force: Option<bool>,
     walk: &mut TreeWalk,
 ) {
-    let id = egui::Id::new(("tree_sheet", group.name.clone()));
     let title = if group.name.is_empty() {
         t!("(hoja principal)").to_string()
     } else {
         group.name.clone()
     };
-    let mut open = group.name.is_empty();
+    if let Some(open) = force {
+        // El «+»/«−» global escribe el estado antes de pintar, con el mismo
+        // truco que las carpetas: CollapsingHeader::show() calcula su id
+        // dentro de un ui.vertical (hijo con salt por defecto); replicamos
+        // ese scope para que el id persistido coincida con el que lee. El
+        // salto hay que darlo con la MISMA tupla que `id_salt` de abajo:
+        // `id_salt` recibe un `egui::Id` ya construido y lo vuelve a
+        // envolver (`Id::new(Id)`), con lo que la clave escrita aquí y la
+        // que lee la cabecera no serían la misma.
+        let ctx = ui.ctx().clone();
+        ui.vertical(|ui| {
+            let id = ui.make_persistent_id(egui::Id::new(("tree_sheet", group.name.clone())));
+            let mut state =
+                egui::collapsing_header::CollapsingState::load_with_default_open(&ctx, id, open);
+            state.set_open(open);
+            state.store(&ctx);
+        });
+    }
     let header = egui::CollapsingHeader::new(
         egui::RichText::new(t!("📂 {} ({})", title, group.sprites.len())).strong(),
     )
-    .id_salt(id)
+    .id_salt(("tree_sheet", group.name.clone()))
     .default_open(group.name.is_empty());
-    if let Some(f) = force {
-        open = f;
-    }
-    let header = header.open(Some(open));
 
     let body = header.show(ui, |ui| {
         // Children: sprites de la hoja (por id, resueltos a su ruta).
@@ -1421,6 +1438,32 @@ mod tests {
         })
     }
 
+    /// `panel_frame` con reloj explícito: `openness`, la animación de
+    /// apertura de `CollapsingHeader`, avanza con el `time` del input, y
+    /// en pruebas hay que moverlo a mano para que termine.
+    fn panel_frame_en(
+        app: &mut App,
+        ctx: &egui::Context,
+        t: f64,
+        eventos: Vec<egui::Event>,
+    ) -> eframe::egui::FullOutput {
+        let pantalla = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1360.0, 860.0),
+            )),
+            time: Some(t),
+            events: eventos,
+            ..egui::RawInput::default()
+        };
+        ctx.run(pantalla, |ctx| {
+            egui::SidePanel::left("sprites_panel")
+                .resizable(true)
+                .default_width(250.0)
+                .show(ctx, |ui| sprites_ui(app, ui));
+        })
+    }
+
     /// B5: el aviso de «movidos al grupo» cuenta lo que se movió de
     /// verdad, no lo que se arrastró. Soltar tres sprites sobre una hoja
     /// que ya contiene a uno de ellos mueve dos, y el mensaje decía tres.
@@ -1477,5 +1520,152 @@ mod tests {
             !aviso.contains("3 sprites"),
             "el aviso sigue contando los arrastrados, no los movidos: {aviso}"
         );
+    }
+
+    /// Proyecto empaquetado con dos hojas manuales («ui» y «fx»), que es
+    /// el caso en el que el árbol pinta nodos hoja. El empaquetado se
+    /// hace con el app completo y la interacción después con
+    /// `panel_frame`, que no dispara repacks de fondo.
+    fn proyecto_con_hojas(tag: &str) -> (App, egui::Context, PathBuf) {
+        let (mut app, ctx, tmp) = proyecto(tag);
+        for _ in 0..4000 {
+            if app.result().is_some() {
+                break;
+            }
+            let _ = app.run_frame(&ctx, idle_input());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(app.result().is_some(), "el proyecto debe empaquetarse");
+        let ids: Vec<String> = app
+            .result()
+            .expect("empaquetado")
+            .result
+            .sprites
+            .iter()
+            .map(|s| s.id.clone())
+            .collect();
+        assert!(ids.len() >= 4, "hacen falta sprites para dos hojas");
+        app.config.folder_groups = vec![
+            tp_core::config::FolderGroup {
+                name: "ui".into(),
+                sprites: ids[..3].to_vec(),
+            },
+            tp_core::config::FolderGroup {
+                name: "fx".into(),
+                sprites: ids[3..].to_vec(),
+            },
+        ];
+        (app, ctx, tmp)
+    }
+
+    /// Ruta de disco del primer sprite de la hoja «ui».
+    fn ruta_ui(app: &App) -> PathBuf {
+        let id = app.config.folder_groups[0].sprites[0].clone();
+        app.result()
+            .expect("empaquetado")
+            .result
+            .sprites
+            .iter()
+            .find(|s| s.id == id)
+            .map(|s| PathBuf::from(&s.source_path))
+            .expect("el id de la hoja resuelve a su sprite")
+    }
+
+    /// Cuántas veces aparece registrada la fila de esa ruta: 1 = sólo la
+    /// carpeta; 2 = además el cuerpo desplegado de la hoja.
+    fn filas_de(app: &App, ruta: &Path) -> usize {
+        app.sprite_row_rects()
+            .iter()
+            .filter(|(p, _)| p.as_path() == ruta)
+            .count()
+    }
+
+    /// Un clic en la cabecera de una hoja la despliega y se queda
+    /// abierta. `render_sheet` forzaba `open(Some(...))` en cada frame,
+    /// así que la hoja se volvía a plegar al instante: desplegarla a
+    /// mano era imposible (sólo servía el «+» global, que escribe el
+    /// estado antes de pintar).
+    #[test]
+    fn un_clic_en_la_cabecera_de_la_hoja_la_despliega() {
+        let (mut app, ctx, tmp) = proyecto_con_hojas("hoja_clic");
+        let ruta = ruta_ui(&app);
+
+        let primera = panel_frame(&mut app, &ctx, Vec::new());
+        assert_eq!(
+            filas_de(&app, &ruta),
+            1,
+            "la hoja empieza plegada: sólo debe verse la fila de la carpeta"
+        );
+        let donde = crate::testing::textos_pintados(&primera)
+            .iter()
+            .find(|(texto, _, _)| texto.contains("ui (3)"))
+            .map(|(_, rect, _)| rect.center())
+            .expect("la cabecera de la hoja «ui» se pinta en el árbol");
+
+        // Clic: pulsar en la cabecera y soltar encima (reloj avanzando
+        // para que termine la animación de apertura).
+        let _ = panel_frame_en(
+            &mut app,
+            &ctx,
+            1.1,
+            vec![
+                egui::Event::PointerMoved(donde),
+                egui::Event::PointerButton {
+                    pos: donde,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::NONE,
+                },
+            ],
+        );
+        let _ = panel_frame_en(
+            &mut app,
+            &ctx,
+            1.2,
+            vec![egui::Event::PointerButton {
+                pos: donde,
+                button: egui::PointerButton::Primary,
+                pressed: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+        );
+
+        let _ = panel_frame_en(&mut app, &ctx, 1.7, Vec::new());
+        assert_eq!(
+            filas_de(&app, &ruta),
+            2,
+            "el clic debe desplegar la hoja: su cuerpo pinta sus sprites"
+        );
+        // Y se queda abierta: el siguiente frame no la vuelve a cerrar.
+        let _ = panel_frame_en(&mut app, &ctx, 2.3, Vec::new());
+        assert_eq!(
+            filas_de(&app, &ruta),
+            2,
+            "la hoja abierta debe seguir abierta en los frames siguientes"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// El «+» global despliega las hojas también: el estado que el fix
+    /// deja en manos del usuario sigue siendo escribible por el control
+    /// de cabecera (antes era la única vía, y no debe perderse).
+    #[test]
+    fn el_mas_global_despliega_las_hojas() {
+        let (mut app, ctx, tmp) = proyecto_con_hojas("hoja_mas");
+        let ruta = ruta_ui(&app);
+
+        let _ = panel_frame_en(&mut app, &ctx, 1.0, Vec::new());
+        assert_eq!(filas_de(&app, &ruta), 1, "la hoja empieza plegada");
+
+        app.tree_force_open = Some(true);
+        let _ = panel_frame_en(&mut app, &ctx, 1.5, Vec::new());
+        assert_eq!(
+            filas_de(&app, &ruta),
+            2,
+            "el «+» debe abrir la hoja y la apertura terminar con el reloj"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
