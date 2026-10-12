@@ -303,6 +303,12 @@ impl App {
         let mut watcher =
             match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
                 if let Ok(event) = res {
+                    // Solo lo que cambia el contenido: las aperturas que
+                    // genera la propia app no despiertan a nadie (véase
+                    // `evento_de_cambio`).
+                    if !evento_de_cambio(&event) {
+                        return;
+                    }
                     let _ = tx.send(event);
                 }
             }) {
@@ -662,6 +668,20 @@ impl App {
     }
 }
 
+/// ¿Puede este evento del disco cambiar lo que muestra la app?
+///
+/// Los `Access` (apertura, lectura, cierre) no tocan el contenido: los
+/// cambios de verdad llegan como `Modify`, `Create`, `Remove` o `Rename`.
+/// Filtrarlos mantiene fuera del canal las aperturas que genera la propia
+/// app —el `read_dir` del snapshot de mtimes recorre el directorio
+/// vigilado cada 150 ms—, que con el hilo del watcher despertando la UI
+/// formarían un lazo cerrado: sondeo → disco → evento → repaint → sondeo,
+/// que deja la CPU pegada en reposo y que solo se manifestaba con un
+/// proyecto cargado (sin directorio de entrada no hay recorrido).
+pub(super) fn evento_de_cambio(event: &notify::Event) -> bool {
+    !matches!(event.kind, notify::EventKind::Access(_))
+}
+
 pub(super) fn collect_images(dir: &Path, out: &mut Vec<PathBuf>) -> Vec<PathBuf> {
     // Un fichero no es un error: el `.tps` admite archivos sueltos en
     // `input_directory` y simplemente no hay nada que recorrer.
@@ -838,6 +858,68 @@ mod on_demand_tests {
         assert!(
             slot.lock().unwrap().is_none(),
             "la app no duerme con la vista previa al día"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// El `read_dir` del snapshot no debe despertar a la app.
+    ///
+    /// El watcher vigila el directorio de entrada de forma recursiva y el
+    /// snapshot de mtimes lo recorre cada 150 ms. Si las aperturas que
+    /// genera ese propio recorrido volvieran al canal, el hilo del watcher
+    /// pediría repaint y el repaint dispararía el frame siguiente con su
+    /// sondeo: un lazo cerrado (sondeo → disco → evento → repaint →
+    /// sondeo) que dejaba la CPU pegada en reposo con un proyecto cargado.
+    /// Solo los eventos que cambian el contenido pueden despertarla.
+    #[test]
+    fn leer_el_disco_no_despierta_a_la_app() {
+        let (mut app, ctx, tmp) = demo("watcher");
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview de arranque: {boot:?}");
+        assert!(
+            app.watcher.is_some(),
+            "el proyecto debe vigilar su directorio de entrada"
+        );
+
+        // Disciplina de `settle_until_quiet` pero con el watcher vivo: dos
+        // frames seguidos sin pedir repaint dejan la deuda de repaints de
+        // egui a cero, que es la única condición en la que egui se toma en
+        // serio lo que pida después un hilo (un request tardío se traga si
+        // el frame anterior dejó la deuda a cero).
+        let slot = record_repaints(&ctx);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let mut quiet = 0;
+        while quiet < 2 && std::time::Instant::now() < deadline {
+            let _ = app.run_frame(&ctx, crate::testing::idle_input());
+            let mut g = slot.lock().unwrap();
+            if g.is_none() {
+                quiet += 1;
+            } else {
+                quiet = 0;
+                *g = None;
+            }
+        }
+        assert_eq!(quiet, 2, "la app no llega a estar en calma");
+
+        // El recorrido del snapshot abre el directorio vigilado…
+        let _ = app.snapshot_changed();
+        // …y mientras tanto la app no pide ni un frame.
+        std::thread::sleep(Duration::from_millis(400));
+        assert!(
+            slot.lock().unwrap().is_none(),
+            "el propio `read_dir` del snapshot despertó a la app: ese \
+             lazo cerrado es el que dejaba la CPU pegada en reposo"
+        );
+
+        // Un cambio de verdad sí debe despertarla.
+        std::fs::write(tmp.join("sprites").join("nuevo.png"), [0u8; 64]).ok();
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while slot.lock().unwrap().is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            slot.lock().unwrap().is_some(),
+            "un sprite nuevo en disco debe despertar a la app"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1085,8 +1167,7 @@ mod on_demand_tests {
     /// Apaga el watcher de disco y corre frames hasta que dos seguidos no piden
     /// repaint, dejando el slot registrado y a `None`. Así el único repaint que
     /// se pueda ver en el frame siguiente es el que pida ese frame: sin esta
-    /// disciplina los eventos del watcher (incluso los `Open` que genera el
-    /// propio sondeo de mtimes) enmascararían cualquier regresión.
+    /// disciplina un evento del watcher enmascararía cualquier regresión.
     fn settle_until_quiet(app: &mut App, ctx: &egui::Context) -> RepaintSlot {
         app.watcher = None;
         std::thread::sleep(Duration::from_millis(600));
