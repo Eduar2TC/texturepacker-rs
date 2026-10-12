@@ -2659,6 +2659,87 @@ mod tests {
         }
     }
 
+    /// B6: arrastrar la calidad es **un** gesto, no cuarenta. Cada frame en
+    /// que el `DragValue` cambiaba avisaba «Se aplicará al Publicar…», así
+    /// que un arrastre dejaba la misma línea pegada cuarenta veces en el
+    /// log —con el panel inferior desplegado desde el error anterior—. La
+    /// racha entera tiene que caber en una sola línea.
+    #[test]
+    fn arrastrar_un_drag_value_no_inunda_el_log() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.config.gpu_format = GpuFormat::Jpg;
+        app.config.jpg_quality = 90;
+
+        // Abrir «Procesamiento», que es donde vive el control.
+        let primera = ajustes_frame(&mut app, &ctx);
+        let donde_cabecera = crate::testing::textos_pintados(&primera)
+            .iter()
+            .find(|(texto, _, _)| texto.trim() == "Procesamiento")
+            .map(|(_, rect, _)| rect.center())
+            .expect("la cabecera «Procesamiento» se pinta");
+        let pulsar = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = ajustes_con_eventos(
+            &mut app,
+            &ctx,
+            vec![
+                egui::Event::PointerMoved(donde_cabecera),
+                pulsar(donde_cabecera, true),
+            ],
+        );
+        let _ = ajustes_con_eventos(&mut app, &ctx, vec![pulsar(donde_cabecera, false)]);
+        let _ = ajustes_frame(&mut app, &ctx);
+        // Como en el test B9: el cuerpo recién abierto tarda dos frames en
+        // medir con su altura de verdad, y el control de la calidad es la
+        // última fila de ese cuerpo.
+        let mut abierta = ajustes_frame(&mut app, &ctx);
+        for _ in 0..4 {
+            if crate::testing::textos_pintados(&abierta)
+                .iter()
+                .any(|(t, _, _)| t.trim() == "90")
+            {
+                break;
+            }
+            abierta = ajustes_frame(&mut app, &ctx);
+        }
+        // El control de la calidad: el relleno más pequeño que contiene al
+        // «90» que pinta, es decir, la caja del `DragValue`.
+        let caja = crate::testing::controles_de(&abierta, "90")
+            .first()
+            .copied()
+            .expect("el control de calidad JPG se pinta con su valor");
+        let mut pos = caja.center();
+        let _ = ajustes_con_eventos(&mut app, &ctx, vec![pulsar(pos, true)]);
+        // Seis frame de arrastre: cada movimiento es un frame, como en la
+        // ventana real.
+        for paso in 1..=6 {
+            pos.x = caja.center().x + 8.0 * paso as f32;
+            let _ = ajustes_con_eventos(&mut app, &ctx, vec![egui::Event::PointerMoved(pos)]);
+        }
+        let _ = ajustes_con_eventos(&mut app, &ctx, vec![pulsar(pos, false)]);
+
+        let aviso = "Se aplicará al Publicar (calidad JPG).";
+        let lineas: Vec<_> = app
+            .log_texts()
+            .into_iter()
+            .filter(|l| l.contains(aviso))
+            .collect();
+        assert_eq!(
+            app.config.jpg_quality, 100,
+            "el arrastre tiene que haber movido el valor para que el aviso salga"
+        );
+        assert_eq!(
+            lineas.len(),
+            1,
+            "un arrastre entero debe dejar una sola línea, no una por frame: {lineas:?}"
+        );
+    }
+
     /// I3: «Limpiar» no sirve de nada si no está donde se pueda tocar: en
     /// la misma fila que la caja, a su derecha y sin salirse del panel.
     /// El texto pintado no lo delata —se pinta igual, hasta debajo de otra

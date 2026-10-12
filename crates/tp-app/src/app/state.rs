@@ -303,17 +303,29 @@ impl App {
             self.bottom_collapsed = false;
         }
         // M6: el reintento automático de la vista previa vuelve a fallar con
-        // el mismo motivo y la línea salía dos veces seguidas. Un error
-        // idéntico al que está justo encima no añade nada: esa línea sigue a
-        // la vista y el motivo también lo guarda el lienzo (C4). Sólo se
-        // dupe el registro; los errores separados por otro mensaje —y los
+        // el mismo motivo y la línea salía dos veces seguidas. Un mensaje
+        // idéntico al que está justo encima no añade registro: esa línea
+        // sigue a la vista y el motivo también lo guarda el lienzo (C4).
+        // Sólo se dupe el registro; los mensajes separados por otro —y los
         // que llegan tras una acción del usuario con lo anterior ya lejos—
         // siguen entrando.
-        if matches!(kind, LogKind::Error)
+        //
+        // Y B6: la regla también cubre Info. Un arrastre de `DragValue`
+        // cambia la calidad en cada frame y soltaba «Se aplicará al
+        // Publicar…» cuarenta veces seguidas: cuarenta líneas pegadas para
+        // decir una sola cosa. Un tipo distinto con el mismo texto no
+        // cuenta como repetido (un Error que repite un Info no es lo mismo).
+        //
+        // Avisos, en cambio, no se dupe: un fallo que se recupera en
+        // silencio y vuelve a aparecer es noticia nueva y hay que verlo
+        // otra vez (`una_carpeta_de_entrada_ilegible_se_avisa_sin_repadir`
+        // lo tiene anotado), mientras que un aviso idéntico pegado al
+        // anterior no lo es.
+        if !matches!(kind, LogKind::Warning)
             && self
                 .logs
                 .last()
-                .is_some_and(|l| matches!(l.kind, LogKind::Error) && l.text == text)
+                .is_some_and(|l| l.kind == kind && l.text == text)
         {
             return;
         }

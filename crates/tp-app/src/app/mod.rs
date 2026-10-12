@@ -167,6 +167,9 @@ pub(crate) enum BottomTab {
     Mesh,
 }
 
+/// Tipo de mensaje del registro: el color del panel inferior y, desde la
+/// re-review B6, también la regla de duplicados de [`App::log`].
+#[derive(PartialEq, Eq)]
 pub(crate) enum LogKind {
     Info,
     Warning,
