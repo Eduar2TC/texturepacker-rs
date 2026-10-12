@@ -8,26 +8,28 @@ use std::path::{Path, PathBuf};
 
 impl App {
     /// Mueve unos sprites (por id) a la hoja indicada: los quita de todas
-    /// las hojas y los asigna a la de destino. Devuelve cuántos cambiaron.
+    /// las hojas menos la de destino y los asigna a ella si no estaban ya.
+    /// Devuelve cuántos cambiaron.
     pub fn move_sprites_to_group(&mut self, ids: &[String], group_index: usize) -> usize {
         let mut moved = 0usize;
         for id in ids {
-            // ¿Ya está en el grupo destino? Retirarlo de los demás y, solo si
-            // no estaba ya allí, añadirlo (mover a su propio grupo = no-op;
-            // sin este guardia, retain+condición lo BORRABA).
-            let mut already_there = false;
+            // Retirarlo sólo de las demás hojas: si el `retain` lo quitara
+            // también del destino, soltar un sprite sobre su propia hoja lo
+            // devolvería a la hoja principal en lugar de no hacer nada.
+            let mut ya_estaba = false;
             for (i, g) in self.config.folder_groups.iter_mut().enumerate() {
-                let before = g.sprites.len();
-                g.sprites.retain(|s| s != id);
-                if i == group_index && before > g.sprites.len() {
-                    already_there = true;
+                if i == group_index {
+                    ya_estaba = g.sprites.iter().any(|s| s == id);
+                } else {
+                    g.sprites.retain(|s| s != id);
                 }
             }
-            if !already_there {
-                if let Some(g) = self.config.folder_groups.get_mut(group_index) {
-                    g.sprites.push(id.clone());
-                    moved += 1;
-                }
+            if ya_estaba {
+                continue;
+            }
+            if let Some(g) = self.config.folder_groups.get_mut(group_index) {
+                g.sprites.push(id.clone());
+                moved += 1;
             }
         }
         if moved > 0 {
@@ -45,21 +47,23 @@ impl App {
             let Some(id) = self.sprite_id_for_path(&path) else {
                 continue;
             };
-            // Mismo guardia que move_sprites_to_group: reasignar a su propio
-            // grupo es un no-op, no un borrado.
-            let mut already_there = false;
+            // Mismo criterio que move_sprites_to_group: quitarlo sólo de
+            // los demás grupos, que reasignar la selección a su propio
+            // grupo no la borre.
+            let mut ya_estaba = false;
             for (i, g) in self.config.folder_groups.iter_mut().enumerate() {
-                let before = g.sprites.len();
-                g.sprites.retain(|s| s != &id);
-                if i == group_index && before > g.sprites.len() {
-                    already_there = true;
+                if i == group_index {
+                    ya_estaba = g.sprites.iter().any(|s| s == &id);
+                } else {
+                    g.sprites.retain(|s| s != &id);
                 }
             }
-            if !already_there {
-                if let Some(g) = self.config.folder_groups.get_mut(group_index) {
-                    g.sprites.push(id.clone());
-                    moved += 1;
-                }
+            if ya_estaba {
+                continue;
+            }
+            if let Some(g) = self.config.folder_groups.get_mut(group_index) {
+                g.sprites.push(id.clone());
+                moved += 1;
             }
         }
         if moved > 0 {
@@ -391,5 +395,104 @@ impl App {
             })
             .map(|(i, _)| i)
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui;
+    use std::time::Duration;
+
+    fn app() -> App {
+        let ctx = egui::Context::default();
+        App::new_for_testing(ctx.clone(), None)
+    }
+
+    /// Soltar sprites sobre su propia hoja no los borra: `retain` los quita
+    /// de todas las hojas y, sin el guardia, no se volvían a añadir, con lo
+    /// que desaparecían del atlas.
+    #[test]
+    fn mover_a_su_propio_grupo_no_lo_borra() {
+        let mut app = app();
+        app.config.folder_groups = vec![
+            tp_core::config::FolderGroup {
+                name: "ui".into(),
+                sprites: vec!["a".into(), "b".into()],
+            },
+            tp_core::config::FolderGroup {
+                name: "fx".into(),
+                sprites: vec!["c".into()],
+            },
+        ];
+
+        let moved = app.move_sprites_to_group(&["a".into()], 0);
+
+        assert_eq!(moved, 0, "mover a su propio grupo no mueve nada");
+        assert_eq!(
+            app.config.folder_groups[0].sprites,
+            vec!["a".to_string(), "b".to_string()],
+            "el sprite sigue en su hoja"
+        );
+        assert_eq!(
+            app.config.folder_groups[1].sprites,
+            vec!["c".to_string()],
+            "las demás hojas no se tocan"
+        );
+    }
+
+    /// Mismo guardia en el camino del menú («↪ Selección»): reasignar la
+    /// selección a su propio grupo es un no-op, no un borrado.
+    #[test]
+    fn reasignar_la_seleccion_a_su_propio_grupo_no_lo_borra() {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_yathere_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).unwrap();
+        let project = crate::testing::create_example_project(&tmp, &sprites).expect("proyecto");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(project));
+        // Necesita el atlas para resolver ruta → id, como en la app real.
+        let _ = crate::testing::pump_on_demand(
+            &mut app,
+            &ctx,
+            |a| a.result().is_some(),
+            Duration::from_secs(15),
+        );
+        let sprite = app
+            .result()
+            .expect("la preview de arranque debe dar atlas")
+            .result
+            .sprites
+            .first()
+            .cloned()
+            .expect("al menos un sprite");
+        app.config.folder_groups = vec![
+            tp_core::config::FolderGroup {
+                name: "ui".into(),
+                sprites: vec![sprite.id.clone()],
+            },
+            tp_core::config::FolderGroup {
+                name: "fx".into(),
+                sprites: vec![],
+            },
+        ];
+        app.selected_paths = std::iter::once(PathBuf::from(&sprite.source_path)).collect();
+
+        let moved = app.assign_selected_to_group(0);
+
+        assert_eq!(moved, 0, "reasignar a su propio grupo no mueve nada");
+        assert_eq!(
+            app.config.folder_groups[0].sprites,
+            vec![sprite.id],
+            "el sprite sigue en su hoja"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
