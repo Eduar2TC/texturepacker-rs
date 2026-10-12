@@ -144,6 +144,10 @@ impl App {
                 match msg.result {
                     Ok(out) => {
                         self.preview_error = None;
+                        // Una vista previa que acaba bien apaga la
+                        // insignia «✖ Error»: el fallo que la encendió ya
+                        // está compensado por un resultado bueno (B12).
+                        self.error_pendiente = false;
                         self.apply_output(ctx, out, false);
                         self.log(
                             LogKind::Info,
@@ -591,6 +595,9 @@ impl App {
         self.progreso = None;
         match msg.result {
             Ok(out) => {
+                // Publicar bien también apaga la insignia «✖ Error»: lo
+                // que la encendió queda compensado (B12).
+                self.error_pendiente = false;
                 let total = out.result.total_sprites;
                 let aliases = out.result.alias_count;
                 let pages = out.pages.len();

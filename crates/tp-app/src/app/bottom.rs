@@ -42,8 +42,15 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
         // veces (E1/H3). La tira no se esconde ni con el panel plegado, así
         // que no se pierde nada y la barra de pestañas queda sólo pestañas.
         //
-        // Punto de error visible aunque el Log esté plegado o en otra pestaña.
-        let has_errors = app.logs.iter().any(|e| matches!(e.kind, LogKind::Error));
+        // Punto de error visible aunque el Log esté plegado o en otra
+        // pestaña. No se recorre el histórico: la insignia avisa del
+        // fallo **pendiente**, y se apaga sola cuando algo vuelve a ir
+        // bien —una vista previa o una publicación completa— o cuando se
+        // limpia el registro. Derivarla del histórico entero (lo que
+        // hacía) dejaba un único Error de la primera publicación
+        // encendiendo la alarma durante cincuenta publicaciones
+        // correctas (re-review B12).
+        let has_errors = app.error_pendiente;
         if has_errors {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Mismo motivo que el chevron: aquí también era `small_button`
@@ -81,7 +88,7 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
     }
 }
 
-fn log_view(app: &App, ui: &mut egui::Ui) {
+fn log_view(app: &mut App, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .id_salt("log_scroll")
         .stick_to_bottom(true)
@@ -96,6 +103,24 @@ fn log_view(app: &App, ui: &mut egui::Ui) {
                 };
                 ui.colored_label(color, &entry.text);
             }
+            // El registro sólo se recorta solo por tamaño (a 2000 líneas) y
+            // nunca se vacía, así que sin esta puerta la insignia «✖ Error»
+            // de la barra no tenía forma de apagarse a mano (re-review B12).
+            // Va al final de la lista y no en una fila propia: con
+            // `stick_to_bottom` se queda siempre a la vista sin subir la
+            // altura del panel, que mide lo que mide (120 px).
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button(t!("Limpiar"))
+                        .on_hover_text(t!("Borra todas las líneas del registro"))
+                        .clicked()
+                    {
+                        app.logs.clear();
+                        app.error_pendiente = false;
+                    }
+                });
+            });
         });
 }
 
@@ -702,6 +727,135 @@ mod tests {
         assert!(
             app.bottom_tab == BottomTab::Sprites,
             "y deja la pestaña donde el usuario la tenía"
+        );
+    }
+
+    /// Atlas vacío con el que responder a un empaquetado bueno sin montar
+    /// el pipeline entero (mismo truco que `preview::error_tests`).
+    fn salida_vacia() -> tp_core::pipeline::PipelineOutput {
+        tp_core::pipeline::PipelineOutput {
+            result: tp_core::types::PackResult {
+                config: tp_core::config::ProjectConfig::default(),
+                sprites: Vec::new(),
+                pages: Vec::new(),
+                warnings: Vec::new(),
+                stage_times_ms: Vec::new(),
+                total_sprites: 0,
+                alias_count: 0,
+                output_files: Vec::new(),
+            },
+            pages: Vec::new(),
+        }
+    }
+
+    /// Entrada como la de siempre, con eventos encima (clics y arrastres).
+    fn con_eventos(eventos: Vec<egui::Event>) -> eframe::egui::RawInput {
+        eframe::egui::RawInput {
+            events: eventos,
+            ..crate::testing::idle_input()
+        }
+    }
+
+    /// B12: la insignia «✖ Error» avisa del fallo pendiente, no del
+    /// histórico. Con la regla anterior —recorrer todas las líneas del
+    /// registro—, un solo Error de la primera publicación dejaba la
+    /// alarma encendida durante cincuenta publicaciones correctas.
+    #[test]
+    fn la_insignia_de_error_se_apaga_cuando_algo_va_bien() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        // La primera publicación falla: la insignia se enciende.
+        app.log(LogKind::Error, "la primera publicación falló".into());
+        assert!(
+            app.error_pendiente,
+            "un Error tiene que encender la insignia de la barra"
+        );
+
+        // Cincuenta publicaciones correctas después, apagada.
+        for _ in 0..50 {
+            app.handle_run_result(
+                &ctx,
+                crate::app::RunMessage {
+                    elapsed_ms: 1,
+                    result: Ok(salida_vacia()),
+                },
+            );
+        }
+        assert!(
+            !app.error_pendiente,
+            "lo bueno que vino después tiene que apagar la alarma"
+        );
+        let salida = app.run_frame(&ctx, idle_input());
+        assert!(
+            controles_de(&salida, "✖ Error").is_empty(),
+            "la insignia roja ya no tiene motivo para estar pintada"
+        );
+    }
+
+    /// Control del anterior: un Error posterior vuelve a encenderla. Sin
+    /// esta prueba, la anterior pasaría también con la insignia pegada en
+    /// «apagada».
+    #[test]
+    fn un_error_nuevo_vuelve_a_encender_la_insignia() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        app.log(LogKind::Error, "un fallo cualquiera".into());
+        app.handle_run_result(
+            &ctx,
+            crate::app::RunMessage {
+                elapsed_ms: 1,
+                result: Ok(salida_vacia()),
+            },
+        );
+        app.log(LogKind::Error, "y otro después del arreglo".into());
+
+        assert!(
+            app.error_pendiente,
+            "un Error posterior tiene que volver a encenderla"
+        );
+    }
+
+    /// La otra vía de B12: el registro no se vacía solo —sólo se recorta
+    /// por tamaño—, así que sin «Limpiar» la insignia no tenía forma de
+    /// apagarse a mano cuando ese fallo ya no le interesaba a nadie.
+    #[test]
+    fn limpiar_el_registro_tambien_apaga_la_insignia() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.log(LogKind::Error, "algo fue mal".into());
+
+        // El botón vive al final de la lista del Log, a la derecha.
+        let boton = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let salida = app.run_frame(&ctx, idle_input());
+        let donde = controles_de(&salida, "Limpiar")
+            .first()
+            .expect("«Limpiar» tiene que estar en la vista del Log")
+            .center();
+        let _ = app.run_frame(
+            &ctx,
+            con_eventos(vec![egui::Event::PointerMoved(donde), boton(donde, true)]),
+        );
+        let _ = app.run_frame(&ctx, con_eventos(vec![boton(donde, false)]));
+        // El clic se pinta en el frame que lo recibe —con la barra todavía
+        // roja, que es como egui pinta— y el cambio se ve en el siguiente,
+        // igual que el resto de la app.
+        let salida = app.run_frame(&ctx, idle_input());
+
+        assert!(
+            app.logs.is_empty(),
+            "«Limpiar» tiene que vaciar el registro"
+        );
+        assert!(!app.error_pendiente, "y apagar la insignia con él");
+        assert!(
+            controles_de(&salida, "✖ Error").is_empty(),
+            "y no puede quedar pintada sobre un registro vacío"
         );
     }
 }

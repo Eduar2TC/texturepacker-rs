@@ -727,6 +727,9 @@ pub static EN: &[(&str, &str)] = &[
     ("Buscar ajuste…", "Search settings…"),
     ("Limpiar", "Clear"),
     ("Ningún ajuste coincide con la búsqueda.", "No settings match the search."),
+
+    // Registro del panel inferior (B12).
+    ("Borra todas las líneas del registro", "Removes every line from the log"),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {

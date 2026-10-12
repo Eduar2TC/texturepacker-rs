@@ -83,6 +83,7 @@ impl App {
             bottom_tab: BottomTab::Log,
             logs: Vec::new(),
             aviso: None,
+            error_pendiente: false,
             calidad_aviso: None,
             unreadable_dirs: Vec::new(),
             project_path: None,
@@ -311,6 +312,11 @@ impl App {
         if matches!(kind, LogKind::Error) {
             self.bottom_tab = BottomTab::Log;
             self.bottom_collapsed = false;
+            // Enciende la insignia «✖ Error» de la barra de pestañas. Va
+            // aquí y no en el empaquetado porque la alarma debe cubrir
+            // cualquier Error —vista previa, ficheros, preferencias—, y
+            // se apaga con el primer resultado bueno de vuelta (B12).
+            self.error_pendiente = true;
         }
         // M6: el reintento automático de la vista previa vuelve a fallar con
         // el mismo motivo y la línea salía dos veces seguidas. Un error

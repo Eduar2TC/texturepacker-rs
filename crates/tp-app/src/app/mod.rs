@@ -266,6 +266,14 @@ pub struct App {
     /// Aviso in-situ que se está enseñando junto al último gesto (review
     /// UI/UX I4): se apaga solo. Véase el módulo [`aviso`].
     aviso: Option<aviso::Aviso>,
+    /// Hubo un Error que aún no se ha visto compensado por un resultado
+    /// bueno: es lo que enciende la insignia «✖ Error» de la barra de
+    /// pestañas (re-review B12). Se enciende en [`App::log`] con cada
+    /// Error y se apaga cuando una vista previa o una publicación acaban
+    /// bien, o cuando el usuario limpia el registro. No se deriva del
+    /// histórico: un único Error de la primera publicación dejaba la
+    /// alarma encendida durante cincuenta publicaciones correctas.
+    error_pendiente: bool,
     /// Último aviso de calidad emitido y el frame en que salió: un
     /// `DragValue` de Ajustes cambia en cada frame mientras se arrastra y
     /// «Se aplicará al Publicar…» se anota una sola vez por racha de
