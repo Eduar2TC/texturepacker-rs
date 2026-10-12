@@ -167,9 +167,6 @@ pub(crate) enum BottomTab {
     Mesh,
 }
 
-/// Tipo de mensaje del registro: el color del panel inferior y, desde la
-/// re-review B6, también la regla de duplicados de [`App::log`].
-#[derive(PartialEq, Eq)]
 pub(crate) enum LogKind {
     Info,
     Warning,
@@ -269,6 +266,11 @@ pub struct App {
     /// Aviso in-situ que se está enseñando junto al último gesto (review
     /// UI/UX I4): se apaga solo. Véase el módulo [`aviso`].
     aviso: Option<aviso::Aviso>,
+    /// Último aviso de calidad emitido y el frame en que salió: un
+    /// `DragValue` de Ajustes cambia en cada frame mientras se arrastra y
+    /// «Se aplicará al Publicar…» se anota una sola vez por racha de
+    /// cambios (re-review B6). Véase [`App::aviso_de_calidad`].
+    calidad_aviso: Option<(String, u64)>,
     /// Directorios que ya se avisó que no se pudieron leer: evita repetir el
     /// mismo aviso en cada repaso del snapshot (se olvidan al recuperarse).
     unreadable_dirs: Vec<PathBuf>,

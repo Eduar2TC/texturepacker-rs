@@ -1326,8 +1326,8 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                         .changed()
                     {
                         // No reempaqueta: solo afecta a la exportación.
-                        app.log(
-                            super::LogKind::Info,
+                        app.aviso_de_calidad(
+                            ui.ctx(),
                             t!("Se aplicará al Publicar (nivel de optimización PNG).").into(),
                         );
                     }
@@ -1340,8 +1340,8 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                         .add(egui::DragValue::new(&mut app.config.jpg_quality).range(0..=100))
                         .changed()
                     {
-                        app.log(
-                            super::LogKind::Info,
+                        app.aviso_de_calidad(
+                            ui.ctx(),
                             t!("Se aplicará al Publicar (calidad JPG).").into(),
                         );
                     }
@@ -1362,8 +1362,8 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                             .add(egui::DragValue::new(&mut app.config.webp_quality).range(0..=100))
                             .changed()
                         {
-                            app.log(
-                                super::LogKind::Info,
+                            app.aviso_de_calidad(
+                                ui.ctx(),
                                 t!("Se aplicará al Publicar (calidad WebP).").into(),
                             );
                         }

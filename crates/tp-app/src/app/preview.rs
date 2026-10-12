@@ -1646,7 +1646,7 @@ mod ayuda_tests {
 #[cfg(test)]
 mod error_tests {
     use super::*;
-    use crate::app::{RunMessage, WorkspaceSnapshot};
+    use crate::app::{LogKind, RunMessage, WorkspaceSnapshot};
     use crate::testing::{idle_input, texto_pintado};
     use std::sync::mpsc;
 
@@ -1856,6 +1856,44 @@ mod error_tests {
             app.preview_error.is_some(),
             "el motivo sigue a la vista en el lienzo; registro: {:?}",
             app.log_texts()
+        );
+    }
+
+    /// La otra cara de M6: lo que **no** es Error sí se anota aunque se
+    /// repita seguido. «Vista previa actualizada» es una cuenta —la
+    /// bandera con la que las pruebas saben que el recálculo llegó—, y el
+    /// primer intento de B6 deduplicó también los Info para frenar el
+    /// arrastre de `DragValue`: la CI paró en cuatro pruebas distintas
+    /// con el recuento corto. El arrastre se frena en su origen
+    /// (`aviso_de_calidad`), no en el registro.
+    #[test]
+    fn los_info_repetidos_se_anotan_todos_porque_son_una_cuenta() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx, None);
+
+        for _ in 0..3 {
+            app.log(LogKind::Info, "Vista previa actualizada".into());
+        }
+        let vistas = app
+            .log_texts()
+            .iter()
+            .filter(|l| l.contains("Vista previa actualizada"))
+            .count();
+        assert_eq!(
+            vistas, 3,
+            "tres actualizaciones tienen que ser tres líneas en el registro"
+        );
+
+        app.log(LogKind::Error, "el mismo fallo".into());
+        app.log(LogKind::Error, "el mismo fallo".into());
+        let fallos = app
+            .log_texts()
+            .iter()
+            .filter(|l| l.contains("el mismo fallo"))
+            .count();
+        assert_eq!(
+            fallos, 1,
+            "un Error idéntico al anterior sigue sin repetirse (M6)"
         );
     }
 }

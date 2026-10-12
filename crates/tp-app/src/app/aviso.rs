@@ -82,6 +82,28 @@ impl App {
             duracion,
         });
     }
+
+    /// Un aviso de Ajustes que se anota en el registro una sola vez por
+    /// racha de cambios.
+    ///
+    /// Un `DragValue` cambia en cada frame mientras se arrastra, y el
+    /// aviso «Se aplicará al Publicar…» salía uno por frame: cuarenta
+    /// líneas pegadas para decir una sola cosa (re-review B6). Aquí sólo
+    /// se anota si en el frame anterior no salió ya el mismo, y un hueco
+    /// entre frames —soltar y volver a arrastrar— lo vuelve a anotar,
+    /// porque es un gesto nuevo. Se toma el `ctx` para contar frames así
+    /// no hace falta que la llamada recuerde nada entre frames.
+    pub(super) fn aviso_de_calidad(&mut self, ctx: &egui::Context, texto: String) {
+        let frame = ctx.cumulative_pass_nr();
+        let misma_racha = self
+            .calidad_aviso
+            .as_ref()
+            .is_some_and(|(anterior, en)| *anterior == texto && *en + 1 == frame);
+        self.calidad_aviso = Some((texto.clone(), frame));
+        if !misma_racha {
+            self.log(LogKind::Info, texto);
+        }
+    }
 }
 
 /// El color con el que el panel de log pinta cada tipo de mensaje.
