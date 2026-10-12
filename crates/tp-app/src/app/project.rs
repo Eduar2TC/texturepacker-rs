@@ -153,6 +153,13 @@ impl App {
     /// cerrar la ventana con la configuración tocada y sólo se cierra con una
     /// decisión. Guardar puede cancelarse (diálogo de archivo del sistema o
     /// error de escritura), en cuyo caso la ventana sigue abierta (C2).
+    ///
+    /// El orden y el peso son los de un diálogo de confirmación de GTK
+    /// (re-review D6): los botones van alineados a la derecha, la
+    /// cancelación a la izquierda del grupo, la destructiva en el centro
+    /// con su color y la sugerida la última, con el acento. Antes salían
+    /// tres `ui.button` idénticos, a la izquierda y con «Guardar y salir»
+    /// el primero de todos, que es justo el revés.
     pub(super) fn exit_dialog(&mut self, ctx: &egui::Context) {
         if !self.exit_pending {
             return;
@@ -163,8 +170,33 @@ impl App {
             ui.add_space(6.0);
             ui.label(t!("¿Guardar los cambios antes de salir?"));
             ui.add_space(12.0);
-            ui.horizontal(|ui| {
-                if ui.button(t!("💾 Guardar y salir")).clicked() {
+            let visuals = ui.visuals().clone();
+            let destructivo = visuals.error_fg_color;
+            let sugerido = visuals.selection.bg_fill;
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let guardar = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(t!("💾 Guardar y salir"))
+                            .color(super::theme::texto_sobre(sugerido)),
+                    )
+                    .fill(sugerido),
+                );
+                let tirar = ui.add(
+                    egui::Button::new(
+                        egui::RichText::new(t!("Salir sin guardar"))
+                            .color(super::theme::texto_sobre(destructivo)),
+                    )
+                    .fill(destructivo),
+                );
+                if ui.button(t!("Cancelar")).clicked() {
+                    self.exit_pending = false;
+                }
+                if tirar.clicked() {
+                    self.exit_pending = false;
+                    self.exit_confirmed = true;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                if guardar.clicked() {
                     self.save_project();
                     self.exit_pending = false;
                     // Si el guardado llegó a completarse no queda nada
@@ -173,14 +205,6 @@ impl App {
                     if self.exit_confirmed {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                }
-                if ui.button(t!("Salir sin guardar")).clicked() {
-                    self.exit_pending = false;
-                    self.exit_confirmed = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                if ui.button(t!("Cancelar")).clicked() {
-                    self.exit_pending = false;
                 }
             });
         });
@@ -420,6 +444,84 @@ mod tests {
         assert!(
             cancela_el_cierre(&out),
             "el cierre debe cancelarse hasta que el usuario decida"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// D6: el diálogo de salida llevaba tres `ui.button` idénticos, a la
+    /// izquierda y con «Guardar y salir» el primero de todos: el revés
+    /// del orden de un diálogo de confirmación de GTK —cancelación a la
+    /// izquierda del grupo, destructiva en el centro con su color y
+    /// sugerida la última, alineadas a la derecha—. Se mide sobre el
+    /// frame pintado, no sobre el código.
+    #[test]
+    fn el_dialogo_de_salida_sigue_el_orden_y_el_peso_de_gtk() {
+        let (tmp, proyecto) = proyecto_temp("orden_salida");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        app.config.padding = 5;
+        assert!(app.is_dirty(), "el test sólo tiene sentido con cambios");
+
+        let _ = app.run_frame(&ctx, input_cierre());
+        assert!(app.exit_pending, "el diálogo debe estar abierto");
+        // El modal se pinta en el frame siguiente al que tramita el
+        // cierre pedido por el sistema.
+        let out = app.run_frame(&ctx, crate::testing::idle_input());
+
+        let caja = |texto: &str| {
+            crate::testing::galones_pintados(&out)
+                .into_iter()
+                .find(|(t, _)| t.trim() == texto)
+                .map(|(_, rect)| rect)
+                .unwrap_or_else(|| panic!("«{texto}» no está pintado"))
+        };
+        // El relleno más pequeño que contiene al rótulo es el propio
+        // botón: es la misma inspección que `controles_de`, sin salir
+        // del crate.
+        let relleno_en = |punto: egui::Pos2| {
+            crate::testing::rellenos_pintados(&out)
+                .into_iter()
+                .filter(|(_, rect)| rect.contains(punto))
+                .min_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+                .map(|(color, _)| color)
+                .unwrap_or_else(|| panic!("no hay relleno pintado que contenga a {punto:?}"))
+        };
+
+        let cancelar = caja("Cancelar");
+        let tirar = caja("Salir sin guardar");
+        let guardar = caja("💾 Guardar y salir");
+        assert!(
+            cancelar.center().x < tirar.center().x && tirar.center().x < guardar.center().x,
+            "el orden debe ser «Cancelar», «Salir sin guardar», «Guardar y salir»: \
+             {:?}, {:?}, {:?}",
+            cancelar.center(),
+            tirar.center(),
+            guardar.center()
+        );
+        // Los tres en la mitad derecha del diálogo, como en GTK: la fila
+        // no empieza pegada al borde izquierdo de la ventana.
+        assert!(
+            cancelar.left() > 360.0 / 2.0,
+            "el grupo de botones va alineado a la derecha, no a la izquierda: \
+             arranca en {}",
+            cancelar.left()
+        );
+
+        let v = ctx.style().visuals.clone();
+        assert_eq!(
+            relleno_en(tirar.center()),
+            v.error_fg_color,
+            "la acción destructiva lleva el color de error del tema"
+        );
+        assert_eq!(
+            relleno_en(guardar.center()),
+            v.selection.bg_fill,
+            "la acción sugerida lleva el acento del tema"
+        );
+        assert_ne!(
+            relleno_en(cancelar.center()),
+            relleno_en(guardar.center()),
+            "la cancelación no puede pesar lo mismo que la sugerida"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

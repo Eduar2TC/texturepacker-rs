@@ -223,30 +223,48 @@ pub(crate) fn apply_theme(ctx: &egui::Context, theme: crate::ui_prefs::Theme) {
     ctx.memory_mut(|m| m.data.insert_temp(egui::Id::new("tp_theme"), true));
 }
 
+/// Luminosidad relativa (WCAG 2.1): 0 = negro, 1 = blanco.
+///
+/// Vive fuera de los tests porque también la usa [`texto_sobre`] para
+/// decidir el color de texto de un botón relleno (re-review D6).
+pub(crate) fn luminancia(c: egui::Color32) -> f32 {
+    fn canal(v: u8) -> f32 {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    }
+    0.2126 * canal(c.r()) + 0.7152 * canal(c.g()) + 0.0722 * canal(c.b())
+}
+
+/// Contraste WCAG entre dos colores: 1 = iguales, 21 = blanco sobre negro.
+pub(crate) fn razon(a: egui::Color32, b: egui::Color32) -> f32 {
+    let (la, lb) = (luminancia(a), luminancia(b));
+    let (alto, bajo) = if la > lb { (la, lb) } else { (lb, la) };
+    (alto + 0.05) / (bajo + 0.05)
+}
+
+/// El texto —blanco o negro— que más se lee sobre `fondo` (WCAG 1.4.1).
+///
+/// Un botón destructivo se pinta con el rojo del tema, y ese rojo no es
+/// el mismo en los dos temas: en claro es (170, 0, 0), oscuro, y el
+/// texto claro encima da 7,8:1; en oscuro es (255, 90, 90), claro, y
+/// ahí el texto claro se queda en 2,6:1 y el que sirve es el oscuro.
+/// Fijar «blanco sobre rojo» a medias rompería el tema que no tocó.
+pub(crate) fn texto_sobre(fondo: egui::Color32) -> egui::Color32 {
+    if razon(egui::Color32::WHITE, fondo) >= razon(egui::Color32::BLACK, fondo) {
+        egui::Color32::WHITE
+    } else {
+        egui::Color32::BLACK
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::App;
-
-    /// Luminosidad relativa (WCAG 2.1): 0 = negro, 1 = blanco.
-    fn luminancia(c: egui::Color32) -> f32 {
-        fn canal(v: u8) -> f32 {
-            let v = v as f32 / 255.0;
-            if v <= 0.04045 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        }
-        0.2126 * canal(c.r()) + 0.7152 * canal(c.g()) + 0.0722 * canal(c.b())
-    }
-
-    /// Contraste WCAG entre dos colores: 1 = iguales, 21 = blanco sobre negro.
-    fn razon(a: egui::Color32, b: egui::Color32) -> f32 {
-        let (la, lb) = (luminancia(a), luminancia(b));
-        let (alto, bajo) = if la > lb { (la, lb) } else { (lb, la) };
-        (alto + 0.05) / (bajo + 0.05)
-    }
 
     /// L* (CIE): luz **percibida**, lineal — 0 es negro y 100 blanco. Es la
     /// escala en la que una diferencia de 2.3 ya se ve, que es lo que WCAG
@@ -546,6 +564,35 @@ mod tests {
                     luz_percibida(color) > 50.0,
                     !dark_mode,
                     "{tema}: {nombre} no pinta su tema"
+                );
+            }
+        }
+    }
+
+    /// D6: el botón destructivo del diálogo de salida va relleno con el
+    /// rojo del tema y el sugerido con el acento, y el texto que llevan
+    /// encima lo escoge `texto_sobre`. Ese rojo no es el mismo en los dos
+    /// temas —en claro (170, 0, 0), oscuro, y en oscuro (255, 90, 90),
+    /// claro—, así que fijar «blanco sobre rojo» serviría en uno y en el
+    /// otro se quedaría en 2,57:1.
+    #[test]
+    fn el_texto_de_un_boton_relleno_cumple_wcag_aa_en_los_dos_temas() {
+        for dark_mode in temas() {
+            let tema = if dark_mode { "oscuro" } else { "claro" };
+            let v = aplicado(if dark_mode {
+                crate::ui_prefs::Theme::Dark
+            } else {
+                crate::ui_prefs::Theme::Light
+            });
+            for (nombre, fondo) in [
+                ("destructivo", v.error_fg_color),
+                ("sugerido", v.selection.bg_fill),
+            ] {
+                let r = razon(texto_sobre(fondo), fondo);
+                assert!(
+                    r >= 4.5,
+                    "{tema}: el texto del botón {nombre} sobre su relleno son \
+                     {r:.2}:1, hace falta 4,5:1"
                 );
             }
         }
