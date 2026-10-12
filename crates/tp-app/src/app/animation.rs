@@ -201,10 +201,15 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let current = &frames[app.anim.frame];
 
     // --- transport controls --------------------------------------------
+    // Un solo fotograma no hay nada que reproducir: el botón ▶ y la
+    // casilla «Reproducir» conmutan el mismo estado, así que los dos se
+    // apagan juntos (la casilla seguía viva con un solo fotograma,
+    // re-review RB2).
+    let reproducible = frames.len() > 1;
     ui.horizontal(|ui| {
         let play_label = if app.anim.playing { "⏸" } else { "▶" };
         if ui
-            .add_enabled(frames.len() > 1, egui::Button::new(play_label))
+            .add_enabled(reproducible, egui::Button::new(play_label))
             .on_hover_text(if app.anim.playing {
                 t!("Pausar")
             } else {
@@ -254,7 +259,10 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
                 .text("FPS"),
         );
         ui.checkbox(&mut app.anim.loop_anim, t!("Repetir"));
-        ui.checkbox(&mut app.anim.playing, t!("Reproducir"));
+        ui.add_enabled(
+            reproducible,
+            egui::Checkbox::new(&mut app.anim.playing, t!("Reproducir")),
+        );
     });
 
     ui.horizontal(|ui| {
@@ -595,5 +603,129 @@ mod tests {
         // Sin grupos → nada que reproducir.
         assert_eq!(effective_group(&[], "idle_"), None);
         assert_eq!(effective_group(&[], ""), None);
+    }
+}
+
+/// RB2: la casilla «Reproducir» conmuta el mismo estado que el botón ▶ y
+/// con un sólo fotograma no hay nada que reproducir: el botón ya se
+/// apagaba, pero la casilla seguía viva y encendía un playback que el
+/// reloj no puede avanzar (`playing && frames.len() > 1`).
+#[cfg(test)]
+mod casilla_reproducir_tests {
+    use super::*;
+    use crate::testing::{idle_input, pump_on_demand, textos_pintados};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    const TIMEOUT: Duration = Duration::from_secs(15);
+
+    fn png(ruta: &Path) {
+        let img = image::RgbaImage::from_pixel(8, 8, image::Rgba([200, 60, 60, 255]));
+        img.save(ruta).expect("se guarda el sprite");
+    }
+
+    /// Proyecto publicado con dos grupos: «ciclo» (tres fotogramas, que es
+    /// con lo que arranca la ventana) y «sello» (un sólo fotograma). La
+    /// ventana adopta el primer grupo al abrirse, así que hace falta un
+    /// proyecto de verdad para tener material en las dos mitades de la
+    /// prueba: el de ejemplo tiene un sprite por grupo y nunca reproduce.
+    fn app_publicada(tag: &str, ctx: &egui::Context) -> (App, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_anim_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
+        for nombre in ["ciclo0.png", "ciclo1.png", "ciclo2.png", "sello.png"] {
+            png(&sprites.join(nombre));
+        }
+        let cfg = tp_core::config::ProjectConfig {
+            input_directory: sprites,
+            output_directory: tmp.join("out"),
+            ..tp_core::config::ProjectConfig::default()
+        };
+        let proyecto = tmp.join("demo.tpproj");
+        std::fs::write(&proyecto, cfg.to_toml().expect("serializa el proyecto"))
+            .expect("se escribe el proyecto");
+
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        pump_on_demand(&mut app, ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(app.result().is_some(), "el preview debe llegar solo");
+        app.show_animation = true;
+        (app, tmp)
+    }
+
+    /// Punto de la casilla «Reproducir» recién pintada (el rótulo queda
+    /// dentro de su propio widget, que es lo que egui registra al clicar).
+    fn casilla(app: &mut App, ctx: &egui::Context) -> egui::Pos2 {
+        // La primera pasada de una ventana que acaba de abrir sólo guarda
+        // su área (egui la mide); el contenido se pinta a partir de la
+        // segunda (véase `ventana_minima`).
+        let _ = app.run_frame(ctx, idle_input());
+        let out = app.run_frame(ctx, idle_input());
+        textos_pintados(&out)
+            .iter()
+            .filter(|(texto, rect, recorte)| {
+                texto.trim() == "Reproducir" && recorte.contains(rect.center())
+            })
+            .map(|(_, rect, _)| rect.center())
+            .next()
+            .expect("la casilla «Reproducir» debe estar en la ventana de animación")
+    }
+
+    /// Pulsa donde se le diga como lo haría el ratón: mover, pulsar y
+    /// soltar en frames distintos (así egui distingue un clic de una
+    /// pulsación suelta).
+    fn clica(app: &mut App, ctx: &egui::Context, donde: egui::Pos2) {
+        let boton = |pressed: bool| egui::Event::PointerButton {
+            pos: donde,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let mut entrada = idle_input();
+        entrada.events = vec![egui::Event::PointerMoved(donde), boton(true)];
+        let _ = app.run_frame(ctx, entrada);
+        let mut entrada = idle_input();
+        entrada.events = vec![boton(false)];
+        let _ = app.run_frame(ctx, entrada);
+        let _ = app.run_frame(ctx, idle_input());
+    }
+
+    #[test]
+    fn la_casilla_reproducir_no_se_habilita_con_un_fotograma() {
+        let ctx = egui::Context::default();
+        let (mut app, tmp) = app_publicada("casilla", &ctx);
+
+        // Control: con el grupo de tres fotogramas el mismo clic sí la
+        // enciende; sin esta mitad la otra no probaría nada (el clic
+        // podría no llegar a la casilla).
+        let donde = casilla(&mut app, &ctx);
+        assert_eq!(
+            app.anim.group, "ciclo",
+            "la ventana adopta el primer grupo al pintarse"
+        );
+        clica(&mut app, &ctx, donde);
+        assert!(
+            app.anim.playing,
+            "con varios fotogramas la casilla debe encender la reproducción"
+        );
+
+        // El grupo de un sólo fotograma: la casilla se apaga y el mismo
+        // clic ya no la enciende.
+        app.anim.group = "sello".to_string();
+        app.anim.playing = false;
+        let donde = casilla(&mut app, &ctx);
+        clica(&mut app, &ctx, donde);
+        assert!(
+            !app.anim.playing,
+            "con un solo fotograma no hay nada que reproducir: la casilla no debe encenderse"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
