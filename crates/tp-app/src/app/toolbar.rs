@@ -97,6 +97,13 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 {
                     app.start_pack(false);
                 }
+                // El spinner va pegado a su botón: en este grupo en
+                // reversa, añadirlo el último lo pintaba a la izquierda
+                // del «…» y se leía «spinner … ⏏ Publicando», con dos
+                // «…» seguidos de significados distintos (re-review D8).
+                if publishing {
+                    ui.spinner();
+                }
                 // «…» reúne lo que no cabe en el botón de al lado. Tenía
                 // también «Publicar», a 200 px del botón «⏏ Publicar» —dos
                 // asientos para la misma acción—; se quita (rediseño F1) y
@@ -116,9 +123,6 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 })
                 .response
                 .on_hover_text(t!("Más opciones de publicación"));
-                if publishing {
-                    ui.spinner();
-                }
             });
         });
     });
@@ -246,6 +250,59 @@ mod tests {
         assert!(
             pintado.contains("Añadir sprites"),
             "falta el primer botón de sprites: {pintado}"
+        );
+    }
+
+    /// D8: el spinner de «Publicando» va pegado a su botón.
+    ///
+    /// El grupo de la derecha va en reversa —lo primero añadido es lo
+    /// más a la derecha—, así que un spinner añadido el último se
+    /// pintaba a la izquierda del «…» del menú y se leía
+    /// «spinner … ⏏ Publicando»: el indicador lejos de lo que indica y
+    /// dos «…» seguidos con dos significados. Se mide el hueco entre el
+    /// menú y el botón, que sólo debe caber el spinner.
+    #[test]
+    fn el_spinner_de_publicar_va_pegado_a_su_boton() {
+        use crate::testing::controles_de;
+
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        // Una corrida que no termina: el receptor sigue vivo y no manda
+        // nada, así que la barra pinta el estado «Publicando».
+        let (tx, rx) = std::sync::mpsc::channel::<crate::app::RunMessage>();
+        let _tx = tx;
+        app.running = Some(rx);
+
+        let out = app.run_frame(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1360.0, 860.0),
+                )),
+                ..egui::RawInput::default()
+            },
+        );
+
+        let boton = *controles_de(&out, "… Publicando")
+            .first()
+            .expect("«… Publicando» debe estar pintado");
+        let menu = *controles_de(&out, "…")
+            .first()
+            .expect("el menú «…» debe estar pintado");
+        assert!(
+            menu.max.x < boton.min.x,
+            "el menú va a la izquierda del botón"
+        );
+
+        let hueco = boton.min.x - menu.max.x;
+        let spacing = ctx.style().spacing.item_spacing.x;
+        let spinner = ctx.style().spacing.interact_size.y;
+        assert_eq!(
+            hueco,
+            2.0 * spacing + spinner,
+            "entre el «…» del menú y «… Publicando» hay {hueco:.1} px: sólo \
+             debe caber el spinner, pegado a su botón"
         );
     }
 }
