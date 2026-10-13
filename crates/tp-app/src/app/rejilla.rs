@@ -376,6 +376,60 @@ fn el_porcentaje_del_zoom_queda_fuera_del_par_de_botones() {
     );
 }
 
+/// D10: dentro de un menú, un separador abre 8 px y no los 16 de la pila.
+///
+/// Los menús llaman al mismo `super::separador` que los paneles, y esa
+/// receta está calculada para pilas: «Archivo» gastaba 32 px en sus dos
+/// separadores, el doble de lo que cuesta un grupo en un menú de
+/// escritorio. Aquí se abre el menú con un clic sintético y se mide el
+/// hueco de marco a marco de los dos grupos: 8 px, con la línea en su
+/// centro (y 16 si vuelve el hueco de pila).
+#[test]
+fn los_separadores_de_menu_abren_ocho_px() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let archivo = *controles_de(&salida, "Archivo")
+        .first()
+        .expect("el menú «Archivo» debe estar pintado");
+
+    // Pulsar y soltar sobre el botón: el menú se abre en la segunda pasada.
+    for pulsado in [true, false] {
+        let mut input = crate::testing::idle_input();
+        input.events.push(eframe::egui::Event::PointerButton {
+            pos: archivo.center(),
+            button: eframe::egui::PointerButton::Primary,
+            pressed: pulsado,
+            modifiers: eframe::egui::Modifiers::default(),
+        });
+        let _ = app.run_frame(&ctx, input);
+    }
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+
+    let hueco = |arriba: &str, abajo: &str| {
+        let a = *controles_de(&salida, arriba)
+            .first()
+            .unwrap_or_else(|| panic!("«{arriba}» debe estar pintado en el menú"));
+        let b = *controles_de(&salida, abajo)
+            .first()
+            .unwrap_or_else(|| panic!("«{abajo}» debe estar pintado en el menú"));
+        b.min.y - a.max.y
+    };
+
+    let hueco_1 = hueco("Guardar proyecto", "Restablecer la configuración");
+    let hueco_2 = hueco("Restablecer la configuración", "Salir");
+    assert_eq!(
+        hueco_1, hueco_2,
+        "los dos separadores del menú miden distinto: {hueco_1} y {hueco_2}"
+    );
+    assert_eq!(
+        hueco_1, 8.0,
+        "el separador de un menú abre {hueco_1} px; los menús del \\
+         escritorio piden 6-8 y el de panel —receta de pilas— vale 16"
+    );
+}
+
 /// D9: el indicador de frescura no mueve la barra de zoom.
 ///
 /// Se pintaba al principio de una fila de ancho libre, así que aparecer

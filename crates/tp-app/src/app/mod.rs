@@ -119,9 +119,14 @@ const OBJETIVO_MIN: egui::Vec2 = egui::vec2(24.0, 24.0);
 /// egui reserva un rectángulo sin área y la línea no llega a pintarse.
 const HUECO_SEPARADOR_PILA: f32 = 16.0;
 const HUECO_SEPARADOR_FILA: f32 = 24.0;
+/// Dentro de un menú desplegable (re-review D10): «Archivo» gastaba
+/// 32 px en sus dos separadores con el hueco de pila, y en los menús
+/// del escritorio el aire entre grupos es de 6-8 px.
+const HUECO_SEPARADOR_MENU: f32 = 8.0;
 
 /// Separador de grupo con el hueco de la rejilla ([`HUECO_SEPARADOR_PILA`]
-/// en una pila, [`HUECO_SEPARADOR_FILA`] en una fila).
+/// en una pila, [`HUECO_SEPARADOR_FILA`] en una fila y
+/// [`HUECO_SEPARADOR_MENU`] dentro de un menú).
 ///
 /// Los treinta `ui.separator()` del sitio pasan por aquí para que el
 /// hueco sea una sola decisión y no treinta números sueltos: `Separator`
@@ -134,7 +139,9 @@ pub(crate) fn separador(ui: &mut egui::Ui) {
     } else {
         ui.spacing().item_spacing.y
     };
-    let hueco = if en_fila {
+    let hueco = if egui::containers::menu::is_in_menu(ui) {
+        HUECO_SEPARADOR_MENU
+    } else if en_fila {
         HUECO_SEPARADOR_FILA
     } else {
         HUECO_SEPARADOR_PILA
