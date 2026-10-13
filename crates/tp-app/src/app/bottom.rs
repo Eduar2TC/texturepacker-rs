@@ -116,6 +116,25 @@ fn log_view(app: &mut App, ui: &mut egui::Ui) {
             // altura del panel, que mide lo que mide (120 px).
             ui.horizontal(|ui| {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Un error trae rutas y motivos que sólo se podían
+                    // sacar transcribiéndolos a mano: este botón manda el
+                    // registro entero al portapapeles de una vez
+                    // (re-review A7). Va a la derecha del grupo, que es
+                    // donde va lo seguro según la receta D6, y «Limpiar»
+                    // queda a su izquierda.
+                    if ui
+                        .button(t!("Copiar"))
+                        .on_hover_text(t!("Copia todas las líneas del registro al portapapeles"))
+                        .clicked()
+                    {
+                        let texto = app
+                            .logs
+                            .iter()
+                            .map(|entrada| entrada.text.as_str())
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        ui.ctx().copy_text(texto);
+                    }
                     if ui
                         .button(t!("Limpiar"))
                         .on_hover_text(t!("Borra todas las líneas del registro"))
@@ -915,6 +934,126 @@ mod tests {
         assert!(
             controles_de(&salida, "✖ Error").is_empty(),
             "y no puede quedar pintada sobre un registro vacío"
+        );
+    }
+
+    /// A7: las líneas del registro sólo se podían sacar transcribiéndolas
+    /// a mano —los errores traen rutas y motivos—. «Copiar» manda el
+    /// registro entero al portapapeles en un clic. Lo que se mide es el
+    /// comando `CopyText` de la salida, que es el mismo conducto por el
+    /// que egui entrega al sistema lo que se copia.
+    #[test]
+    fn el_registro_se_puede_copiar_al_portapapeles() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        app.log(
+            LogKind::Error,
+            "No se pudo leer /tmp/gordo/faltan.png".into(),
+        );
+        app.log(LogKind::Info, "Publicación completa: 300 sprites".into());
+
+        let boton = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let salida = app.run_frame(&ctx, idle_input());
+        let donde = controles_de(&salida, "Copiar")
+            .first()
+            .expect("«Copiar» tiene que estar en la vista del Log")
+            .center();
+        let _ = app.run_frame(
+            &ctx,
+            con_eventos(vec![egui::Event::PointerMoved(donde), boton(donde, true)]),
+        );
+        let salida = app.run_frame(&ctx, con_eventos(vec![boton(donde, false)]));
+
+        let copiados: Vec<String> = salida
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|comando| match comando {
+                egui::OutputCommand::CopyText(texto) => Some(texto.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            copiados.len(),
+            1,
+            "un clic en «Copiar» debe mandar un texto al portapapeles: {copiados:?}"
+        );
+        let texto = &copiados[0];
+        assert!(
+            texto.contains("No se pudo leer /tmp/gordo/faltan.png"),
+            "lo copiado conserva los motivos del error: {texto:?}"
+        );
+        assert!(
+            texto.contains("Publicación completa: 300 sprites"),
+            "…y las líneas de al lado: el portapapeles se lleva el registro entero: {texto:?}"
+        );
+        assert!(
+            texto.contains('\n'),
+            "las líneas van separadas por fin de línea: {texto:?}"
+        );
+    }
+
+    /// Contraste de A7: lo que egui trae de serie —selección por línea
+    /// en las etiquetas (`selectable_labels`, activo por defecto) y
+    /// `Event::Copy`— sí funciona sobre el registro, pero sólo alcanza
+    /// una línea por arrastre, que es justo el trabajo de transcripción
+    /// que el botón evita.
+    #[test]
+    fn una_linea_del_registro_admite_marcarla_y_copiarla() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let mensaje = "No se pudo leer /tmp/gordo/faltan.png";
+        app.log(LogKind::Error, mensaje.into());
+
+        let salida = app.run_frame(&ctx, idle_input());
+        let rect = textos_pintados(&salida)
+            .into_iter()
+            .find(|(texto, _, _)| texto.trim() == mensaje)
+            .map(|(_, rect, _)| rect)
+            .expect("la línea del error debe estar pintada en el Log");
+        let dentro = |x: f32| egui::pos2(x, rect.center().y);
+
+        let _ = app.run_frame(
+            &ctx,
+            con_eventos(vec![egui::Event::PointerMoved(dentro(rect.left() + 2.0))]),
+        );
+        let boton = |pos: egui::Pos2, pressed: bool| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        let _ = app.run_frame(
+            &ctx,
+            con_eventos(vec![boton(dentro(rect.left() + 2.0), true)]),
+        );
+        let _ = app.run_frame(
+            &ctx,
+            con_eventos(vec![egui::Event::PointerMoved(dentro(rect.right() - 2.0))]),
+        );
+        let _ = app.run_frame(
+            &ctx,
+            con_eventos(vec![boton(dentro(rect.right() - 2.0), false)]),
+        );
+        let salida = app.run_frame(&ctx, con_eventos(vec![egui::Event::Copy]));
+
+        let copiado: Vec<String> = salida
+            .platform_output
+            .commands
+            .iter()
+            .filter_map(|comando| match comando {
+                egui::OutputCommand::CopyText(texto) => Some(texto.clone()),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            copiado.iter().any(|t| t.contains(mensaje)),
+            "Ctrl+C sobre la línea seleccionada debe copiar su texto: {copiado:?}"
         );
     }
 }

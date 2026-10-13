@@ -754,8 +754,10 @@ pub static EN: &[(&str, &str)] = &[
     ("No hay nada que limpiar", "Nothing to clear"),
     ("Ningún ajuste coincide con la búsqueda.", "No settings match the search."),
 
-    // Registro del panel inferior (B12).
+    // Registro del panel inferior (B12 y re-review A7).
     ("Borra todas las líneas del registro", "Removes every line from the log"),
+    ("Copiar", "Copy"),
+    ("Copia todas las líneas del registro al portapapeles", "Copies every line of the log to the clipboard"),
 ];
 
 fn map() -> &'static HashMap<&'static str, &'static str> {
