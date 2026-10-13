@@ -78,7 +78,7 @@ pub static EN: &[(&str, &str)] = &[
         "Dividir una hoja (sprite sheet) en sprites individuales",
         "Split a sprite sheet into individual sprites",
     ),
-    ("▶ Animación", "▶ Animation"),
+    ("🎬 Animación", "🎬 Animation"),
     (
         "Vista previa de animación de los sprites seleccionados",
         "Animation preview of the selected sprites",

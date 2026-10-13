@@ -65,16 +65,20 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
         let pages = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
         if pages > 1 {
             // Flechas de página: controles de un solo glifo, así que se
-            // ganan el objetivo de 24 px (re-review A5).
+            // ganan el objetivo de 24 px (re-review A5). Van como
+            // ángulos «‹ ›» —el convencional de pasar página— y no como
+            // «◀ ▶»: ese triángulo ya cargaba con «reproducir» y con el
+            // rótulo de «Animación», y un glifo no carga más de un
+            // significado (re-review A11).
             let anterior = ui
-                .add(egui::Button::new("◀").min_size(OBJETIVO_MIN))
+                .add(egui::Button::new("‹").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Página anterior"));
             if anterior.clicked() && app.selected_page > 0 {
                 app.selected_page -= 1;
             }
             ui.label(t!("Página {}/{}", app.selected_page + 1, pages));
             let siguiente = ui
-                .add(egui::Button::new("▶").min_size(OBJETIVO_MIN))
+                .add(egui::Button::new("›").min_size(OBJETIVO_MIN))
                 .on_hover_text(t!("Página siguiente"));
             if siguiente.clicked() && app.selected_page + 1 < pages {
                 app.selected_page += 1;
@@ -1632,8 +1636,14 @@ mod auto_fit_tests {
     }
 }
 
-/// I7: las flechas de página son dos triángulos de doce píxeles sin
-/// etiqueta; aquí se exige que las dos lleven ayuda.
+/// I7: las flechas de página son dos glifos sin etiqueta; aquí se exige
+/// que las dos lleven ayuda.
+///
+/// Los patrones apuntan al constructor que el código usa de verdad y se
+/// cuentan los hallazgos: cuando A5 cambió `button(…)` por
+/// `Button::new(…)`, la búsqueda se quedó mirando nada y la prueba
+/// seguía pasando sin comprobar nada; con el contador, un patrón
+/// desfasado hace fallar la prueba en lugar de silenciarla.
 #[cfg(test)]
 mod ayuda_tests {
     #[test]
@@ -1641,10 +1651,12 @@ mod ayuda_tests {
         let ruta = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/app/preview.rs");
         let src = std::fs::read_to_string(&ruta).expect("preview.rs legible");
         let mut sin_ayuda = Vec::new();
-        for boton in ["button(\"◀\")", "button(\"▶\")"] {
+        let mut vistos = 0;
+        for boton in ["Button::new(\"‹\")", "Button::new(\"›\")"] {
             let mut desde = 0;
             while let Some(p) = src[desde..].find(boton) {
                 let ini = desde + p;
+                vistos += 1;
                 let linea = src[..ini].matches('\n').count() + 1;
                 let mut fin = src.len().min(ini + 300);
                 while !src.is_char_boundary(fin) {
@@ -1658,6 +1670,10 @@ mod ayuda_tests {
                 desde = ini + 1;
             }
         }
+        assert_eq!(
+            vistos, 2,
+            "los patrones de este test ya no casan con las flechas de página"
+        );
         assert!(
             sin_ayuda.is_empty(),
             "flechas de página sin ayuda en preview.rs, línea(s): {}",

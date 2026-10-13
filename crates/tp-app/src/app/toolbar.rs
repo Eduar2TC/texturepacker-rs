@@ -78,7 +78,7 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 .map(|o| !o.result.sprites.is_empty())
                 .unwrap_or(false);
             if ui
-                .add_enabled(has_sprites, egui::Button::new(t!("▶ Animación")))
+                .add_enabled(has_sprites, egui::Button::new(t!("🎬 Animación")))
                 .on_hover_text(t!("Vista previa de animación de los sprites seleccionados"))
                 .on_disabled_hover_text(t!("Publica el sprite sheet para ver la animación"))
                 .clicked()

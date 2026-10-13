@@ -629,8 +629,8 @@ fn los_controles_sueltos_miden_el_objetivo_de_24_px() {
         ("…", Some(en_la_toolbar)),
         ("+", Some(en_la_barra_de_zoom)),
         ("−", Some(en_la_barra_de_zoom)),
-        ("◀", None),
-        ("▶", None),
+        ("‹", None),
+        ("›", None),
         ("⏮", None),
         ("⏭", None),
     ];

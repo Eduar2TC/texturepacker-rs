@@ -364,7 +364,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
 /// All packable frames as `(group, frame)`, grouped and sorted by index.
 ///
 /// Con selección en el panel izquierdo devuelve solo esos sprites (así lo
-/// promete el botón «▶ Animación»); sin selección, todos. La agrupación por
+/// promete el botón «🎬 Animación»); sin selección, todos. La agrupación por
 /// prefijo se mantiene en ambos casos, así que una selección de un solo
 /// prefijo se reproduce como una sola secuencia.
 fn collect_frames(app: &App) -> Vec<(String, Frame)> {
