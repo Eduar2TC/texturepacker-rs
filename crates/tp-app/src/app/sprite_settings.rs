@@ -21,7 +21,8 @@ fn presets() -> [(&'static str, f32, f32); 9] {
 
 pub(super) fn sprite_settings_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_sprite_settings;
-    egui::Window::new(t!("Ajustes de sprite"))
+    let id = egui::Id::new("Ajustes de sprite");
+    super::ventana_flotante(t!("Ajustes de sprite"), id, ctx)
         .open(&mut open)
         .default_width(360.0)
         .resizable(true)

@@ -97,15 +97,18 @@ pub(super) fn animation_window(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_animation;
-    egui::Window::new(t!("Vista previa de animación"))
-        .id(egui::Id::new("animation_preview"))
-        .open(&mut open)
-        .default_size([380.0, 340.0])
-        .min_size([300.0, 240.0])
-        .resizable(true)
-        .show(ctx, |ui| {
-            animation_ui(app, ctx, ui);
-        });
+    super::ventana_flotante(
+        t!("Vista previa de animación"),
+        egui::Id::new("animation_preview"),
+        ctx,
+    )
+    .open(&mut open)
+    .default_size([380.0, 340.0])
+    .min_size([300.0, 240.0])
+    .resizable(true)
+    .show(ctx, |ui| {
+        animation_ui(app, ctx, ui);
+    });
     app.show_animation = open;
 }
 

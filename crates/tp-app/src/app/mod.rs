@@ -146,6 +146,37 @@ pub(crate) fn separador(ui: &mut egui::Ui) {
     ui.add(egui::Separator::default().spacing(spacing));
 }
 
+/// La receta común de las cinco ventanas flotantes (re-review D7).
+///
+/// Se abrían con dos convenciones distintas: sólo «Acerca de» se
+/// centraba y apagaba el plegado, «Atajos» apagaba el plegado pero
+/// arrancaba donde egui la ponía, y «Dividir hoja», «Animación» y
+/// «Ajustes de sprite» no tocaban nada y salían apiladas en cascada
+/// sobre el dock izquierdo. Aquí quedan las dos decisiones en un sitio
+/// sólo:
+///
+/// * **plegado apagado**: una ventana de trabajo no se pliega a un
+///   título; el tirador sólo estorbaba y dejaba la ventana en 32 px
+///   sin aviso de lo que se había perdido;
+/// * **primera apertura en el centro**, con `pivot` en el centro del
+///   rectángulo: centra sobre el tamaño que sea —el contenido, que
+///   cambia con la escala de letra— sin depender de medio ancho
+///   guardado a mano, que era como lo hacía «Acerca de».
+///
+/// Si el usuario la mueve, egui recuerda su sitio: `default_pos` y
+/// `pivot` sólo rigen la primera apertura.
+pub(super) fn ventana_flotante<'open>(
+    titulo: impl Into<egui::WidgetText>,
+    id: egui::Id,
+    ctx: &egui::Context,
+) -> egui::Window<'open> {
+    egui::Window::new(titulo)
+        .id(id)
+        .collapsible(false)
+        .pivot(egui::Align2::CENTER_CENTER)
+        .default_pos(ctx.content_rect().center())
+}
+
 /// La cabecera de los dos docks espejo —Sprites y Ajustes—: el título
 /// arriba a la izquierda, sus acciones arriba a la derecha y la fila a
 /// `OBJETIVO_MIN` de alto. El buscador va **debajo** de esta fila y el

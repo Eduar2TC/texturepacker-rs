@@ -22,12 +22,11 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_shortcuts;
-    egui::Window::new(t!("Atajos de teclado"))
-        .id(egui::Id::new("shortcuts_help"))
+    let id = egui::Id::new("shortcuts_help");
+    super::ventana_flotante(t!("Atajos de teclado"), id, ctx)
         .open(&mut open)
         .default_width(430.0)
         .resizable(false)
-        .collapsible(false)
         .show(ctx, |ui| {
             seccion(
                 ui,

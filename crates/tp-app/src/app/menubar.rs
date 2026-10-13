@@ -203,16 +203,10 @@ pub(super) fn about_window(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_about;
-    egui::Window::new(t!("Acerca de"))
-        .id(egui::Id::new("about"))
+    super::ventana_flotante(t!("Acerca de"), egui::Id::new("about"), ctx)
         .open(&mut open)
         .default_width(380.0)
-        // Primera apertura en el centro de la ventana, como un diálogo de
-        // información que se cierra y no se arrastra (si el usuario lo
-        // mueve, egui recuerda su sitio).
-        .default_pos(ctx.content_rect().center() - egui::vec2(190.0, 140.0))
         .resizable(false)
-        .collapsible(false)
         .show(ctx, |ui| {
             ui.heading(NOMBRE);
             ui.label(format!("{} {VERSION}", t!("Versión")));

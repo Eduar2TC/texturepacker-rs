@@ -411,6 +411,95 @@ fn las_ventanas_flotantes_caben_en_la_minima() {
     std::fs::remove_dir_all(&tmp).ok();
 }
 
+/// Una ventana flotante para el lazo de pruebas: su título, el id con
+/// el que egui la guarda y la bandera que la abre.
+type Ventana = (&'static str, egui::Id, fn(&mut App));
+
+/// ¿Cuántos triángulos quedan pintados dentro de `dentro`?
+///
+/// El tirador de plegado de egui es un `Shape::convex_polygon`, que en
+/// esta versión del motor es un `Path` cerrado de tres puntos.
+fn triangulos_en(formas: &[eframe::egui::epaint::ClippedShape], dentro: egui::Rect) -> usize {
+    fn cuenta(formas: &[eframe::egui::Shape], dentro: egui::Rect) -> usize {
+        let mut n = 0;
+        for forma in formas {
+            match forma {
+                eframe::egui::Shape::Path(p) if p.closed && p.points.len() == 3 => {
+                    if dentro.contains(egui::Rect::from_points(&p.points).center()) {
+                        n += 1;
+                    }
+                }
+                eframe::egui::Shape::Vec(hijos) => n += cuenta(hijos, dentro),
+                _ => {}
+            }
+        }
+        n
+    }
+    let pintadas: Vec<_> = formas.iter().map(|f| f.shape.clone()).collect();
+    cuenta(&pintadas, dentro)
+}
+
+/// D7: las cinco ventanas flotantes siguen una sola receta.
+///
+/// Se abrían con dos convenciones distintas: sólo «Acerca de» se
+/// centraba y apagaba el plegado, «Atajos» apagaba el plegado pero
+/// arrancaba donde egui la ponía —(266, 60) en una pantalla de
+/// 1360×860, sobre el dock izquierdo—, y «Dividir hoja», «Animación» y
+/// «Ajustes de sprite» no tocaban nada: salían apiladas en cascada
+/// las tres con su tirador de plegado a la vista. Aquí se mide la
+/// receta sobre las cinco, en el frame pintado.
+#[test]
+fn las_cinco_ventanas_flotantes_se_abren_en_el_centro_y_sin_plegado() {
+    let pantalla = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1360.0, 860.0));
+    let ventanas: [Ventana; 5] = [
+        ("Atajos de teclado", egui::Id::new("shortcuts_help"), |a| {
+            a.show_shortcuts = true
+        }),
+        ("Acerca de", egui::Id::new("about"), |a| a.show_about = true),
+        (
+            "Vista previa de animación",
+            egui::Id::new("animation_preview"),
+            |a| a.show_animation = true,
+        ),
+        ("Dividir hoja", egui::Id::new("split_sheet"), |a| {
+            a.show_split = true
+        }),
+        (
+            "Ajustes de sprite",
+            egui::Id::new("Ajustes de sprite"),
+            |a| a.show_sprite_settings = true,
+        ),
+    ];
+
+    for (titulo, id, abre) in ventanas {
+        let (mut app, ctx, tmp) = demo("flotantes");
+        abre(&mut app);
+        // La primera pasada sólo guarda el área; la segunda pinta.
+        let _ = frame_en(&mut app, &ctx, pantalla);
+        let salida = frame_en(&mut app, &ctx, pantalla);
+        let rect = ctx
+            .memory(|m| m.area_rect(id))
+            .unwrap_or_else(|| panic!("«{titulo}» no abrió"));
+
+        let distancia = (rect.center() - ctx.content_rect().center()).length();
+        assert!(
+            distancia <= 1.0,
+            "«{titulo}» arranca a {distancia:.1} px del centro de la ventana: \
+             su primera apertura debe ser en el centro"
+        );
+
+        // Los 30 px de arriba son la barra de título: si la ventana es
+        // plegable, egui pinta allí su triángulo.
+        let barra = egui::Rect::from_min_max(rect.min, egui::pos2(rect.max.x, rect.min.y + 30.0));
+        let tiradores = triangulos_en(&salida.shapes, barra);
+        assert_eq!(
+            tiradores, 0,
+            "«{titulo}» lleva tirador de plegado en su barra de título"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+}
+
 /// M4: `main.rs` promete exactamente este mínimo. Si alguien mueve uno
 /// sin el otro, el probado y el prometido se separan —que era justo el
 /// defecto—, y esta prueba se entera.

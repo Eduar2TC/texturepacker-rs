@@ -72,8 +72,7 @@ pub(super) fn split_window(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let mut open = app.show_split;
-    egui::Window::new(t!("Dividir hoja"))
-        .id(egui::Id::new("split_sheet"))
+    super::ventana_flotante(t!("Dividir hoja"), egui::Id::new("split_sheet"), ctx)
         .open(&mut open)
         .default_size([430.0, 400.0])
         .min_size([330.0, 280.0])

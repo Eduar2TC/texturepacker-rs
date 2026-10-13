@@ -279,21 +279,26 @@ pub fn galones_pintados(output: &eframe::egui::FullOutput) -> Vec<(String, efram
 /// Es con lo que se mide si un control alcanza su objetivo (4.3): la
 /// medida sale del frame de verdad, sin confiar en el fuente.
 pub fn controles_de(output: &eframe::egui::FullOutput, glifo: &str) -> Vec<eframe::egui::Rect> {
-    let centros: Vec<_> = textos_pintados(output)
+    let galiones: Vec<_> = textos_pintados(output)
         .iter()
         .filter(|(texto, _, _)| texto.trim() == glifo)
-        .map(|(_, rect, _)| rect.center())
+        .map(|(_, rect, _)| *rect)
         .collect();
     let rellenos: Vec<_> = rellenos_pintados(output)
         .into_iter()
         .map(|(_, rect)| rect)
         .collect();
-    centros
+    galiones
         .iter()
-        .filter_map(|centro| {
+        .filter_map(|galion| {
+            // Un relleno más plano que su propio rótulo no puede ser el
+            // control: es algo que pasa por detrás. Le pasaba a los
+            // diálogos al centrarlos (re-review D7), porque las líneas
+            // de la malla del lienzo —1 px— atraviesan la ventana y el
+            // punto del galión cae justo sobre alguna.
             rellenos
                 .iter()
-                .filter(|r| r.contains(*centro))
+                .filter(|r| r.contains(galion.center()) && r.height() >= galion.height())
                 .min_by(|a, b| a.area().total_cmp(&b.area()))
                 .copied()
         })
