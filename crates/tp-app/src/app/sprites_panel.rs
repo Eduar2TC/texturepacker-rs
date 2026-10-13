@@ -212,7 +212,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         };
         ui.add_space(16.0);
         ui.vertical_centered(|ui| {
-            ui.label(egui::RichText::new("📁").size(28.0));
+            ui.label(egui::RichText::new("📁").font(crate::ui_prefs::font_id(28.0, ui.ctx())));
             ui.label(egui::RichText::new(msg).weak());
         });
         app.keep_tree(cache);

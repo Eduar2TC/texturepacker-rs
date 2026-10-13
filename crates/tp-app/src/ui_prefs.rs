@@ -332,14 +332,16 @@ mod tests {
     /// I6: un `FontId` con el número escrito a mano no crece con la escala
     /// del usuario, que era justo el defecto: los 9 px del lienzo se
     /// quedaban en 9 px con la letra grande. Todo tamaño pasa por
-    /// `font_id`, y esta prueba lo vigila en todas las fuentes.
+    /// `font_id`, y esta prueba lo vigila en todas las fuentes. Mira
+    /// también `RichText::size(…)`, que es el mismo pecado con otra cara
+    /// y al guardián se le escapaba (re-review A9).
     #[test]
     fn nadie_fija_un_tamano_de_letra_a_mano() {
         let raiz = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
         let mut culpables = Vec::new();
         for ruta in fuentes(&raiz) {
             let src = std::fs::read_to_string(&ruta).expect("fuente legible");
-            for marca in ["FontId::proportional(", "FontId::new("] {
+            for marca in ["FontId::proportional(", "FontId::new(", ".size("] {
                 let mut desde = 0;
                 while let Some(p) = src[desde..].find(marca) {
                     let ini = desde + p + marca.len();
