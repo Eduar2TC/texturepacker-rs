@@ -160,10 +160,24 @@ impl App {
     /// con su color y la sugerida la última, con el acento. Antes salían
     /// tres `ui.button` idénticos, a la izquierda y con «Guardar y salir»
     /// el primero de todos, que es justo el revés.
+    ///
+    /// El foco inicial cae sobre la sugerida —Enter o Espacio la
+    /// activan— y cada botón se puede pulsar con su inicial, escrita en
+    /// el rótulo: G, S y C (re-review A12).
     pub(super) fn exit_dialog(&mut self, ctx: &egui::Context) {
         if !self.exit_pending {
+            // La próxima apertura volverá a pedir el foco inicial: al
+            // cerrar, egui olvida el foco en cuanto el botón deja de
+            // pintarse, así que este semáforo sólo vive con el diálogo.
+            self.exit_focus_requested = false;
             return;
         }
+        // La inicial se lee como tecla suelta, sin combinación: no puede
+        // chocar con ningún atajo de la app, que además está apagado
+        // mientras el diálogo está abierto (A2).
+        let tecla = |key: egui::Key| {
+            ctx.input(|i| i.key_pressed(key) && i.modifiers == egui::Modifiers::NONE)
+        };
         let respuesta = egui::Modal::new(egui::Id::new("exit_dialog")).show(ctx, |ui| {
             ui.set_min_width(360.0);
             ui.label(egui::RichText::new(t!("Hay cambios sin guardar")).heading());
@@ -176,27 +190,34 @@ impl App {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let guardar = ui.add(
                     egui::Button::new(
-                        egui::RichText::new(t!("💾 Guardar y salir"))
+                        egui::RichText::new(t!("💾 Guardar y salir (G)"))
                             .color(super::theme::texto_sobre(sugerido)),
                     )
                     .fill(sugerido),
                 );
+                if !self.exit_focus_requested {
+                    // El foco inicial va a la sugerida: es la salida
+                    // segura y con él Enter o Espacio la activan, como
+                    // en cualquier diálogo (A12).
+                    guardar.request_focus();
+                    self.exit_focus_requested = true;
+                }
                 let tirar = ui.add(
                     egui::Button::new(
-                        egui::RichText::new(t!("Salir sin guardar"))
+                        egui::RichText::new(t!("Salir sin guardar (S)"))
                             .color(super::theme::texto_sobre(destructivo)),
                     )
                     .fill(destructivo),
                 );
-                if ui.button(t!("Cancelar")).clicked() {
+                if ui.button(t!("Cancelar (C)")).clicked() || tecla(egui::Key::C) {
                     self.exit_pending = false;
                 }
-                if tirar.clicked() {
+                if tirar.clicked() || tecla(egui::Key::S) {
                     self.exit_pending = false;
                     self.exit_confirmed = true;
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
-                if guardar.clicked() {
+                if guardar.clicked() || tecla(egui::Key::G) {
                     self.save_project();
                     self.exit_pending = false;
                     // Si el guardado llegó a completarse no queda nada
@@ -365,6 +386,20 @@ mod tests {
         }
     }
 
+    /// Un frame con una tecla pulsada y sin combinación.
+    fn con_tecla(key: egui::Key) -> egui::RawInput {
+        egui::RawInput {
+            events: vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::NONE,
+            }],
+            ..crate::testing::idle_input()
+        }
+    }
+
     fn cancela_el_cierre(out: &egui::FullOutput) -> bool {
         out.viewport_output.values().any(|v| {
             v.commands
@@ -487,12 +522,13 @@ mod tests {
                 .unwrap_or_else(|| panic!("no hay relleno pintado que contenga a {punto:?}"))
         };
 
-        let cancelar = caja("Cancelar");
-        let tirar = caja("Salir sin guardar");
-        let guardar = caja("💾 Guardar y salir");
+        let cancelar = caja("Cancelar (C)");
+        let tirar = caja("Salir sin guardar (S)");
+        let guardar = caja("💾 Guardar y salir (G)");
         assert!(
             cancelar.center().x < tirar.center().x && tirar.center().x < guardar.center().x,
-            "el orden debe ser «Cancelar», «Salir sin guardar», «Guardar y salir»: \
+            "el orden debe ser «Cancelar (C)», «Salir sin guardar (S)», \
+             «💾 Guardar y salir (G)»: \
              {:?}, {:?}, {:?}",
             cancelar.center(),
             tirar.center(),
@@ -541,6 +577,83 @@ mod tests {
             "si no hay cambios no debe abrirse el diálogo"
         );
         assert!(!cancela_el_cierre(&out), "el cierre debe pasar sin más");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A12: el diálogo arrancaba sin foco asignado, así que Enter no
+    /// hacía nada y tampoco se veía cuál era la salida segura. El foco
+    /// inicial va a la sugerida y Enter la activa como un clic.
+    #[test]
+    fn el_dialogo_de_salida_enfoca_la_sugerida_y_enter_la_guarda() {
+        let (tmp, proyecto) = proyecto_temp("foco_enter");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        app.config.padding = 5;
+        assert!(app.is_dirty(), "el test sólo tiene sentido con cambios");
+
+        let _ = app.run_frame(&ctx, input_cierre());
+        assert!(app.exit_pending, "el diálogo debe abrirse");
+        assert!(
+            ctx.memory(|m| m.focused()).is_some(),
+            "la primera vuelta del diálogo debe poner el foco en un botón"
+        );
+
+        let _ = app.run_frame(&ctx, con_tecla(egui::Key::Enter));
+        assert!(!app.exit_pending, "Enter debe tramitar la salida");
+        assert!(
+            app.exit_confirmed,
+            "…tramitarla guardando, que es lo que hace la sugerida"
+        );
+        assert!(!app.is_dirty(), "los cambios tienen que haberse escrito");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// A12: de los tres botones sólo «Cancelar» tenía tecla —Esc—; G y S
+    /// eran de ratón. Ahora cada inicial, escrita en su rótulo, decide
+    /// la salida igual que su botón.
+    #[test]
+    fn las_iniciales_de_los_botones_del_dialogo_de_salida_deciden() {
+        // C: se cancela sin decidir nada.
+        let (tmp, proyecto) = proyecto_temp("tecla_c");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        app.config.padding = 5;
+        let _ = app.run_frame(&ctx, input_cierre());
+        let _ = app.run_frame(&ctx, con_tecla(egui::Key::C));
+        assert!(
+            !app.exit_pending,
+            "«C» debe cerrar el diálogo como «Cancelar (C)»"
+        );
+        assert!(!app.exit_confirmed, "…sin confirmar la salida");
+        assert!(app.is_dirty(), "…ni tocar el proyecto");
+        std::fs::remove_dir_all(&tmp).ok();
+
+        // S: se sale sin guardar, con el disco como estaba.
+        let (tmp, proyecto) = proyecto_temp("tecla_s");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        app.config.padding = 5;
+        let _ = app.run_frame(&ctx, input_cierre());
+        let _ = app.run_frame(&ctx, con_tecla(egui::Key::S));
+        assert!(
+            app.exit_confirmed && !app.exit_pending,
+            "«S» debe salir sin guardar"
+        );
+        assert!(app.is_dirty(), "…dejando los cambios sin escribir");
+        std::fs::remove_dir_all(&tmp).ok();
+
+        // G: se guarda y se sale.
+        let (tmp, proyecto) = proyecto_temp("tecla_g");
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        app.config.padding = 5;
+        let _ = app.run_frame(&ctx, input_cierre());
+        let _ = app.run_frame(&ctx, con_tecla(egui::Key::G));
+        assert!(
+            app.exit_confirmed && !app.exit_pending,
+            "«G» debe guardar y salir"
+        );
+        assert!(!app.is_dirty(), "…con los cambios escritos en el disco");
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

@@ -49,9 +49,9 @@ pub static EN: &[(&str, &str)] = &[
         "¿Guardar los cambios antes de salir?",
         "Save changes before exiting?",
     ),
-    ("💾 Guardar y salir", "💾 Save and exit"),
-    ("Salir sin guardar", "Exit without saving"),
-    ("Cancelar", "Cancel"),
+    ("💾 Guardar y salir (G)", "💾 Save and exit (G)"),
+    ("Salir sin guardar (S)", "Exit without saving (S)"),
+    ("Cancelar (C)", "Cancel (C)"),
     (
         "Añadir sprites al workspace",
         "Add sprites to the workspace",

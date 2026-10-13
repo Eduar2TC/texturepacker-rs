@@ -380,6 +380,9 @@ pub struct App {
     /// El usuario ya decidió salir sin guardar: el siguiente cierre pasa sin
     /// volver a preguntar.
     exit_confirmed: bool,
+    /// La apertura actual del diálogo de salida todavía no ha pedido el
+    /// foco inicial: se pide una sola vez por apertura (re-review A12).
+    exit_focus_requested: bool,
     /// Text filter applied to the sprites tree.
     tree_filter: String,
     /// Whether the tree filter has keyboard focus (blocks the Delete key).

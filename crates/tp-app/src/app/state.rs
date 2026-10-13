@@ -91,6 +91,7 @@ impl App {
             saved_config: String::new(),
             exit_pending: false,
             exit_confirmed: false,
+            exit_focus_requested: false,
             tree_filter: String::new(),
             tree_filter_focused: false,
             tree_filter_focus: false,
