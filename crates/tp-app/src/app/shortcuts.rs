@@ -96,6 +96,7 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
                         ui,
                         t!("General"),
                         &[
+                            (t!("Siguiente o anterior campo"), t!("Tab / Mayús + Tab")),
                             (t!("Cerrar la ventana"), "Esc"),
                             (t!("Esta ayuda"), "F1 / ?"),
                             (t!("Tutorial"), t!("Mayús + F1")),
@@ -104,9 +105,16 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
                     );
                 });
             });
+            // La frase tenía que dejar de prometer de más: «las teclas de
+            // la lista no se usan» era falsa desde que la lista también
+            // contiene atajos con Ctrl y teclas de función —F1, F9, Ctrl+J,
+            // Ctrl+Mayús+P— que sí actúan mientras se escribe (re-review
+            // A6). Lo que sí es cierto, guarda por guarda del código, es
+            // esto: las teclas de texto están apartadas por
+            // `wants_keyboard_input`.
             ui.label(
                 egui::RichText::new(t!(
-                    "Mientras escribes en un campo, las teclas de la lista no se usan."
+                    "Al escribir en un campo, las teclas de texto —zoom, flechas, Supr, Inicio y Fin— no salen de él hasta que pierde el foco."
                 ))
                 .weak(),
             );
@@ -242,6 +250,8 @@ mod tests {
             "Ctrl + J",
             "Mayús + F1",
             "Ctrl + Mayús + A",
+            // Navegación de campos, que el diálogo no mencionaba (A6).
+            "Tab / Mayús + Tab",
         ] {
             assert!(texto.contains(atajo), "falta el atajo {atajo}: {texto}");
         }
@@ -261,8 +271,22 @@ mod tests {
             "Plegar el panel inferior",
             "Tutorial",
             "Acerca de",
+            "Siguiente o anterior campo",
         ] {
             assert!(texto.contains(accion), "falta la acción {accion}: {texto}");
         }
+
+        // El pie tiene que ser cierto, no generoso (re-review A6): la lista
+        // también lleva atajos con Ctrl y teclas de función que sí actúan
+        // mientras se escribe, así que sólo se promete lo que las guardas de
+        // `wants_keyboard_input` cumplen —las teclas de texto—.
+        assert!(
+            texto.contains("las teclas de texto"),
+            "el pie ya no describe qué se queda en el campo: {texto}"
+        );
+        assert!(
+            !texto.contains("las teclas de la lista no se usan"),
+            "la promesa vieja era falsa y no debe volver: {texto}"
+        );
     }
 }

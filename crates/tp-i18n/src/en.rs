@@ -721,6 +721,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Plegar el panel inferior", "Collapse the bottom panel"),
     ("Mayús + F1", "Shift + F1"),
     ("Ctrl + Mayús + A", "Ctrl + Shift + A"),
+    ("Siguiente o anterior campo", "Next or previous field"),
+    ("Tab / Mayús + Tab", "Tab / Shift + Tab"),
     ("Edición", "Edit"),
     ("Ver", "View"),
     ("Deshacer el último cambio", "Undo the last change"),
@@ -728,8 +730,8 @@ pub static EN: &[(&str, &str)] = &[
     ("Cerrar la ventana", "Close the window"),
     ("Esta ayuda", "This help"),
     (
-        "Mientras escribes en un campo, las teclas de la lista no se usan.",
-        "List keys are ignored while you type in a field.",
+        "Al escribir en un campo, las teclas de texto —zoom, flechas, Supr, Inicio y Fin— no salen de él hasta que pierde el foco.",
+        "While typing in a field, the text keys — zoom, arrows, Del, Home and End — stay in it until it loses focus.",
     ),
 
     // Menú de app y «Acerca de» (M5).
