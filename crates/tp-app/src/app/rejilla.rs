@@ -314,3 +314,113 @@ fn limpiar_no_estrecha_el_buscador_de_ajustes() {
          lo escrito"
     );
 }
+
+/// Las líneas verticales pintadas en `banda`, ordenadas por x: los
+/// separadores de un grupo. egui las pinta como `LineSegment`.
+fn separadores_en(salida: &eframe::egui::FullOutput, banda: egui::Rect) -> Vec<f32> {
+    fn caminos(formas: &[eframe::egui::Shape], fuera: &mut Vec<eframe::egui::Rect>) {
+        for forma in formas {
+            match forma {
+                eframe::egui::Shape::LineSegment { points, .. } => {
+                    fuera.push(eframe::egui::Rect::from_points(points))
+                }
+                eframe::egui::Shape::Vec(hijos) => caminos(hijos, fuera),
+                _ => {}
+            }
+        }
+    }
+    let pintadas: Vec<_> = salida.shapes.iter().map(|f| f.shape.clone()).collect();
+    let mut v = Vec::new();
+    caminos(&pintadas, &mut v);
+    let mut xs: Vec<f32> = v
+        .iter()
+        .filter(|r| r.width() < 1.0 && r.height() > 4.0 && banda.contains(r.center()))
+        .map(|r| r.center().x)
+        .collect();
+    xs.sort_by(|a, b| a.total_cmp(b));
+    xs
+}
+
+/// D9: el indicador de frescura no mueve la barra de zoom.
+///
+/// Se pintaba al principio de una fila de ancho libre, así que aparecer
+/// y desaparecer empujaba los menús y las páginas ~110 px cada vez que
+/// la vista previa se recalculaba —el debounce del arrastre son 120 ms,
+/// así que el salto se veía a cada paso del slider—. Vive ahora en una
+/// ranura fija del grupo de la derecha, que se mide con el texto más
+/// largo de los tres; aquí se mide que nadie se mueve, ni siquiera los
+/// separadores, en los tres estados con indicador.
+#[test]
+fn el_indicador_de_frescura_no_desplaza_la_barra_de_zoom() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+
+    fn medidas(salida: &eframe::egui::FullOutput) -> (egui::Rect, egui::Rect, Vec<f32>) {
+        let vista = *controles_de(salida, "Vista")
+            .first()
+            .expect("el menú «Vista» debe estar pintado");
+        let ajustar = *controles_de(salida, "Ajustar")
+            .first()
+            .expect("el botón «Ajustar» debe estar pintado");
+        let banda = egui::Rect::from_min_max(
+            egui::pos2(0.0, vista.min.y - 8.0),
+            egui::pos2(1360.0, vista.max.y + 8.0),
+        );
+        (vista, ajustar, separadores_en(salida, banda))
+    }
+
+    // Estado limpio: sin indicador. Es el único frame en el que la
+    // vista previa arranca fresca, antes de que el arranque la marque.
+    let limpio = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let (vista_ok, ajustar_ok, separadores_ok) = medidas(&limpio);
+    assert!(
+        separadores_ok.len() >= 2,
+        "la barra de zoom lleva al menos dos separadores: {separadores_ok:?}"
+    );
+
+    // Desactualizado.
+    app.preview_stale = true;
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let desactualizado = galion_de(&salida, "⚠ Desactualizado");
+    assert!(
+        desactualizado.min.x > vista_ok.max.x,
+        "el indicador debe quedar a la derecha del menú «Vista»"
+    );
+    let (vista, ajustar, separadores) = medidas(&salida);
+    assert_eq!(
+        vista, vista_ok,
+        "«Vista» se mueve al aparecer «⚠ Desactualizado»"
+    );
+    assert_eq!(
+        ajustar, ajustar_ok,
+        "«Ajustar» se mueve al aparecer «⚠ Desactualizado»"
+    );
+    assert_eq!(
+        separadores, separadores_ok,
+        "los separadores se mueven al aparecer «⚠ Desactualizado»"
+    );
+
+    // Una corrida en marcha: el receptor vive y no manda nada.
+    let (tx, rx) = std::sync::mpsc::channel::<RunMessage>();
+    let _tx = tx;
+    app.running = Some(rx);
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let publicando = galion_de(&salida, "Publicando…");
+    assert!(
+        publicando.min.x > vista_ok.max.x,
+        "el indicador debe quedar a la derecha del menú «Vista»"
+    );
+    let (vista, ajustar, separadores) = medidas(&salida);
+    assert_eq!(
+        vista, vista_ok,
+        "«Vista» se mueve al aparecer «Publicando…»"
+    );
+    assert_eq!(
+        ajustar, ajustar_ok,
+        "«Ajustar» se mueve al aparecer «Publicando…»"
+    );
+    assert_eq!(
+        separadores, separadores_ok,
+        "los separadores se mueven al aparecer «Publicando…»"
+    );
+}

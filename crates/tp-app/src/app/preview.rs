@@ -61,30 +61,6 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
     // `horizontal_centered` reserva la altura entera del marco y centra la
     // fila en ella, de modo que los dos huecos miden lo mismo (4.3).
     ui.horizontal_centered(|ui| {
-        // Indicador de frescura de la vista previa.
-        match app.preview_state() {
-            PreviewState::Publishing => {
-                ui.spinner();
-                ui.label(
-                    egui::RichText::new(t!("Publicando…"))
-                        .color(super::info_color(ui.visuals())),
-                );
-            }
-            PreviewState::Updating => {
-                ui.spinner();
-                ui.label(
-                    egui::RichText::new(t!("Actualizando…"))
-                        .color(super::info_color(ui.visuals())),
-                );
-            }
-            PreviewState::Stale => {
-                ui.label(
-                    egui::RichText::new(t!("⚠ Desactualizado"))
-                        .color(super::amber_color(ui.visuals())),
-                );
-            }
-            PreviewState::Ok => {}
-        }
         super::separador(ui);
         let pages = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
         if pages > 1 {
@@ -181,6 +157,37 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
         // contenido es infinito: alinear a la derecha exige un ancho
         // concreto, y sólo queda libre el que falta hasta el borde de la
         // barra (los controles de la izquierda ya se han llevado el resto).
+        // Indicador de frescura al final del grupo de la izquierda
+        // (re-review D9). Al principio de la fila, aparecer y
+        // desaparecer empujaba los menús y las páginas ~110 px cada vez
+        // que la vista previa se recalculaba —el debounce del arrastre
+        // son 120 ms—; aquí no hay nada a su derecha hasta el grupo de
+        // zoom, que va anclado al borde derecho y crece hacia la
+        // izquierda sobre ese espacio vacío, así que encenderse no
+        // mueve a nadie (se comprueba en `rejilla`).
+        match app.preview_state() {
+            PreviewState::Publishing => {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new(t!("Publicando…"))
+                        .color(super::info_color(ui.visuals())),
+                );
+            }
+            PreviewState::Updating => {
+                ui.spinner();
+                ui.label(
+                    egui::RichText::new(t!("Actualizando…"))
+                        .color(super::info_color(ui.visuals())),
+                );
+            }
+            PreviewState::Stale => {
+                ui.label(
+                    egui::RichText::new(t!("⚠ Desactualizado"))
+                        .color(super::amber_color(ui.visuals())),
+                );
+            }
+            PreviewState::Ok => {}
+        }
         let ocupado = ui.cursor().min.x - ui.max_rect().min.x;
         let restante = (ancho - ocupado).max(0.0);
         ui.allocate_ui_with_layout(
