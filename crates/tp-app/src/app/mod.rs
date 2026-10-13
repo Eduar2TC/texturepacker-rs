@@ -639,17 +639,13 @@ impl eframe::App for App {
             .resizable(resizable)
             .default_height(bottom_open)
             .height_range(32.0..=f32::INFINITY);
-        // Plegado, el panel es una banda de 22 px: 2 de marco y 18 de fila,
-        // lo mismo que el menú, la barra de herramientas y la tira de estado.
-        // Los 28 que había venían de 2 + 24 + 2, es decir, de dar por hecho
-        // una fila del objetivo de 24: la barra de pestañas mide
-        // `interact_size.y` —18 px— y la diferencia se quedaba en 6 px de
-        // chrome muerto debajo de la única fila que lleva, con 1 px de aire
-        // entre la línea de arriba y la fila y 8 entre la fila y la de abajo.
-        // La altura va con la escala de la letra: es la misma banda que la
-        // tira de estado (V2).
+        // Plegado, el panel es una banda de 28 px: 4 de marco y 24 de
+        // fila, que es el objetivo de puntero que la barra de pestañas
+        // se ganó en la re-review A5 —el chevron y la insignia «✖ Error»
+        // son controles de un glifo—. La altura va con la escala de la
+        // letra: es la misma banda que la de menú y la de herramientas.
         let bottom = if self.bottom_collapsed {
-            bottom.exact_height(crate::ui_prefs::altura(22.0, ctx))
+            bottom.exact_height(crate::ui_prefs::altura(28.0, ctx))
         } else {
             bottom
         };

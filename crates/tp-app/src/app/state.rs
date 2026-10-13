@@ -308,7 +308,7 @@ impl App {
         // Un error salta al Log: que no pase desapercibido en otra pestaña.
         //
         // Y si el panel está plegado, se despliega también (re-review B1):
-        // cambiar de pestaña dentro de un panel de 22 px no enseña nada, y
+        // cambiar de pestaña dentro de un panel de 28 px no enseña nada, y
         // un error sin despliegue es el mismo «no ha pasado nada perceptible»
         // que adolece «Publicar».
         if matches!(kind, LogKind::Error) {

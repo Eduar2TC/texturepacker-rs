@@ -17,6 +17,13 @@ pub(crate) const TUTORIAL_URL: &str = "https://github.com/Eduar2TC/texturepacker
 pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
+            // Una sola altura por fila y esa altura, el objetivo de
+            // 24×24 (re-review A5): el «…» de publicar es el control que
+            // manda y el resto —incluido el spinner, que toma su tamaño
+            // del `interact_size` de la fila— se mide igual, como en las
+            // cabeceras de los docks. Antes la fila medía 18 px y el
+            // «…» 24 sobresalía de su banda.
+            ui.style_mut().spacing.interact_size.y = super::OBJETIVO_MIN.y;
             // --- Sprites ---
             if ui
                 .button(t!("➕ Añadir sprites…"))
@@ -110,7 +117,17 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                 // queda «Forzar publicación», que no tiene botón propio.
                 // El glifo «⋯» no existe en las fuentes de egui —lo ha
                 // cazado `glyph_guard`— y «☰» se leía como menú de la app.
-                ui.menu_button("…", |ui| {
+                //
+                // Un control de un solo glifo se mide con el objetivo de
+                // 24×24 (re-review A5). `Ui::menu_button` no deja poner
+                // `min_size` —el ancho de su botón sale del texto y del
+                // relleno, 21 px—, así que el botón se construye a mano y
+                // se le monta el menú encima con `MenuButton::from_button`,
+                // la misma receta que ese método usa por dentro.
+                let respuesta_menu = egui::containers::menu::MenuButton::from_button(
+                    egui::Button::new("…").min_size(super::OBJETIVO_MIN),
+                )
+                .ui(ui, |ui| {
                     let publishing = app.running.is_some();
                     if ui
                         .add_enabled(!publishing, egui::Button::new(t!("Forzar publicación")))
@@ -121,8 +138,8 @@ pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
                         app.start_pack(true);
                     }
                 })
-                .response
-                .on_hover_text(t!("Más opciones de publicación"));
+                .0;
+                respuesta_menu.on_hover_text(t!("Más opciones de publicación"));
             });
         });
     });
@@ -297,7 +314,11 @@ mod tests {
 
         let hueco = boton.min.x - menu.max.x;
         let spacing = ctx.style().spacing.item_spacing.x;
-        let spinner = ctx.style().spacing.interact_size.y;
+        // El spinner toma su tamaño del `interact_size` de su fila, y
+        // desde la re-review A5 la fila de la toolbar mide
+        // `OBJETIVO_MIN` —24 px—: con el del contexto global, 18, la
+        // fórmula no describía lo que se pinta.
+        let spinner = crate::app::OBJETIVO_MIN.y;
         assert_eq!(
             hueco,
             2.0 * spacing + spinner,

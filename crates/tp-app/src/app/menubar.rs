@@ -13,7 +13,7 @@
 use super::{
     preview,
     toolbar::{confirm_reset, TUTORIAL_URL},
-    App, LogKind,
+    App, LogKind, OBJETIVO_MIN,
 };
 use crate::i18n::t;
 use eframe::egui;
@@ -34,6 +34,12 @@ const REPO_URL: &str = "https://github.com/Eduar2TC/texturepacker-rs";
 /// abajo sólo lleva añadir/quitar, herramientas del atlas y publicar.
 pub(super) fn menubar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("menubar").show(ctx, |ui| {
+        // La banda de menú y la de herramientas son una sola pieza de
+        // chrome y las dos crecen juntas: la fila entera sube a
+        // `OBJETIVO_MIN`, la misma receta de las cabeceras de los docks,
+        // para que su contenido quepa en la banda de 28 px que pide el
+        // «…» de la toolbar (re-review A5).
+        ui.style_mut().spacing.interact_size.y = OBJETIVO_MIN.y;
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button(t!("Archivo"), |ui| archivo(app, ui));
             ui.menu_button(t!("Edición"), |ui| edicion(app, ui));
@@ -176,11 +182,7 @@ fn ayuda(app: &mut App, ui: &mut egui::Ui) {
         .clicked()
     {
         ui.close();
-        ui.ctx().open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
-        app.aviso(
-            LogKind::Info,
-            t!("Abriendo la documentación en el navegador.").into(),
-        );
+        tutorial(app, ui.ctx());
     }
     super::separador(ui);
     if ui.button(t!("Acerca de")).clicked() {
@@ -194,6 +196,18 @@ fn ayuda(app: &mut App, ui: &mut egui::Ui) {
 /// cambios sin guardar» del C2, que vive en la respuesta a ese pedido.
 pub(super) fn salir(ctx: &egui::Context) {
     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+}
+
+/// «Tutorial»: abre el README en el navegador y lo deja anotado en el
+/// registro. Vive en su propia función porque la entrada por teclado
+/// —Mayús+F1 (re-review A4)— usa exactamente la misma receta que el
+/// menú: un atajo sin su aviso se sentía como una tecla muda.
+pub(super) fn tutorial(app: &mut App, ctx: &egui::Context) {
+    ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
+    app.aviso(
+        LogKind::Info,
+        t!("Abriendo la documentación en el navegador.").into(),
+    );
 }
 
 /// «Acerca de»: nombre, versión, qué es esto, enlaces y licencia. Es el

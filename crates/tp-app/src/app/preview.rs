@@ -1,6 +1,6 @@
 //! Center preview panel (sprite sheet) plus the bottom zoom bar.
 
-use super::{App, PreviewState};
+use super::{App, PreviewState, OBJETIVO_MIN};
 use crate::i18n::t;
 use eframe::egui;
 use std::path::PathBuf;
@@ -64,12 +64,18 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
         super::separador(ui);
         let pages = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
         if pages > 1 {
-            let anterior = ui.button("◀").on_hover_text(t!("Página anterior"));
+            // Flechas de página: controles de un solo glifo, así que se
+            // ganan el objetivo de 24 px (re-review A5).
+            let anterior = ui
+                .add(egui::Button::new("◀").min_size(OBJETIVO_MIN))
+                .on_hover_text(t!("Página anterior"));
             if anterior.clicked() && app.selected_page > 0 {
                 app.selected_page -= 1;
             }
             ui.label(t!("Página {}/{}", app.selected_page + 1, pages));
-            let siguiente = ui.button("▶").on_hover_text(t!("Página siguiente"));
+            let siguiente = ui
+                .add(egui::Button::new("▶").min_size(OBJETIVO_MIN))
+                .on_hover_text(t!("Página siguiente"));
             if siguiente.clicked() && app.selected_page + 1 < pages {
                 app.selected_page += 1;
             }
@@ -210,7 +216,13 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
                 app.zoom = 1.0;
                 app.auto_fit = false;
             }
-            if ui.button("+").on_hover_text(t!("Acercar")).clicked() {
+            // Los dos botones de zoom son de un solo glifo: se ganan el
+            // objetivo de 24 px (re-review A5).
+            if ui
+                .add(egui::Button::new("+").min_size(OBJETIVO_MIN))
+                .on_hover_text(t!("Acercar"))
+                .clicked()
+            {
                 zoom_step(app, 1);
             }
             let porcentaje = (app.zoom * 100.0).round() as i32;
@@ -222,7 +234,11 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
             if zoom_slider.changed() {
                 app.auto_fit = false;
             }
-            if ui.button("−").on_hover_text(t!("Alejar")).clicked() {
+            if ui
+                .add(egui::Button::new("−").min_size(OBJETIVO_MIN))
+                .on_hover_text(t!("Alejar"))
+                .clicked()
+            {
                 zoom_step(app, -1);
             }
             // El porcentaje vive fuera del slider (re-review D11): como

@@ -874,8 +874,14 @@ fn handle_list_keys(
         app.remove_selected(&paths);
         return;
     }
-    // Ctrl+A: el lote entero, en el orden en que se ve la lista.
-    if ui.input(|i| (i.modifiers.command || i.modifiers.ctrl) && i.key_pressed(egui::Key::A)) {
+    // Ctrl+A: el lote entero, en el orden en que se ve la lista. Con
+    // Mayús no: Ctrl+Mayús+A es «Acerca de» (re-review A4).
+    let seleccionar_todo = ui.input(|i| {
+        (i.modifiers.command || i.modifiers.ctrl)
+            && !i.modifiers.shift
+            && i.key_pressed(egui::Key::A)
+    });
+    if seleccionar_todo {
         app.selected_paths.clear();
         app.selected_paths.extend(paths.iter().cloned());
         app.list_cursor = paths.last().cloned();

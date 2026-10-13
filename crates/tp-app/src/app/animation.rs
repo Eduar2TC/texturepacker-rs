@@ -1,7 +1,7 @@
 //! Floating "Animation preview" window: plays the selected sprites when there
 //! is a selection, otherwise the frames of every sprite group.
 
-use super::App;
+use super::{App, OBJETIVO_MIN};
 use crate::i18n::t;
 use eframe::egui;
 use tp_core::types::Rect;
@@ -210,8 +210,10 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     // conmutaba el mismo booleano a 40 px, con otro indicador visual.
     let reproducible = frames.len() > 1;
     ui.horizontal(|ui| {
+        // Los dos botones del transporte son de un solo glifo: se ganan
+        // el objetivo de 24 px (re-review A5).
         if ui
-            .button("⏮")
+            .add(egui::Button::new("⏮").min_size(OBJETIVO_MIN))
             .on_hover_text(t!("Primer fotograma"))
             .clicked()
         {
@@ -219,7 +221,7 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
             app.anim.frame = 0;
         }
         if ui
-            .button("⏭")
+            .add(egui::Button::new("⏭").min_size(OBJETIVO_MIN))
             .on_hover_text(t!("Último fotograma"))
             .clicked()
         {

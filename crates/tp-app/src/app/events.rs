@@ -146,7 +146,8 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     if consume(ctx, egui::Key::S) {
         app.save_project();
     }
-    if consume(ctx, egui::Key::P) && app.running.is_none() {
+    // Con Mayús no: Ctrl+Mayús+P es «Forzar publicación» (re-review A4).
+    if consume(ctx, egui::Key::P) && !ctx.input(|i| i.modifiers.shift) && app.running.is_none() {
         app.start_pack(false);
     }
     // Ctrl+Z deshace el último gesto (C6). Mientras se escribe en un
@@ -167,6 +168,52 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     // es el único sitio donde ese widget existe.
     if consume(ctx, egui::Key::F) {
         app.tree_filter_focus = true;
+    }
+
+    // Acciones que sólo se alcanzaban con el ratón (re-review A4). Cada
+    // tecla va a lo que hace —no al botón que la aloja— porque los menús
+    // de egui no tienen foco y no se pueden abrir con el teclado.
+    //
+    // «Restablecer la configuración» lleva la confirmación nativa del
+    // menú (C5), que es un diálogo modal del sistema: por eso no se
+    // dispara en las pruebas, que la confirmarían colgando el test.
+    if consume(ctx, egui::Key::R) && ctx.input(|i| i.modifiers.shift) && !ctx.wants_keyboard_input()
+    {
+        super::toolbar::confirm_reset(app);
+    }
+    // «Forzar publicación», la única entrada del «…» de la toolbar.
+    if consume(ctx, egui::Key::P) && ctx.input(|i| i.modifiers.shift) && app.running.is_none() {
+        app.start_pack(true);
+    }
+    // Ctrl+J: plegar y desplegar el panel inferior (el atajo de los
+    // editores para el panel de abajo).
+    if consume(ctx, egui::Key::J) {
+        app.bottom_collapsed = !app.bottom_collapsed;
+    }
+    // «Acerca de», el último renglón del menú «Ayuda».
+    if consume(ctx, egui::Key::A) && ctx.input(|i| i.modifiers.shift) {
+        app.show_about = true;
+    }
+    // «Tutorial», justo encima de «Acerca de»: Mayús+F1, la extensión de
+    // «Esta ayuda» (F1).
+    if ctx.input(|i| i.key_pressed(egui::Key::F1) && i.modifiers.shift) {
+        super::menubar::tutorial(app, ctx);
+    }
+    // Página anterior o siguiente del atlas (Ctrl+RePág / Ctrl+AvPág):
+    // la navegación de páginas de la barra de zoom, que hasta ahora sólo
+    // existía con el ratón.
+    let paginas = app.result.as_ref().map(|o| o.pages.len()).unwrap_or(0);
+    let (paginar_adelante, paginar_atras) = ctx.input(|i| {
+        (
+            i.key_pressed(egui::Key::PageDown) && i.modifiers.ctrl,
+            i.key_pressed(egui::Key::PageUp) && i.modifiers.ctrl,
+        )
+    });
+    if paginar_adelante && app.selected_page + 1 < paginas {
+        app.selected_page += 1;
+    }
+    if paginar_atras && app.selected_page > 0 {
+        app.selected_page -= 1;
     }
 
     // Zoom de teclado (sin modificadores, como en Figma/Photoshop):
@@ -206,7 +253,8 @@ pub(super) fn handle_shortcuts(app: &mut App, ctx: &egui::Context) {
     // escribe en un campo, para no dejar un «?» huérfano en el texto.
     let (ayuda, ayuda_tecla) = ctx.input(|i| {
         (
-            i.key_pressed(egui::Key::F1),
+            // Con Mayús no: Mayús+F1 es «Tutorial» (re-review A4).
+            i.key_pressed(egui::Key::F1) && !i.modifiers.shift,
             i.key_pressed(egui::Key::Questionmark),
         )
     });
@@ -275,6 +323,41 @@ mod tests {
 
     fn ctrl(app: &mut App, ctx: &egui::Context, key: egui::Key) -> egui::FullOutput {
         let mods = egui::Modifiers::CTRL;
+        frame(
+            app,
+            ctx,
+            mods,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: mods,
+            }],
+        )
+    }
+
+    /// Ctrl+Mayús+tecla: las acciones nuevas de la re-review A4 llevan
+    /// Mayús para no comerse los atajos cortos (Ctrl+P, Ctrl+A).
+    fn ctrl_shift(app: &mut App, ctx: &egui::Context, key: egui::Key) -> egui::FullOutput {
+        let mods = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+        frame(
+            app,
+            ctx,
+            mods,
+            vec![egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: mods,
+            }],
+        )
+    }
+
+    /// Mayús+tecla, sin Ctrl (Mayús+F1, «Tutorial»).
+    fn shift(app: &mut App, ctx: &egui::Context, key: egui::Key) -> egui::FullOutput {
+        let mods = egui::Modifiers::SHIFT;
         frame(
             app,
             ctx,
@@ -486,5 +569,89 @@ mod tests {
             app.show_settings, ajustes,
             "F9 debe girar Ajustes cuando no hay diálogo de salida"
         );
+    }
+
+    /// Re-review A4: cada acción que sólo se alcanzaba con el ratón tiene
+    /// su tecla. «Restablecer la configuración» —Ctrl+Mayús+R— no se
+    /// dispara aquí: su confirmación es el diálogo nativo del sistema de
+    /// C5, que bloquearía la prueba.
+    #[test]
+    fn las_acciones_de_raton_tambien_se_llaman_por_teclado() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+
+        // Ctrl+Mayús+A abre «Acerca de», el último renglón del menú «Ayuda».
+        let _ = ctrl_shift(&mut app, &ctx, egui::Key::A);
+        assert!(app.show_about, "Ctrl+Mayús+A debe abrir «Acerca de»");
+        app.show_about = false;
+
+        // Ctrl+J pliega y despliega el panel inferior.
+        let antes = app.bottom_collapsed;
+        let _ = ctrl(&mut app, &ctx, egui::Key::J);
+        assert_ne!(
+            app.bottom_collapsed, antes,
+            "Ctrl+J debe cambiar el pliegue del panel inferior"
+        );
+
+        // Mayús+F1 enseña el aviso del «Tutorial», con la misma receta
+        // que el menú.
+        let _ = shift(&mut app, &ctx, egui::Key::F1);
+        assert!(
+            app.logs
+                .last()
+                .is_some_and(|linea| linea.text.contains("Abriendo la documentación")),
+            "Mayús+F1 debe avisar de que abre el tutorial: {:?}",
+            app.logs.last().map(|linea| &linea.text)
+        );
+
+        // Ctrl+Mayús+P fuerza la publicación —«Forzar publicación», la
+        // única entrada del «…» de la toolbar— y sin entrada el aviso
+        // contesta igual que el botón.
+        let _ = ctrl_shift(&mut app, &ctx, egui::Key::P);
+        assert!(
+            app.logs
+                .last()
+                .is_some_and(|linea| linea.text.contains("Selecciona un directorio")),
+            "Ctrl+Mayús+P debe publicar y avisar si no hay sprites: {:?}",
+            app.logs.last().map(|linea| &linea.text)
+        );
+
+        // Ctrl+AvPág / Ctrl+RePág navegan las hojas del atlas.
+        app.result = Some(tp_core::pipeline::PipelineOutput {
+            result: tp_core::types::PackResult {
+                config: tp_core::config::ProjectConfig::default(),
+                sprites: Vec::new(),
+                pages: Vec::new(),
+                warnings: Vec::new(),
+                stage_times_ms: Vec::new(),
+                total_sprites: 0,
+                alias_count: 0,
+                output_files: Vec::new(),
+            },
+            pages: vec![
+                tp_core::types::AtlasPage::new(0, 4, 4),
+                tp_core::types::AtlasPage::new(1, 4, 4),
+            ],
+        });
+        // La vista previa coge la textura de la hoja pintada: con las
+        // hojas sin textura el lienzo se caería antes de medir nada.
+        app.textures = (0..2)
+            .map(|i| {
+                ctx.load_texture(
+                    format!("hoja-{i}"),
+                    egui::ColorImage::new([4, 4], vec![egui::Color32::TRANSPARENT; 16]),
+                    egui::TextureOptions::NEAREST,
+                )
+            })
+            .collect();
+        let _ = ctrl(&mut app, &ctx, egui::Key::PageDown);
+        assert_eq!(
+            app.selected_page, 1,
+            "Ctrl+AvPág pasa a la página siguiente"
+        );
+        let _ = ctrl(&mut app, &ctx, egui::Key::PageDown);
+        assert_eq!(app.selected_page, 1, "en la última página no avanza más");
+        let _ = ctrl(&mut app, &ctx, egui::Key::PageUp);
+        assert_eq!(app.selected_page, 0, "Ctrl+RePág vuelve a la anterior");
     }
 }

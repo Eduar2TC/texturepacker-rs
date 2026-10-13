@@ -130,7 +130,11 @@ fn el_lienzo_cabe_entero_en_la_ventana_minima() {
 
 /// Alturas que el rediseño dio con medida fija: la banda de menú y la
 /// de herramientas, la de la barra de zoom y la de la tira de estado.
-const BANDA_CHROME: f32 = 22.0;
+///
+/// Las dos de arriba se ganaron el «…» de 24 px de la re-review A5: su
+/// fila mide `OBJETIVO_MIN` y con el marco la banda son 28. La tira de
+/// estado no lleva controles de glifo y sigue en 22.
+const BANDA_CHROME: f32 = 28.0;
 const BANDA_ZOOM: f32 = 32.0;
 const BANDA_TIRA: f32 = 22.0;
 

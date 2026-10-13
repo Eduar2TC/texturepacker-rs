@@ -1,6 +1,6 @@
 //! Bottom panel: log, output details, sprite table and mesh views.
 
-use super::{App, BottomTab, LogKind};
+use super::{App, BottomTab, LogKind, OBJETIVO_MIN};
 use crate::i18n::t;
 use eframe::egui;
 
@@ -17,13 +17,18 @@ pub(super) fn bottom_ui(app: &mut App, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         // Plegar/desplegar el panel (chevron como en cualquier herramienta).
         //
-        // Es `button` y no `small_button`: en la misma fila convivían dos
-        // alturas, la de las pestañas —`interact_size.y`, 18 px— y la del
-        // `small_button`, 15 px, con lo que la caja del chevron se quedaba
-        // 3 px por encima y por debajo de la de sus vecinas.
+        // La fila entera mide `OBJETIVO_MIN` de alto —subiendo
+        // `interact_size.y`, la misma receta que `cabecera_dock`— para
+        // que las pestañas, la insignia y el chevron midan lo mismo:
+        // era la regla de la barra desde que el chevron dejó de ser
+        // `small_button` (15 px) al lado de las pestañas (18 px). El
+        // chevron lleva además `min_size`, porque su ancho —el de
+        // `interact_size`, 20 px— se queda corto para el objetivo de
+        // 24×24 de un control de un solo glifo (re-review A5).
+        ui.style_mut().spacing.interact_size.y = OBJETIVO_MIN.y;
         let chevron = if plegado { "⏵" } else { "⏷" };
         if ui
-            .button(chevron)
+            .add(egui::Button::new(chevron).min_size(OBJETIVO_MIN))
             .on_hover_text(if plegado {
                 t!("Mostrar el panel")
             } else {
@@ -392,8 +397,9 @@ mod tests {
     /// En la barra de pestañas sólo puede haber **una** altura. El chevron
     /// de plegar y el botón de error eran `small_button` —15 px—, así que
     /// sus cajas se quedaban 3 px por encima y por debajo de las de las
-    /// pestañas, que miden `interact_size.y` —18 px—: dos filas de bordes
-    /// distintos dentro de una misma fila.
+    /// pestañas, que miden `interact_size.y`; desde la re-review A5 esa
+    /// fila entera se mide a `OBJETIVO_MIN` —24 px— y la regla sigue
+    /// siendo la misma: una fila, una altura.
     #[test]
     fn la_barra_de_pestañas_no_mezcla_alturas() {
         let ctx = egui::Context::default();
@@ -424,14 +430,15 @@ mod tests {
         }
     }
 
-    /// Plegado, el panel es una banda de 22 px: 2 de marco y 18 de fila,
-    /// como el menú, la barra de herramientas y la tira de estado. Con
+    /// Plegado, el panel es una banda de 28 px: 4 de marco y 24 de fila,
+    /// que es el objetivo de puntero de la barra de pestañas desde la
+    /// re-review A5 (el chevron y «✖ Error» son controles de glifo). Con
     /// `exact_height(28)` la banda medía 28 y su marco dejaba 6 px de chrome
     /// muerto debajo de la única fila que lleva —1 px de aire entre la línea
     /// de arriba y la fila, 8 entre la fila y la de abajo—, que es justo el
     /// defecto que tenía la barra de zoom.
     #[test]
-    fn el_panel_plegado_es_de_22_px_y_llena_su_banda() {
+    fn el_panel_plegado_es_de_28_px_y_llena_su_banda() {
         let ctx = egui::Context::default();
         let mut app = App::new_for_testing(ctx.clone(), None);
         app.bottom_collapsed = true;
@@ -449,9 +456,9 @@ mod tests {
             .expect("el chevron de la barra está en el panel plegado");
 
         assert!(
-            (banda.height() - 22.0).abs() < 0.5,
-            "el panel plegado mide {:.0} px: la banda es 2 de marco y 18 de \
-             fila, como las demás bandas de 22",
+            (banda.height() - 28.0).abs() < 0.5,
+            "el panel plegado mide {:.0} px: la banda es 4 de marco y 24 de \
+             fila, como la de menú y la de herramientas",
             banda.height()
         );
         let arriba = fila.min.y - banda.min.y;
@@ -529,8 +536,8 @@ mod tests {
         let out = app.run_frame(&ctx, idle_input());
         let plegada = altura_del_panel(&out);
         assert!(
-            (plegada - 22.0).abs() < 0.5,
-            "la banda plegada mide {plegada:.0} px y debe ser 22"
+            (plegada - 28.0).abs() < 0.5,
+            "la banda plegada mide {plegada:.0} px y debe ser 28"
         );
 
         clica_el_chevron(&mut app, &ctx, "⏵");
@@ -569,7 +576,7 @@ mod tests {
         };
         let plegada = estado(BOTTOM_PANEL_PLEGADO);
         assert!(
-            (plegada - 22.0).abs() < 0.5,
+            (plegada - 28.0).abs() < 0.5,
             "la banda plegada guarda {plegada:.0} px de estado: maqueta la \
              línea que va debajo de su fila y egui la toma por altura"
         );
@@ -741,7 +748,7 @@ mod tests {
     }
 
     /// Un error dentro de un panel plegado no se ve: `log()` ya saltaba a la
-    /// pestaña Log, pero con el panel en banda de 22 px la pestaña es lo
+    /// pestaña Log, pero con el panel en banda de 28 px la pestaña es lo
     /// único que hay y el mensaje queda oculto (re-review B1). El error
     /// despliega el panel además de cambiar de pestaña.
     #[test]

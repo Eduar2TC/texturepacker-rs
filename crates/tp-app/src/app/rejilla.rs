@@ -579,3 +579,137 @@ fn los_espacios_del_codigo_estan_en_la_rejilla_de_8() {
         fuera.join("\n  ")
     );
 }
+
+/// re-review A5: el objetivo de puntero de 24×24 sólo había llegado a los
+/// «…» de Ajustes y al `+/−` del árbol. Se quedaban a 18 px el zoom
+/// `+`/`−`, las flechas de página, el «…» de publicar, el chevron y la
+/// insignia «✖ Error» del panel inferior y el transporte de animación.
+#[test]
+fn los_controles_sueltos_miden_el_objetivo_de_24_px() {
+    /// Un control buscado: su glifo y, si el mismo glifo se pinta en
+    /// varios sitios, la zona del que hay que medir.
+    type Buscado = (&'static str, Option<fn(egui::Rect) -> bool>);
+
+    /// El centro de la barra de zoom, al fondo de la vista previa: el
+    /// `+`/`−` del panel izquierdo viven arriba, en la cabecera del árbol.
+    fn en_la_barra_de_zoom(caja: egui::Rect) -> bool {
+        caja.center().y > 600.0 && caja.center().x > 400.0
+    }
+    /// El «…» de la toolbar: los cuatro «…» de Ajustes ya llevan su
+    /// objetivo y viven en el dock derecho.
+    fn en_la_toolbar(caja: egui::Rect) -> bool {
+        caja.center().y < 90.0
+    }
+
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+    // La insignia «✖ Error» sólo se pinta con un fallo pendiente.
+    app.log(LogKind::Error, "fallo de prueba".into());
+    // Dos hojas: las flechas de página sólo existen con más de una. Dos
+    // sprites del grupo «run» y sus texturas: el transporte de animación
+    // sólo se pinta con fotogramas publicados.
+    app.result = Some(atlas_de_dos_hojas());
+    app.textures = (0..2)
+        .map(|i| {
+            ctx.load_texture(
+                format!("hoja-{i}"),
+                egui::ColorImage::new([64, 64], vec![egui::Color32::TRANSPARENT; 64 * 64]),
+                egui::TextureOptions::NEAREST,
+            )
+        })
+        .collect();
+    app.show_animation = true;
+
+    let _ = frame_en(&mut app, &ctx, 1360.0, 860.0);
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+
+    let buscados: [Buscado; 9] = [
+        ("⏷", None),
+        ("✖ Error", None),
+        ("…", Some(en_la_toolbar)),
+        ("+", Some(en_la_barra_de_zoom)),
+        ("−", Some(en_la_barra_de_zoom)),
+        ("◀", None),
+        ("▶", None),
+        ("⏮", None),
+        ("⏭", None),
+    ];
+    for (glifo, zona) in buscados {
+        let caja = controles_de(&salida, glifo)
+            .into_iter()
+            .find(|caja| zona.is_none_or(|en_zona| en_zona(*caja)))
+            .unwrap_or_else(|| panic!("«{glifo}» debe estar pintado en su sitio"));
+        assert!(
+            caja.width() >= 24.0 && caja.height() >= 24.0,
+            "«{glifo}» mide {:.0}×{:.0} px y el objetivo de puntero es 24×24: {caja:?}",
+            caja.width(),
+            caja.height()
+        );
+    }
+}
+
+/// Un atlas de dos hojas con un grupo animado de dos fotogramas: lo
+/// mínimo para que existan a la vez las flechas de página y el transporte
+/// de animación, sin montar el pipeline entero.
+fn atlas_de_dos_hojas() -> tp_core::pipeline::PipelineOutput {
+    fn pagina(index: usize) -> tp_core::types::PageInfo {
+        tp_core::types::PageInfo {
+            index,
+            width: 64,
+            height: 64,
+            file_name: format!("atlas_{index}.png"),
+            format: "PNG".to_string(),
+            has_normals: false,
+            normal_file_name: None,
+            encrypted: false,
+            fill_ratio: 0.0,
+            cache_version: String::new(),
+        }
+    }
+    fn sprite(id: &str) -> tp_core::types::SpriteAsset {
+        let marco = tp_core::types::Rect {
+            x: 0,
+            y: 0,
+            width: 8,
+            height: 8,
+        };
+        tp_core::types::SpriteAsset {
+            id: id.to_string(),
+            source_path: format!("/tmp/tp_a5/{id}.png"),
+            raw_width: 8,
+            raw_height: 8,
+            trimmed_bounds: marco,
+            offset_x: 0,
+            offset_y: 0,
+            pixel_hash: "prueba".to_string(),
+            is_alias: false,
+            alias_target_id: None,
+            pivot: tp_core::types::Point2D { x: 0.5, y: 0.5 },
+            border: None,
+            mesh: None,
+            allocated_frame: marco,
+            visible_frame: marco,
+            is_rotated: false,
+            atlas_page_index: 0,
+            normal_source_path: None,
+            is_alias_target: false,
+            contours: Vec::new(),
+        }
+    }
+    tp_core::pipeline::PipelineOutput {
+        result: tp_core::types::PackResult {
+            config: tp_core::config::ProjectConfig::default(),
+            sprites: vec![sprite("run_01"), sprite("run_02")],
+            pages: vec![pagina(0), pagina(1)],
+            warnings: Vec::new(),
+            stage_times_ms: Vec::new(),
+            total_sprites: 2,
+            alias_count: 0,
+            output_files: Vec::new(),
+        },
+        pages: vec![
+            tp_core::types::AtlasPage::new(0, 64, 64),
+            tp_core::types::AtlasPage::new(1, 64, 64),
+        ],
+    }
+}

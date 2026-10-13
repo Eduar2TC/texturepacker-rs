@@ -25,58 +25,85 @@ pub(super) fn shortcuts_window(app: &mut App, ctx: &egui::Context) {
     let id = egui::Id::new("shortcuts_help");
     super::ventana_flotante(t!("Atajos de teclado"), id, ctx)
         .open(&mut open)
-        .default_width(430.0)
+        .default_width(690.0)
         .resizable(false)
         .show(ctx, |ui| {
-            seccion(
-                ui,
-                t!("Proyecto"),
-                &[
-                    (t!("Abrir proyecto"), "Ctrl + O"),
-                    (t!("Guardar proyecto"), "Ctrl + S"),
-                    (t!("Publicar"), "Ctrl + P"),
-                    (t!("Salir"), "Ctrl + Q"),
-                ],
-            );
-            seccion(
-                ui,
-                t!("Edición"),
-                &[(t!("Deshacer el último cambio"), "Ctrl + Z")],
-            );
-            seccion(
-                ui,
-                t!("Vista"),
-                &[
-                    (t!("Acercar"), "+"),
-                    (t!("Alejar"), "−"),
-                    (t!("Zoom al 100% (tamaño real)"), "0"),
-                    (t!("Ajustar"), "F"),
-                    (t!("Zoom con la rueda"), t!("Ctrl + rueda")),
-                    (t!("Mostrar Ajustes"), "F9"),
-                ],
-            );
-            seccion(
-                ui,
-                t!("Lista de sprites"),
-                &[
-                    (t!("Filtrar sprites…"), "Ctrl + F"),
-                    (t!("Mover el cursor"), t!("Flechas")),
-                    (t!("Extender la selección"), t!("Mayús + flechas")),
-                    (t!("Acumular la selección"), t!("Ctrl + flechas")),
-                    (t!("Primera o última fila"), t!("Inicio / Fin")),
-                    (t!("Página arriba o abajo"), t!("AvPág / RePág")),
-                    (t!("Seleccionar todo"), "Ctrl + A"),
-                    (t!("Quitar los sprites seleccionados"), t!("Supr")),
-                ],
-            );
-            seccion(
-                ui,
-                t!("General"),
-                &[
-                    (t!("Cerrar la ventana"), "Esc"),
-                    (t!("Esta ayuda"), "F1 / ?"),
-                ],
-            );
+            // Dos columnas y no una tira larga: con las teclas que la
+            // re-review A4 fue añadiendo —seis filas nuevas— la lista en
+            // una sola columna pasaba de los 600 px de la ventana mínima
+            // y el contenido de abajo se quedaba sin ver (M4). El orden
+            // de lectura es columna a columna, como en las tablas de
+            // referencia.
+            ui.horizontal(|ui| {
+                ui.vertical(|ui| {
+                    // Ancho fijo por columna: en una ventana que se mide
+                    // por su contenido, `available_width` es infinito y
+                    // cada columna se lo tragaba —el diálogo salía de
+                    // 1700 px—. 340 caben los rótulos más largos.
+                    ui.set_width(340.0);
+                    seccion(
+                        ui,
+                        t!("Proyecto"),
+                        &[
+                            (t!("Abrir proyecto"), "Ctrl + O"),
+                            (t!("Guardar proyecto"), "Ctrl + S"),
+                            (t!("Publicar"), "Ctrl + P"),
+                            (t!("Forzar publicación"), t!("Ctrl + Mayús + P")),
+                            (t!("Restablecer la configuración"), t!("Ctrl + Mayús + R")),
+                            (t!("Salir"), "Ctrl + Q"),
+                        ],
+                    );
+                    seccion(
+                        ui,
+                        t!("Edición"),
+                        &[(t!("Deshacer el último cambio"), "Ctrl + Z")],
+                    );
+                    seccion(
+                        ui,
+                        t!("Vista"),
+                        &[
+                            (t!("Acercar"), "+"),
+                            (t!("Alejar"), "−"),
+                            (t!("Zoom al 100% (tamaño real)"), "0"),
+                            (t!("Ajustar"), "F"),
+                            (t!("Zoom con la rueda"), t!("Ctrl + rueda")),
+                            (
+                                t!("Página anterior o siguiente"),
+                                t!("Ctrl + RePág / AvPág"),
+                            ),
+                            (t!("Plegar el panel inferior"), "Ctrl + J"),
+                            (t!("Mostrar Ajustes"), "F9"),
+                        ],
+                    );
+                });
+                ui.vertical(|ui| {
+                    ui.set_width(340.0);
+                    seccion(
+                        ui,
+                        t!("Lista de sprites"),
+                        &[
+                            (t!("Filtrar sprites…"), "Ctrl + F"),
+                            (t!("Mover el cursor"), t!("Flechas")),
+                            (t!("Extender la selección"), t!("Mayús + flechas")),
+                            (t!("Acumular la selección"), t!("Ctrl + flechas")),
+                            (t!("Primera o última fila"), t!("Inicio / Fin")),
+                            (t!("Página arriba o abajo"), t!("AvPág / RePág")),
+                            (t!("Seleccionar todo"), "Ctrl + A"),
+                            (t!("Quitar los sprites seleccionados"), t!("Supr")),
+                        ],
+                    );
+                    seccion(
+                        ui,
+                        t!("General"),
+                        &[
+                            (t!("Cerrar la ventana"), "Esc"),
+                            (t!("Esta ayuda"), "F1 / ?"),
+                            (t!("Tutorial"), t!("Mayús + F1")),
+                            (t!("Acerca de"), t!("Ctrl + Mayús + A")),
+                        ],
+                    );
+                });
+            });
             ui.label(
                 egui::RichText::new(t!(
                     "Mientras escribes en un campo, las teclas de la lista no se usan."
@@ -208,6 +235,13 @@ mod tests {
             "Esc",
             "F1 / ?",
             "F9",
+            // Teclas nuevas en la re-review A4.
+            "Ctrl + Mayús + P",
+            "Ctrl + Mayús + R",
+            "Ctrl + RePág / AvPág",
+            "Ctrl + J",
+            "Mayús + F1",
+            "Ctrl + Mayús + A",
         ] {
             assert!(texto.contains(atajo), "falta el atajo {atajo}: {texto}");
         }
@@ -220,6 +254,13 @@ mod tests {
             "Filtrar sprites…",
             "Seleccionar todo",
             "Esta ayuda",
+            // Acciones nuevas de la re-review A4.
+            "Forzar publicación",
+            "Restablecer la configuración",
+            "Página anterior o siguiente",
+            "Plegar el panel inferior",
+            "Tutorial",
+            "Acerca de",
         ] {
             assert!(texto.contains(accion), "falta la acción {accion}: {texto}");
         }
