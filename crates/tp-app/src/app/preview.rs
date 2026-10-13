@@ -217,8 +217,7 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
             let zoom_slider = ui.add(
                 egui::Slider::new(&mut app.zoom, 0.05..=8.0)
                     .logarithmic(true)
-                    .show_value(false)
-                    .text(t!("Zoom {} %", porcentaje)),
+                    .show_value(false),
             );
             if zoom_slider.changed() {
                 app.auto_fit = false;
@@ -226,6 +225,13 @@ fn zoom_bar_inner(app: &mut App, ui: &mut egui::Ui, ancho: f32) {
             if ui.button("−").on_hover_text(t!("Alejar")).clicked() {
                 zoom_step(app, -1);
             }
+            // El porcentaje vive fuera del slider (re-review D11): como
+            // rótulo del widget caía dentro de su caja, a la izquierda
+            // del surco y pegado al «−», y el par −/+ se partía por la
+            // mitad. Aquí encabeza el par —este grupo va en reversa, así
+            // que se añade después del «−»— y el dato no se cuela entre
+            // los dos botones.
+            ui.label(t!("Zoom {} %", porcentaje));
             // Último en entrar en un diseño de derecha a izquierda: queda
             // a la izquierda del grupo, separándolo del resto de la barra.
             super::separador(ui);

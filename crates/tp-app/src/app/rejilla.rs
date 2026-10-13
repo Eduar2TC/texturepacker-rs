@@ -341,6 +341,41 @@ fn separadores_en(salida: &eframe::egui::FullOutput, banda: egui::Rect) -> Vec<f
     xs
 }
 
+/// D11: el porcentaje del zoom vive fuera del slider.
+///
+/// Como rótulo del propio widget (`Slider::text`) caía dentro de su
+/// caja, a la izquierda del surco y pegado al «−», así que el par −/+
+/// se partía por la mitad y el dato se leía como el rótulo del botón
+/// equivocado. Aquí se mide que queda fuera del par, antes del «−».
+#[test]
+fn el_porcentaje_del_zoom_queda_fuera_del_par_de_botones() {
+    let ctx = egui::Context::default();
+    let mut app = App::new_for_testing(ctx.clone(), None);
+    let salida = frame_en(&mut app, &ctx, 1360.0, 860.0);
+
+    let porcentaje = galion_de(&salida, "Zoom 100 %");
+    let menos = controles_de(&salida, "−")
+        .into_iter()
+        .filter(|r| r.min.y > 680.0)
+        .max_by(|a, b| a.min.x.total_cmp(&b.min.x))
+        .expect("el botón «−» del zoom debe estar pintado");
+    let mas = controles_de(&salida, "+")
+        .into_iter()
+        .filter(|r| r.min.y > 680.0)
+        .min_by(|a, b| a.min.x.total_cmp(&b.min.x))
+        .expect("el botón «+» del zoom debe estar pintado");
+
+    assert!(
+        porcentaje.max.x <= menos.min.x,
+        "el porcentaje ({porcentaje:?}) cae dentro del par −/+ ({menos:?}): \
+         el dato debe quedar fuera del par, antes del «−»"
+    );
+    assert!(
+        menos.min.x < mas.min.x,
+        "el «−» va a la izquierda del «+»: {menos:?} y {mas:?}"
+    );
+}
+
 /// D9: el indicador de frescura no mueve la barra de zoom.
 ///
 /// Se pintaba al principio de una fila de ancho libre, así que aparecer
