@@ -159,15 +159,21 @@ pub(crate) fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-/// Raíces con los literales que la UI pinta.
+/// Raíces con los literales que la UI pinta: `tp-app/src`, `tp-core/src`
+/// y el espejo de traducciones de `tp-i18n/src`, cuyas claves y valores
+/// pinta el mismo `t!(…)` que las claves españolas (re-review A10).
 pub(crate) fn source_roots() -> Vec<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    vec![manifest.join("src"), manifest.join("../tp-core/src")]
+    vec![
+        manifest.join("src"),
+        manifest.join("../tp-core/src"),
+        manifest.join("../tp-i18n/src"),
+    ]
 }
 
 /// Caracteres no ASCII de los literales que la UI pinta: `tp-app/src` (sin
-/// los binarios, que no pinta egui) y `tp-core/src`, cuyos mensajes acaban en
-/// el log de la app.
+/// los binarios, que no pinta egui), `tp-core/src`, cuyos mensajes acaban en
+/// el log de la app, y `tp-i18n/src`, donde viven las traducciones.
 fn ui_chars() -> Vec<Occurrence> {
     let mut files = Vec::new();
     for root in source_roots() {
@@ -200,20 +206,31 @@ fn ui_chars() -> Vec<Occurrence> {
 fn toda_cadena_de_la_ui_tiene_glifo() {
     let mut fonts =
         egui::text::Fonts::new(1024, Default::default(), egui::FontDefinitions::default());
-    let id = egui::FontId::default(); // familia proporcional: la que usa la UI
+    // Las dos familias con las que la app pinta texto: la proporcional
+    // para el cuerpo y la monoespaciada para el registro y el diálogo de
+    // atajos. Sus listas de fuentes no son la misma —la monoespaciada
+    // arranca por Hack—, así que se mira glifo a glifo en las dos
+    // (re-review A10); el tamaño no importa, `has_glyph` sólo mira la
+    // familia.
+    let familias = [
+        ("proporcional", egui::FontId::default()),
+        ("monoespaciada", egui::FontId::monospace(10.0)),
+    ];
     let mut faltan = Vec::new();
     for occ in ui_chars() {
-        if !fonts.has_glyph(&id, occ.ch) {
-            faltan.push(format!(
-                "U+{:04X} '{}' en {}:{}",
-                occ.ch as u32,
-                occ.ch,
-                occ.file
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-                occ.line,
-            ));
+        for (familia, id) in &familias {
+            if !fonts.has_glyph(id, occ.ch) {
+                faltan.push(format!(
+                    "U+{:04X} '{}' sin glifo {familia} en {}:{}",
+                    occ.ch as u32,
+                    occ.ch,
+                    occ.file
+                        .file_name()
+                        .map(|n| n.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                    occ.line,
+                ));
+            }
         }
     }
     assert!(
