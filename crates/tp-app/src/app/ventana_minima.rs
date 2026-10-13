@@ -500,6 +500,44 @@ fn las_cinco_ventanas_flotantes_se_abren_en_el_centro_y_sin_plegado() {
     }
 }
 
+/// D2: un solo asiento para reproducir.
+///
+/// El botón «⏸/▶» de los controles de transporte y la casilla
+/// «Reproducir» de la fila de FPS conmutaban el mismo booleano a 40 px,
+/// con dos indicadores visuales distintos. Queda sólo la casilla, la
+/// misma que la app se impone en la barra de herramientas; aquí se
+/// comprueba que dentro de la ventana de Animación no pinte ningún otro
+/// asiento.
+#[test]
+fn la_animacion_tiene_un_solo_asiento_para_reproducir() {
+    let pantalla = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1360.0, 860.0));
+    let (mut app, ctx, tmp) = demo("animacion");
+    app.show_animation = true;
+    // La primera pasada sólo guarda el área; la segunda pinta.
+    let _ = frame_en(&mut app, &ctx, pantalla);
+    let salida = frame_en(&mut app, &ctx, pantalla);
+    let ventana = ctx
+        .memory(|m| m.area_rect(egui::Id::new("animation_preview")))
+        .expect("la ventana de Animación debe abrir");
+
+    let dentro: Vec<String> = crate::testing::textos_pintados(&salida)
+        .into_iter()
+        .filter(|(_, r, _)| ventana.contains(r.center()))
+        .map(|(t, _, _)| t)
+        .collect();
+    assert!(
+        dentro.iter().any(|t| t.trim() == "Reproducir"),
+        "la casilla «Reproducir» es el único asiento y debe pintarse: {dentro:?}"
+    );
+    for asiento in ["⏸", "▶"] {
+        assert!(
+            !dentro.iter().any(|t| t.contains(asiento)),
+            "queda un segundo asiento —«{asiento}»— en la ventana de Animación: {dentro:?}"
+        );
+    }
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
 /// M4: `main.rs` promete exactamente este mínimo. Si alguien mueve uno
 /// sin el otro, el probado y el prometido se separan —que era justo el
 /// defecto—, y esta prueba se entera.

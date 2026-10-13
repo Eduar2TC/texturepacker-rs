@@ -204,25 +204,12 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let current = &frames[app.anim.frame];
 
     // --- transport controls --------------------------------------------
-    // Un solo fotograma no hay nada que reproducir: el botón ▶ y la
-    // casilla «Reproducir» conmutan el mismo estado, así que los dos se
-    // apagan juntos (la casilla seguía viva con un solo fotograma,
-    // re-review RB2).
+    // Un solo fotograma no hay nada que reproducir: con un solo asiento
+    // basta con apagarlo (re-review RB2, D2). Ese asiento es la casilla
+    // «Reproducir» de la fila de FPS: el botón ⏸/▶ que había aquí
+    // conmutaba el mismo booleano a 40 px, con otro indicador visual.
     let reproducible = frames.len() > 1;
     ui.horizontal(|ui| {
-        let play_label = if app.anim.playing { "⏸" } else { "▶" };
-        if ui
-            .add_enabled(reproducible, egui::Button::new(play_label))
-            .on_hover_text(if app.anim.playing {
-                t!("Pausar")
-            } else {
-                t!("Reproducir")
-            })
-            .clicked()
-        {
-            app.anim.playing = !app.anim.playing;
-            app.anim.accumulator = 0.0;
-        }
         if ui
             .button("⏮")
             .on_hover_text(t!("Primer fotograma"))
@@ -262,10 +249,17 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
                 .text("FPS"),
         );
         ui.checkbox(&mut app.anim.loop_anim, t!("Repetir"));
-        ui.add_enabled(
-            reproducible,
-            egui::Checkbox::new(&mut app.anim.playing, t!("Reproducir")),
-        );
+        // Al conmutar se reinicia el acumulador, como hacía el botón
+        // que se ha quitado: el primer fotograma entra entero.
+        if ui
+            .add_enabled(
+                reproducible,
+                egui::Checkbox::new(&mut app.anim.playing, t!("Reproducir")),
+            )
+            .changed()
+        {
+            app.anim.accumulator = 0.0;
+        }
     });
 
     ui.horizontal(|ui| {

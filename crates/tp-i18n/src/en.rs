@@ -376,7 +376,6 @@ pub static EN: &[(&str, &str)] = &[
     ("Último fotograma", "Last frame"),
     ("Fotograma", "Frame"),
     ("Repetir", "Loop"),
-    ("Pausar", "Pause"),
     ("Reproducir", "Play"),
     ("Fondo:", "Background:"),
     ("Escala", "Scale"),
