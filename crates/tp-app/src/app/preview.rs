@@ -431,7 +431,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                             egui::RichText::new(t!("Vista previa: {}", crate::i18n::tr(&motivo)))
                                 .color(ui.visuals().error_fg_color),
                         );
-                        ui.add_space(12.0);
+                        ui.add_space(16.0);
                         if ui.button(t!("Reintentar")).clicked() {
                             app.reintentar_preview();
                         }
@@ -450,7 +450,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
                     ui.spinner();
-                    ui.add_space(10.0);
+                    ui.add_space(8.0);
                     ui.heading(t!("Preparando el sprite sheet…"));
                     ui.label(
                         egui::RichText::new(t!(
@@ -481,7 +481,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                 ui.label(t!(
                     "Añade sprites y la vista previa se calculará al momento."
                 ));
-                ui.add_space(12.0);
+                ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     if ui.button(t!("➕ Añadir sprites…")).clicked() {
                         super::toolbar::add_sprites_dialog(app);
@@ -490,7 +490,7 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
                         super::toolbar::add_smart_folder_dialog(app);
                     }
                 });
-                ui.add_space(18.0);
+                ui.add_space(16.0);
                 // Suelta de ficheros del SO sobre el espacio de trabajo.
                 drop_target(ui, hovering);
             });

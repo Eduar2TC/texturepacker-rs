@@ -167,9 +167,9 @@ impl App {
         let respuesta = egui::Modal::new(egui::Id::new("exit_dialog")).show(ctx, |ui| {
             ui.set_min_width(360.0);
             ui.label(egui::RichText::new(t!("Hay cambios sin guardar")).heading());
-            ui.add_space(6.0);
+            ui.add_space(8.0);
             ui.label(t!("¿Guardar los cambios antes de salir?"));
-            ui.add_space(12.0);
+            ui.add_space(16.0);
             let visuals = ui.visuals().clone();
             let destructivo = visuals.error_fg_color;
             let sugerido = visuals.selection.bg_fill;

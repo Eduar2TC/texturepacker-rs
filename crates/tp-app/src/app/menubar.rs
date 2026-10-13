@@ -219,7 +219,7 @@ pub(super) fn about_window(app: &mut App, ctx: &egui::Context) {
                 ui.hyperlink_to(t!("Repositorio"), REPO_URL);
                 ui.hyperlink_to(t!("Documentación"), TUTORIAL_URL);
             });
-            ui.add_space(4.0);
+            ui.add_space(8.0);
             ui.label(egui::RichText::new(t!("Licencia MIT")).weak());
         });
     app.show_about = open;

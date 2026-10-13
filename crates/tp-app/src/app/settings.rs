@@ -1583,7 +1583,7 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
     if warnings.is_empty() {
         return;
     }
-    ui.add_space(12.0);
+    ui.add_space(16.0);
     ui.label(egui::RichText::new(t!("Avisos")).strong());
     for w in warnings {
         ui.label(egui::RichText::new(t!("- {}", w)).color(ui.visuals().warn_fg_color));
@@ -1636,7 +1636,7 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
     if scales.len() < 2 && app.config.variant_options.is_empty() {
         return;
     }
-    ui.add_space(12.0);
+    ui.add_space(16.0);
     seccion(ui, t!("Opciones por variante"), false, |ui| {
         ui.label(
             egui::RichText::new(t!(
@@ -1646,7 +1646,7 @@ fn variant_options_ui(app: &mut App, ui: &mut egui::Ui) {
             ))
             .weak(),
         );
-        ui.add_space(4.0);
+        ui.add_space(8.0);
         egui::Grid::new("variant_options_grid")
             .num_columns(6)
             .spacing([8.0, 4.0])

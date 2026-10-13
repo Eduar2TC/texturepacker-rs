@@ -210,7 +210,7 @@ pub(super) fn sprites_ui(app: &mut App, ui: &mut egui::Ui) {
         } else {
             t!("Ningún sprite coincide con el filtro.")
         };
-        ui.add_space(12.0);
+        ui.add_space(16.0);
         ui.vertical_centered(|ui| {
             ui.label(egui::RichText::new("📁").size(28.0));
             ui.label(egui::RichText::new(msg).weak());
@@ -1190,7 +1190,7 @@ fn groups_ui(app: &mut App, ui: &mut egui::Ui) {
                 }
             }
 
-            ui.add_space(4.0);
+            ui.add_space(8.0);
             if ui
                 .button(t!("+ Añadir hoja"))
                 .on_hover_text(t!(

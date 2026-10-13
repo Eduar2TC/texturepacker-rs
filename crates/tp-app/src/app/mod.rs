@@ -638,7 +638,7 @@ impl eframe::App for App {
         let bottom = egui::TopBottomPanel::bottom(id)
             .resizable(resizable)
             .default_height(bottom_open)
-            .height_range(28.0..=f32::INFINITY);
+            .height_range(32.0..=f32::INFINITY);
         // Plegado, el panel es una banda de 22 px: 2 de marco y 18 de fila,
         // lo mismo que el menú, la barra de herramientas y la tira de estado.
         // Los 28 que había venían de 2 + 24 + 2, es decir, de dar por hecho

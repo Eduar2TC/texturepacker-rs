@@ -22,7 +22,7 @@ const DURACION: f64 = 2.5;
 pub(super) const DURACION_PLIEGUE: f64 = 3.0;
 
 /// Hueco entre el control y el recuadro, en píxeles.
-const HUECO: f32 = 6.0;
+const HUECO: f32 = 8.0;
 
 /// Ancho máximo del recuadro: más allá el texto se parte en varias
 /// líneas en vez de estirarse hasta salirse de la ventana.
@@ -196,7 +196,7 @@ pub(super) fn pintar(ctx: &egui::Context, aviso: &mut Option<Aviso>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{texto_pintado, textos_pintados};
+    use crate::testing::{rellenos_pintados, texto_pintado, textos_pintados};
 
     /// Texto de ayuda de las pruebas. Va en una constante y no a pelo en
     /// la llamada porque el escáner i18n (que la app pinta lo que no pasa
@@ -418,6 +418,41 @@ mod tests {
         assert!(
             texto_pintado(&sin).contains(AYUDA),
             "control: sin aviso la ayuda sí debe salir"
+        );
+    }
+
+    /// D12: el hueco entre el control y el recuadro está en la rejilla.
+    ///
+    /// El recuadro se ancla a `HUECO` px de su control, y ese valor era
+    /// 6: la re-review lo dejó fuera de la rejilla de 8 (D12), y ningún
+    /// test de rejilla mira este archivo. Aquí se mide el hueco real,
+    /// del puntero al borde de la caja.
+    #[test]
+    fn el_aviso_deja_ocho_px_de_hueco() {
+        let ctx = egui::Context::default();
+        let mut app = App::new_for_testing(ctx.clone(), None);
+        let donde = egui::pos2(600.0, 300.0);
+        const MENSAJE: &str = "Ruta copiada: /tmp/x/hero.png";
+
+        let salida = ver_aviso(&mut app, &ctx, donde, MENSAJE, true);
+
+        let texto = rect_junto_a(&textos_pintados(&salida), MENSAJE, donde, 80.0)
+            .unwrap_or_else(|| panic!("el aviso no sale junto al puntero {donde:?}"));
+        let caja = rellenos_pintados(&salida)
+            .into_iter()
+            .filter(|(_, rect)| {
+                rect.min.x <= texto.min.x
+                    && rect.min.y <= texto.min.y
+                    && rect.max.x >= texto.max.x
+                    && rect.max.y >= texto.max.y
+            })
+            .min_by_key(|(_, rect)| (rect.width() * rect.height()) as i32)
+            .map(|(_, rect)| rect)
+            .expect("el recuadro del aviso debe pintar su relleno");
+        let hueco = caja.min.y - donde.y;
+        assert_eq!(
+            hueco, 8.0,
+            "el aviso deja {hueco} px entre el control y el recuadro"
         );
     }
 }

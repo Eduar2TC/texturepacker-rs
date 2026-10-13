@@ -513,3 +513,69 @@ fn el_indicador_de_frescura_no_desplaza_la_barra_de_zoom() {
         "los separadores se mueven al aparecer «Publicando…»"
     );
 }
+
+/// 4.3: los espacios escritos a mano en el fuente están en la rejilla.
+///
+/// Los huecos que se ven en un frame se miden en los tests de arriba,
+/// pero los `add_space` sueltos por el código no aparece en ninguno: la
+/// re-review contó ~15 fuera de la rejilla (D12), ninguno cubierto por
+/// este archivo. Aquí se lee el fuente entero —el mismo recorrido que
+/// el escáner de claves de i18n—: todo número que sobra en
+/// `add_space(...)`, `height_range(...)` o `.gap(...)` tiene que ser
+/// múltiplo de 8. Lo que no empieza por cifra —`add_space(ui.spacing()
+/// …)`— queda fuera, porque ese valor ya sale de otro sitio.
+#[test]
+fn los_espacios_del_codigo_estan_en_la_rejilla_de_8() {
+    let raiz = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut archivos = Vec::new();
+    crate::glyph_guard::walk(&raiz, &mut archivos);
+
+    let mut fuera = Vec::new();
+    for archivo in &archivos {
+        let Ok(src) = std::fs::read_to_string(archivo) else {
+            continue;
+        };
+        for (n, linea) in src.lines().enumerate() {
+            // Los comentarios citan valores a veces: sólo cuenta el código.
+            let codigo = linea.split("//").next().unwrap_or_default();
+            for patron in ["add_space(", "height_range(", ".gap("] {
+                let mut resto = codigo;
+                while let Some(i) = resto.find(patron) {
+                    resto = &resto[i + patron.len()..];
+                    let cifras: String = resto
+                        .chars()
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
+                    let Ok(valor) = cifras.trim_end_matches('.').parse::<f32>() else {
+                        continue;
+                    };
+                    if valor % 8.0 != 0.0 {
+                        fuera.push(format!(
+                            "{}:{}: {patron}{valor}",
+                            archivo.file_name().unwrap_or_default().to_string_lossy(),
+                            n + 1
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // Excepción documentada (M4): el diálogo de atajos separa sus
+    // bloques con 4 px porque con 8 ya no cabe en la ventana mínima, y
+    // su propio comentario lo cuenta. Sólo ese.
+    assert!(
+        fuera
+            .iter()
+            .filter(|e| e.starts_with("shortcuts.rs"))
+            .count()
+            <= 1,
+        "ha crecido la excepción de shortcuts: {fuera:?}"
+    );
+    fuera.retain(|e| !e.starts_with("shortcuts.rs"));
+    assert!(
+        fuera.is_empty(),
+        "espacios fuera de la rejilla de 8 (múltiplo de 8 en el código):\n  {}",
+        fuera.join("\n  ")
+    );
+}
