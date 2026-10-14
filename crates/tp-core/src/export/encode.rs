@@ -46,7 +46,7 @@ pub fn encode_to_bytes(
         | GpuFormat::Astc8x8
         | GpuFormat::Astc10x10
         | GpuFormat::Astc12x12 => encode_astc(rgba, width, height, opts),
-        GpuFormat::Basis => encode_basis(rgba, width, height, opts),
+        GpuFormat::Basis | GpuFormat::BasisUastc => encode_basis(rgba, width, height, opts),
         GpuFormat::Etc2Rgba => encode_etc2_ktx(rgba, width, height, opts),
         GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height, opts),
         GpuFormat::Pvr3Gz => encode_pvrtc_pvr(rgba, width, height, opts).map(gzip_bytes),

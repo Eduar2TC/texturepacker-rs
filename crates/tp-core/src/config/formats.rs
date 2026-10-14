@@ -99,6 +99,10 @@ pub enum GpuFormat {
     /// Basis Universal ETC1S (`.basis`), transcodificable en tiempo de carga.
     #[serde(rename = "BASIS")]
     Basis,
+    /// Basis Universal UASTC 4x4 (`.basis`): más calidad que ETC1S y
+    /// ficheros más grandes, también transcodificable en tiempo de carga.
+    #[serde(rename = "BASIS_UASTC")]
+    BasisUastc,
 }
 
 impl GpuFormat {
@@ -127,13 +131,16 @@ impl GpuFormat {
             GpuFormat::Pvrtc4Bpp => "PVRTC_4BPP",
             GpuFormat::Ktx2 => "KTX2",
             GpuFormat::Basis => "BASIS",
+            GpuFormat::BasisUastc => "BASIS_UASTC",
         }
     }
 
-    /// Whether this build can encode the format (`ASTC_*` and `BASIS` need
-    /// the `gpu-formats` feature; every other format is always available).
+    /// Whether this build can encode the format (`ASTC_*`, `BASIS` and
+    /// `BASIS_UASTC` need the `gpu-formats` feature; every other format is
+    /// always available).
     pub fn is_supported(&self) -> bool {
-        let needs_feature = matches!(self, GpuFormat::Basis) || self.is_astc();
+        let needs_feature =
+            matches!(self, GpuFormat::Basis | GpuFormat::BasisUastc) || self.is_astc();
         !needs_feature || cfg!(feature = "gpu-formats")
     }
 
@@ -175,6 +182,7 @@ impl GpuFormat {
                     | GpuFormat::Etc1
                     | GpuFormat::Etc1Ktx
                     | GpuFormat::Basis
+                    | GpuFormat::BasisUastc
             )
     }
 
@@ -201,7 +209,7 @@ impl GpuFormat {
             GpuFormat::Etc2Rgba => "ktx",
             GpuFormat::Pvrtc4Bpp => "pvr",
             GpuFormat::Ktx2 => "ktx2",
-            GpuFormat::Basis => "basis",
+            GpuFormat::Basis | GpuFormat::BasisUastc => "basis",
         }
     }
 
@@ -231,7 +239,8 @@ impl GpuFormat {
             "etc2" => GpuFormat::Etc2Rgba,
             "pvrtc" | "pvr3" => GpuFormat::Pvrtc4Bpp,
             "ktx2" => GpuFormat::Ktx2,
-            "basis" => GpuFormat::Basis,
+            "basis" | "basis-etc1s" => GpuFormat::Basis,
+            "basis-uastc" => GpuFormat::BasisUastc,
             _ => return None,
         })
     }
@@ -575,6 +584,7 @@ mod tests {
             ("pvr3", GpuFormat::Pvrtc4Bpp, "pvr"),
             ("ktx2", GpuFormat::Ktx2, "ktx2"),
             ("basis", GpuFormat::Basis, "basis"),
+            ("basis-uastc", GpuFormat::BasisUastc, "basis"),
         ];
         for (token, want, ext) in cases {
             let got = GpuFormat::parse(token).unwrap_or_else(|| panic!("token {token}"));
@@ -587,6 +597,7 @@ mod tests {
         assert!(GpuFormat::Etc1.is_hardware());
         assert!(GpuFormat::Pvr3Ccz.is_hardware());
         assert!(GpuFormat::Basis.is_hardware(), "Basis comprime en GPU");
+        assert!(GpuFormat::BasisUastc.is_hardware(), "UASTC comprime en GPU");
         assert!(!GpuFormat::Bmp.is_hardware());
         assert!(!GpuFormat::Dds.is_hardware());
         assert!(!GpuFormat::Zktx.is_hardware());
@@ -597,6 +608,11 @@ mod tests {
             GpuFormat::Basis.is_supported(),
             cfg!(feature = "gpu-formats"),
             "Basis depende de la feature gpu-formats"
+        );
+        assert_eq!(
+            GpuFormat::BasisUastc.is_supported(),
+            cfg!(feature = "gpu-formats"),
+            "Basis UASTC depende de la feature gpu-formats"
         );
         assert_eq!(
             GpuFormat::Astc6x6.is_supported(),
@@ -611,6 +627,7 @@ mod tests {
             GpuFormat::Etc1Ktx,
             GpuFormat::Ktx2,
             GpuFormat::Basis,
+            GpuFormat::BasisUastc,
             GpuFormat::Astc6x6,
         ] {
             let cfg = ProjectConfig {

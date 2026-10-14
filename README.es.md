@@ -255,7 +255,7 @@ aceptarse por diferencia de unidades y de cifrado.
 | ETC2 RGBA (EAC + ETC2)                         | ✅     | Encoder propio validado contra decodificador independiente |
 | PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación) en `.pvr` v3, validado contra `texture2ddecoder` |
 | KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
-| Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
+| Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S o UASTC4x4 vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
 | Cifrado simétrico de textura (AES-GCM)         | ✅     | AES-256-GCM; archivos `*.tpenc`, `tp-cli decrypt` |
 | Motor de plantillas (Mustache)                 | ✅     | handlebars; **63 presets de formato de datos en 15 familias** (JSON lista/hash, Phaser, PixiJS, XML, Starling, Plist Cocos2D/UIKit, atlas libGDX/Spine, CSS, C++ header, TSV, texto, solo hoja) + plantillas personalizadas |
 | Proyectos del original (`.tps`)                | ✅     | XML de QSettings leído y escrito por `tp-core::tps` (`tp-cli pack proyecto.tps`, `Ctrl+O`/`Ctrl+S`); los ajustes sin equivalente se agrupan en un único aviso |
@@ -434,12 +434,13 @@ descifrando; sólo se deja de escribir.
 - **Formatos de salida**: escribe los 17 formatos de salida documentados
   (PNG, PNG8, JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ,
   PKM, KTX, KTX2, ZKTX, ASTC y Basis). KTX2 guarda el contenido **crudo**
-  (RGBA8/RGB8/R8, sin supercompresión Basis dentro del contenedor) y `basis`
-  es solo ETC1S; no se implementan los formatos retirados (`atf`, `pvr2`).
+  (RGBA8/RGB8/R8, sin supercompresión Basis dentro del contenedor) y
+  `basis` escribe ETC1S o UASTC4x4; no se implementan los formatos
+  retirados (`atf`, `pvr2`).
 - **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
   especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
   BGRA8888, RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (bloques cuadrados
-  de 4x4 a 12x12), ETC2 RGBA, PVRTC1 4bpp); Basis UASTC no está incluido.
+  de 4x4 a 12x12), ETC2 RGBA, PVRTC1 4bpp).
 - **winit parcheado (`third_party/winit`)**: winit 0.30 no implementa el
   drag-and-drop de ficheros en Wayland (solo XDND en X11), de modo que en
   sesiones Wayland los ficheros soltados desde el gestor de archivos no

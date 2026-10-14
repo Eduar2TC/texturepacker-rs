@@ -220,6 +220,7 @@ const INDICE: &[(&str, &[&str])] = &[
             "Calidad ETC2 (0-100)",
             "Calidad ASTC (0-4, 4 = exhaustivo)",
             "Calidad Basis ETC1S (0-100)",
+            "Calidad Basis UASTC (0-100)",
             "DXT_LINEAR (error uniforme)",
             "DXT_PERCEPTUAL (pondera la luminancia)",
         ],
@@ -1296,6 +1297,11 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     gpu_format_name(&GpuFormat::Pvrtc4Bpp),
                 );
                 ui.selectable_value(v, GpuFormat::Basis, gpu_format_name(&GpuFormat::Basis));
+                ui.selectable_value(
+                    v,
+                    GpuFormat::BasisUastc,
+                    gpu_format_name(&GpuFormat::BasisUastc),
+                );
                 super::separador(ui);
                 ui.selectable_value(v, GpuFormat::Zktx, gpu_format_name(&GpuFormat::Zktx));
                 ui.selectable_value(v, GpuFormat::Ktx2, gpu_format_name(&GpuFormat::Ktx2));
@@ -1420,6 +1426,12 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
             }
             GpuFormat::Basis => {
                 ui.label(t!("Calidad Basis ETC1S (0-100)"));
+                ui.horizontal(|ui| {
+                    ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
+                });
+            }
+            GpuFormat::BasisUastc => {
+                ui.label(t!("Calidad Basis UASTC (0-100)"));
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
                 });
@@ -1965,6 +1977,7 @@ fn gpu_format_name(g: &GpuFormat) -> &'static str {
         GpuFormat::Etc1Ktx => t!("ETC1 en KTX (ktx)"),
         GpuFormat::Pvrtc4Bpp => "PVRTC 4BPP (pvr)",
         GpuFormat::Basis => "Basis (basis)",
+        GpuFormat::BasisUastc => "Basis UASTC (basis)",
         GpuFormat::Zktx => t!("KTX con zlib (zktx)"),
         GpuFormat::Ktx2 => t!("KTX2 sin comprimir (ktx2)"),
         GpuFormat::Pvr3Gz => t!("PVR3 en gzip (pvr.gz)"),

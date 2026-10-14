@@ -257,7 +257,7 @@ and in encryption.
 | ETC2 RGBA (EAC + ETC2)                       | ✅     | In-house encoder validated against an independent decoder |
 | PVRTC 4BPP                                   | ✅     | In-house PVRTC1 4bpp encoder (block-fit + modulation search) in `.pvr` v3, validated against `texture2ddecoder` |
 | KTX2 (ktx2)                                  | ✅     | Uncompressed 2.0 container: header + index of one level, DFD (RGBSDA, BT.709 linear) and KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 for RGBA8/RGB8/R8 |
-| Basis (.basis)                               | ✅*    | *With `--features gpu-formats`; ETC1S via `basis-universal` (crate `tp-basis`) and 0-100 quality (`--basis-quality`) |
+| Basis (.basis)                               | ✅*    | *With `--features gpu-formats`; ETC1S or UASTC4x4 via `basis-universal` (crate `tp-basis`) and 0-100 quality (`--basis-quality`) |
 | Symmetric texture encryption (AES-GCM)       | ✅     | AES-256-GCM; `*.tpenc` files, `tp-cli decrypt` |
 | Template engine (Mustache)                   | ✅     | handlebars; **63 metadata format presets in 15 families** (JSON list/hash, Phaser, PixiJS, XML, Starling, Plist Cocos2D/UIKit, libGDX/Spine atlas, CSS, C++ header, TSV, text, sheet only) + custom templates |
 | Original's projects (`.tps`)                 | ✅     | QSettings XML read and written by `tp-core::tps` (`tp-cli pack project.tps`, `Ctrl+O`/`Ctrl+S`); settings without an equivalent are grouped into a single notice |
@@ -438,12 +438,12 @@ decrypted; that format is simply no longer written.
 - **Output formats**: writes the 17 documented output formats (PNG, PNG8,
   JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ, PKM, KTX, KTX2, ZKTX,
   ASTC and Basis). KTX2 stores **raw** content (RGBA8/RGB8/R8, no Basis
-  supercompression inside the container) and `basis` is ETC1S only; the
-  retired formats (`atf`, `pvr2`) are not implemented.
+  supercompression inside the container) and `basis` writes ETC1S or
+  UASTC4x4; the retired formats (`atf`, `pvr2`) are not implemented.
 - **Heuristics and pixel formats**: the engine implements the subset of the
   project's technical spec (RGBA8888/4444/565, RGBA5551/5555, BGRA8888,
   RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (4x4-12x12 square blocks),
-  ETC2 RGBA, PVRTC1 4bpp); Basis UASTC is not included.
+  ETC2 RGBA, PVRTC1 4bpp).
 - **Patched winit (`third_party/winit`)**: winit 0.30 does not implement
   file drag-and-drop on Wayland (only XDND on X11), so on Wayland sessions
   the files dropped from the file manager never reached the app. The root

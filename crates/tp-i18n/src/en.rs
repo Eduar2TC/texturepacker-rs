@@ -339,6 +339,7 @@ pub static EN: &[(&str, &str)] = &[
     ("Calidad ETC2 (0-100)", "ETC2 quality (0-100)"),
     ("Calidad ASTC (0-4, 4 = exhaustivo)", "ASTC quality (0-4, 4 = exhaustive)"),
     ("Calidad Basis ETC1S (0-100)", "Basis ETC1S quality (0-100)"),
+    ("Calidad Basis UASTC (0-100)", "Basis UASTC quality (0-100)"),
     ("DXT_LINEAR (error uniforme)", "DXT_LINEAR (uniform error)"),
     ("Presets de variantes", "Variant presets"),
     ("Aplicar", "Apply"),

@@ -22,11 +22,53 @@ pub fn etc1s_quality(quality: u8) -> u32 {
     )
 }
 
+/// Traduce una calidad 0-100 al nivel de empaquetado UASTC.
+///
+/// Los niveles son discretos (Fastest = 0 … Default = 2 … VerySlow = 4),
+/// así que la escala del proyecto elige entre los cinco: 50 cae en el
+/// nivel por defecto de Basis.
+pub fn uastc_quality(quality: u8) -> u32 {
+    match quality.min(100) {
+        0..=19 => basis_universal::UASTC_QUALITY_MIN, // fastest
+        20..=39 => basis_universal::UASTC_QUALITY_MIN + 1, // faster
+        40..=59 => basis_universal::UASTC_QUALITY_DEFAULT, // default
+        60..=79 => basis_universal::UASTC_QUALITY_MAX - 1, // slower
+        _ => basis_universal::UASTC_QUALITY_MAX,      // very slow
+    }
+}
+
 /// Codifica una imagen RGBA8 como fichero `.basis` (ETC1S, con alfa si la hay).
 ///
 /// `quality` va de 0 a 100 y se traduce con [`etc1s_quality`]. No genera
 /// mipmaps: una hoja de atlas se publica en un solo nivel.
 pub fn encode_etc1s(rgba: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>, String> {
+    encode_basis(rgba, width, height, |params| {
+        params.set_basis_format(BasisTextureFormat::ETC1S);
+        params.set_etc1s_quality_level(etc1s_quality(quality));
+    })
+}
+
+/// Codifica una imagen RGBA8 como fichero `.basis` en UASTC 4x4.
+///
+/// Calidad significativamente más alta que ETC1S (cada bloque guarda la
+/// imagen sin compresión de entropía), a cambio de ficheros más grandes.
+/// `quality` va de 0 a 100 y se traduce con [`uastc_quality`]. Sin RDO y
+/// sin mipmaps: una hoja de atlas se publica en un solo nivel.
+pub fn encode_uastc(rgba: &[u8], width: u32, height: u32, quality: u8) -> Result<Vec<u8>, String> {
+    encode_basis(rgba, width, height, |params| {
+        params.set_basis_format(BasisTextureFormat::UASTC4x4);
+        params.set_uastc_quality_level(uastc_quality(quality));
+    })
+}
+
+/// Camino común de los dos codificadores: validar la imagen, montar los
+/// parámetros que decida el caller y producir el `.basis`.
+fn encode_basis(
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+    configure: impl FnOnce(&mut CompressorParams),
+) -> Result<Vec<u8>, String> {
     if width == 0 || height == 0 {
         return Err("imagen 0×0".to_string());
     }
@@ -47,14 +89,13 @@ pub fn encode_etc1s(rgba: &[u8], width: u32, height: u32, quality: u8) -> Result
         .max(1);
 
     let mut params = CompressorParams::new();
-    params.set_basis_format(BasisTextureFormat::ETC1S);
-    params.set_etc1s_quality_level(etc1s_quality(quality));
     params.set_print_status_to_stdout(false);
     params.set_generate_mipmaps(false);
     {
         let mut image = params.source_image_mut(0);
         image.init(rgba, width, height, 4);
     }
+    configure(&mut params);
 
     let mut compressor = Compressor::new(threads);
     // Las dos únicas llamadas `unsafe` del workspace: la C++ de Binomial no
@@ -170,5 +211,58 @@ mod tests {
         let err = encode_etc1s(&[0u8; 3], 4, 4, 50).unwrap_err();
         assert!(err.contains("64"), "{err}");
         assert!(encode_etc1s(&[], 0, 0, 50).is_err());
+    }
+
+    /// La escala 0-100 recorre los cinco niveles de empaquetado UASTC de
+    /// menor a mayor esfuerzo, pasando por el nivel por defecto (50).
+    #[test]
+    fn uastc_quality_maps_the_project_range_to_the_pack_levels() {
+        use basis_universal::{
+            UASTC_QUALITY_DEFAULT as DEF, UASTC_QUALITY_MAX as MAX, UASTC_QUALITY_MIN as MIN,
+        };
+        assert_eq!(uastc_quality(0), MIN, "0: fastest");
+        assert_eq!(uastc_quality(19), MIN, "19 sigue en fastest");
+        assert_eq!(uastc_quality(20), MIN + 1, "20: faster");
+        assert_eq!(uastc_quality(40), DEF, "40: el nivel por defecto de Basis");
+        assert_eq!(uastc_quality(50), DEF, "50: el nivel por defecto de Basis");
+        assert_eq!(uastc_quality(60), MAX - 1, "60: slower");
+        assert_eq!(uastc_quality(80), MAX, "80: very slow");
+        assert_eq!(uastc_quality(100), MAX, "100: very slow");
+        assert_eq!(uastc_quality(200), MAX, "satura en 100");
+    }
+
+    #[test]
+    fn encode_uastc_roundtrips_through_the_transcoder() {
+        let (rgba, w, h) = quadrants();
+        // Los cinco niveles válidos: `set_uastc_quality_level` asegura el
+        // rango y revienta con cualquier otro valor.
+        for quality in [0u8, 25, 50, 75, 100] {
+            let basis = encode_uastc(&rgba, w, h, quality).unwrap();
+            assert_eq!(&basis[..2], b"sB", "firma de .basis (calidad {quality})");
+            let (tw, th, out) = transcode_rgba(&basis).unwrap();
+            assert_eq!((tw, th), (w, h), "calidad {quality}");
+            assert_eq!(out.len(), (w * h * 4) as usize, "calidad {quality}");
+        }
+
+        // UASTC sin RDO conserva mucho mejor los colores que ETC1S.
+        let basis = encode_uastc(&rgba, w, h, 50).unwrap();
+        let (_, _, out) = transcode_rgba(&basis).unwrap();
+        let at = |x: u32, y: u32| -> [u8; 4] {
+            let i = ((y * w + x) * 4) as usize;
+            [out[i], out[i + 1], out[i + 2], out[i + 3]]
+        };
+        let close = |got: [u8; 4], want: [u8; 4]| {
+            for c in 0..4 {
+                assert!(
+                    i32::from(got[c]) - i32::from(want[c]) <= 24
+                        && i32::from(want[c]) - i32::from(got[c]) <= 24,
+                    "canal {c}: {got:?} frente a {want:?}"
+                );
+            }
+        };
+        close(at(8, 8), [255, 0, 0, 255]);
+        close(at(24, 8), [0, 255, 0, 255]);
+        close(at(8, 24), [0, 0, 255, 255]);
+        close(at(24, 24), [255, 255, 0, 128]);
     }
 }
