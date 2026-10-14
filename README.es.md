@@ -37,9 +37,10 @@ página dentro del lienzo.
 |-------------|------------|
 | ![TexturePacker-RS en tema oscuro: árbol de sprites, vista previa del atlas con contornos, pivots y filete de página, y panel de ajustes](docs/screenshots/principal-oscuro.png) | ![TexturePacker-RS en tema claro, con la misma pantalla](docs/screenshots/principal-claro.png) |
 
-La misma pantalla en inglés, que es como se ven los plurales concordados
-(«12 sprites · 1 alias · 1 page»). Idioma y tema se eligen en
-**Ajustes → Interfaz** y se guardan en el equipo, no en el proyecto:
+La misma pantalla en inglés, que es como se ven los plurales
+concordados de la barra de estado («13 files · 13 sprites · 1 alias»).
+Idioma y tema se eligen en **Ajustes → Interfaz** y se guardan en el
+equipo, no en el proyecto:
 
 ![TexturePacker-RS con la interfaz en inglés](docs/screenshots/interfaz-en.png)
 

@@ -39,8 +39,8 @@ load and the thin border marks the page limit inside the canvas.
 The same screen in English — the screenshots above show the Spanish
 interface, the other of the two languages the app ships in. Language and
 theme are chosen under **Settings → Interface** and are stored per machine,
-not per project; in English the plurals read concorded
-(«12 sprites · 1 alias · 1 page»):
+not per project; in English the plurals of the status bar read
+concorded («13 files · 13 sprites · 1 alias»):
 
 ![TexturePacker-RS with the interface in English](docs/screenshots/interfaz-en.png)
 
