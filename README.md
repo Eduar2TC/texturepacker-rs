@@ -7,7 +7,7 @@ desarrollada de forma independiente (entrada: CLI / GUI / archivo de proyecto;
 pipeline: ingesta → polígonos → empaquetado → VRAM → exportación).
 
 ```
-Capa de Entrada (CLI / GUI / .tpproj)
+Capa de Entrada (CLI / GUI / .tpproj / .tps)
         │
         ▼
 1. Ingesta & Preprocesamiento   (carga paralela, trimming, hashing, aliases, variantes)
@@ -62,101 +62,9 @@ comprimidos, hay **instaladores nativos**: `.dmg` firmado (ad-hoc) en macOS,
 `.msi` con WiX en Windows (instala tp-app y tp-cli, añade tp-cli al PATH) y un
 zip de Linux con icono y lanzador `.desktop`.
 
-### Novedades (en desarrollo)
-
-- **Proyectos del original (`.tps`) legibles y escribibles**: `tp-core::tps`
-  traduce el XML de QSettings que guarda TexturePacker — `tp-cli pack
-  proyecto.tps`, abrir con `Ctrl+O` y guardar con `Ctrl+S`, porque el formato
-  lo decide la extensión — agrupa los `<struct>` que comparten varios
-  sprites, resuelve las rutas relativas contra la carpeta del `.tps` y avisa
-  de los ajustes sin equivalente de una sola vez.
-- **«Publicar» con menú y forzado**: el botón publica y su menú ☰ añade
-  «Publicar» y «Forzar publicación»; si nada ha cambiado desde la última
-  salida, la publicación se omite con un aviso en el Log, como en el original.
-- **Fondo de color libre en la vista de animación**: además de claro, oscuro
-  y tablero de ajedrez, se puede elegir cualquier color («Personalizado»).
-- **Editor de pivots visual**: cruces rojas arrastrables sobre cada sprite en
-  la vista previa y en su panel, con los valores absolutos en píxeles (junto
-  al tamaño de la imagen) y las nueve posiciones predefinidas.
-- **Soltar un proyecto sobre la ventana lo abre**: un `.tpproj` o un `.tps`
-  arrastrados desde el gestor de archivos se abren en el momento (antes se
-  ignoraban por no ser imágenes); un `.toml` que no es de proyecto no toca la
-  configuración cargada.
-
-### Novedades v0.5.0
-
-- **Interfaz en español o inglés, con tema claro, oscuro o el del sistema**:
-  la sección **Interfaz** de Ajustes elige idioma y tema; la preferencia se
-  guarda en `~/.config/texturepacker-rs/ui.toml` y se aplica sin reiniciar.
-  El inglés cubre la interfaz y los mensajes que escribe el motor (Log,
-  avisos, errores y las etiquetas de los formatos de metadatos).
-- **Paridad con la CLI de referencia**: opciones registradas y rechazo de lo
-  desconocido con pista de `--help`, `--format` con doble acepción (textura o
-  datos), `--data`/`--sheet` con nombre base común y `--help` completo; y
-  toda la Fase C: `--max-width`/`--max-height`, `--background-color`,
-  `--ignore-files`, `--replace`, `--dpi`, `--heuristic-mask`,
-  `--force-publish`, `--scale`, `--save`, `--convert-texture`,
-  `--custom-exporters-directory` y las propiedades de exportador.
-- **63 presets de formato de datos con conversión**: el combo «Formato de
-  metadatos» agrupa por familia, aplica los valores recomendados y cambia a
-  la vez familia, extensión y plantilla; los exportadores propios (`<id>.hbs`)
-  se eligen y se quitan desde el colapsable «Exportadores propios».
-- **Entrada y salida completas**: los 28 formatos de entrada de la lista
-  oficial (PBM/PGM/PPM, XBM, XPM, ASTC, KTX/KTX2, PSD, SVG/SVGZ, `.basis`,
-  PKM, PVR, `.pvr.gz`, `.pvr.ccz`…) y los 17 formatos de salida, con KTX2 y
-  Basis ETC1S.
-- **Empaquetado corregido**: guillotina real, align to grid que alinea sin
-  estirar, pivots y bordes 9-patch de la GUI que llegan al atlas, hoja
-  principal que conserva sus sprites listados y pestaña «Archivos» que lista
-  exactamente lo que se va a publicar.
-- **Variantes de escala con estado**: tabla por escala, filtro y tope por
-  variante, presets aplicables y valores fraccionarios con el común divisor
-  derivado de las escalas idénticas.
-- **Mapas de normales y calidades de GPU**: detección por sufijo, filtro o
-  color con aviso, calidades PVRTC/ETC/ASTC y pixel formats validados por
-  compatibilidad; clave global de cifrado guardada una sola vez y
-  reutilizable entre proyectos.
-- **Botón «Tutorial»** en la barra superior y arrastrar ficheros desde el
-  gestor de archivos también en Wayland.
-
-### Novedades v0.4.0
-
-- **Idioma y tema configurables**: la sección **Interfaz** de Ajustes (la
-  primera) elige entre español e inglés y entre el tema del sistema, claro
-  y oscuro; la preferencia se guarda en
-  `~/.config/texturepacker-rs/ui.toml` y se aplica sin reiniciar. El
-  inglés cubre la interfaz y los mensajes que escribe el motor — Log,
-  avisos, errores y las etiquetas de los formatos de metadatos —, que en
-  el código siguen siendo español y se traducen al mostrarlos.
-- **Arrastrar sprites del panel al lienzo**: suelta sprites del árbol sobre
-  la vista para colocarlos donde quieras — activa el algoritmo Manual, fija
-  las posiciones relativas de la selección, imanta a la rejilla y respeta el
-  borde del atlas. El fantasma y el drop comparten la misma función de
-  colocación: lo que ves mientras arrastras es exactamente lo que queda.
-- **Arrastre unificado en el panel**: un solo payload para el lienzo y para
-  las hojas/carpetas del árbol, y la multi-selección viaja completa (con sus
-  tamaños reales en el fantasma; mínimo visible a zoom bajo).
-- **Errores de proyecto legibles de una vez**: al abrir un `.tpproj` con
-  ajustes que faltan, un único mensaje lista todos los campos obligatorios
-  ausentes (antes solo se reportaba el primero).
-- **Calidad de interacción verificada con la app real**: un autotest binario
-  (`tp-smoke`) abre un proyecto headless en CI y simula el arrastre con
-  eventos de puntero reales (`RawInput`: press en la fila → move → release
-  en el lienzo), comprobando el algoritmo Manual, el imán de rejilla y la
-  posición final exacta del sprite.
-- Un micro-movimiento del ratón ya no convierte un clic del lienzo en
-  selección por rectángulo (umbral propio de la marquesina).
-
-### Novedades v0.3.0
-
-- **Icono propio en todas las plataformas**: ventana de la app, instalador
-  Windows, bundle macOS y lanzador Linux (generado por `packaging/gen_icon.py`).
-- **Instaladores nativos** `.dmg` / `.msi` / zip con `.desktop` en el release.
-- **Nombres de descarga amables** (`linux-x64`, `macos-arm64`…) en lugar de
-  los triples de target de Rust.
-- **Interfaz corregida y verificada con interacción real**: clic y arrastre en
-  el árbol de sprites conviven (antes un overlay robaba el press), menú
-  contextual «Mover a hoja…» funcional y la barra de zoom ya no desborda.
+El detalle de cada versión —qué cambió y por qué— se documenta en las notas de
+la release correspondiente, en la página de Releases; este README describe el
+programa tal y como está hoy.
 
 ```bash
 # Ejemplo: usar la CLI de la última release (Linux x64)
@@ -203,35 +111,41 @@ ajustes reempaqueta el atlas al instante (vista en memoria, sin escribir
 ficheros), con autovigilancia del directorio de sprites — editar un PNG en
 disco actualiza la vista. «Publicar» exporta las imágenes y los metadatos.
 
-La ventana organiza el flujo de trabajo en cuatro zonas:
+La pantalla se organiza en varias zonas:
 
 | Zona | Contenido |
 |------|-----------|
-| Barra superior | **Abrir** / **Guardar** / **↺** (restablecer), **➕** añadir sprites, **➖** quitar seleccionados, **Carpeta** (carpeta inteligente), **⚙** ajustes de sprite (pivots y bordes 9-patch), **Publicar**, **✂** (dividir hoja), **▶** (vista previa de animación) y **Tutorial** (abre la documentación del proyecto en el navegador), ruta del proyecto |
+| Barra de menús | **Archivo** (Abrir proyecto `Ctrl+O`, Guardar proyecto `Ctrl+S`, Restablecer la configuración con confirmación, Salir `Ctrl+Q`), **Edición** (Deshacer el último cambio `Ctrl+Z`, Quitar los seleccionados `Supr`), **Ver** (Acercar/Alejar/Zoom al 100%/Ajustar con `+`/`−`/`0`/`F`, Panel inferior, Mostrar Ajustes) y **Ayuda** (Atajos de teclado `F1`, Tutorial, Acerca de) |
+| Barra de herramientas | **➕ Añadir sprites…**, **➖ Quitar**, **📁 Añadir carpeta…** (carpeta inteligente), **⚙ Sprite** (ajustes de sprite: pivots y bordes 9-patch), **✂ Dividir** (hoja) y **🎬 Animación** (vista previa); a la derecha, la acción principal **⏏ Publicar** con su menú **…**: **Forzar publicación** reescribe los ficheros aunque nada haya cambiado, y si nada cambió la publicación normal se omite con un aviso en el Log |
 | Panel izquierdo | Árbol **Sprites**: carpetas y archivos; selección simple o múltiple (Ctrl/Shift), arrastrar y soltar, «Restaurar (N)» para deshacer exclusiones |
-| Centro | Vista previa del atlas: zoom (−/slider/+/1:1/Ajustar, Ctrl+rueda o pinza), contornos, pivots, **bordes 9-patch** (barras verdes **arrastrables** en el sprite seleccionado), selección de página y de sprite; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
-| Panel derecho | **Ajustes**: **Interfaz** (idioma **Sistema/Español/English** y tema **Sistema/Claro/Oscuro**, guardados en `~/.config/texturepacker-rs/ui.toml` y aplicados al vuelo), Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, **formato de metadatos (63 presets por motor + «Valores recomendados»)**, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado, plantillas, **exportadores propios** (una carpeta de `<id>.hbs` elegibles como plantilla de salida) y **propiedades de la plantilla** (prefijo/media query CSS y `string_property`/`bool_property`) |
-| Ventanas flotantes | **✂ Dividir hoja**: elige una hoja, corta en rejilla (columnas × filas) o por tamaño fijo con margen/espaciado, previsualiza la rejilla y escribe los PNG, los añade al proyecto y publica. **▶ Vista previa de animación**: grupos por nombre de archivo, FPS, repetir, transporte (⏮ ⏸ ⏭), fondo (damas/alfa/negro), escala y sprites rotados |
+| Centro | Vista previa del atlas: barra con el menú **Vista** (contornos, pivots y bordes 9-patch), las páginas y el sprite seleccionado; zoom (−/slider/+/1:1/Ajustar, Ctrl+rueda o pinza); sobre el sprite, la **cruz roja del pivot** y las **barras verdes de los bordes 9-patch** se arrastran con el ratón; debajo, las pestañas **Log**, **Salida**, **Sprites** y **Malla** |
+| Panel derecho | **Ajustes**: **Interfaz** (idioma **Sistema/Español/English** y tema **Sistema/Claro/Oscuro**, guardados en `~/.config/texturepacker-rs/ui.toml` y aplicados al vuelo), Datos (directorios, nombre base con placeholders `{n}`/`{n1}`/`{v}`, **formato de metadatos (63 presets agrupados por familia + «Valores recomendados»)**, quitar extensión de los nombres, anteponer carpeta de la carpeta inteligente, ruta de la textura en los metadatos), Composición (tamaño, **multipack**, padding, **padding de borde**, **divisor común**, **alinear a rejilla**, extrude, rotación, recorte, **algoritmo/heurística/modo de empaquetado**, **restricción de tamaño, tamaño fijo y atlas cuadrado**), Procesamiento (color, dithering, **transparencia/alpha handling**, **escalado de variantes**, formato de salida) y, con el interruptor **Avanzados**, polígonos, alias, variantes, cifrado, plantillas, **exportadores propios** (una carpeta de `<id>.hbs` elegibles como plantilla de salida) y **propiedades de la plantilla** (prefijo/media query CSS y `string_property`/`bool_property`) |
+| Ventanas flotantes | **✂ Dividir hoja**: elige una hoja, corta en rejilla (columnas × filas) o por tamaño fijo con margen/espaciado, previsualiza la rejilla y escribe los PNG, los añade al proyecto y publica. **🎬 Vista previa de animación**: grupos por nombre de archivo, deslizador de fotograma, transporte (⏮ ⏭), casillas **Repetir** y **Reproducir**, FPS (1-60), fondo (oscuro/claro/damas/personalizado) y escala |
 
-1. **Arrastra imágenes o carpetas a cualquier parte de la ventana** (o usa
-   **➕** / **Carpeta**, o rellena **Directorio de entrada**)
-   (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM,
-   XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis` con `--features gpu-formats`,
-   PKM, PVR/PVRTC (v2 y v3), `.pvr.gz` y `.pvr.ccz`): 28 formatos de
-   imagen en 30 extensiones).
+1. **Arrastra imágenes, carpetas o un proyecto (`.tpproj`/`.tps`) a cualquier
+   parte de la ventana** (o usa **➕ Añadir sprites** / **📁 Añadir carpeta**,
+   o rellena **Directorio de entrada**): se aceptan 28 formatos de imagen en 30
+   extensiones (PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI,
+   PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, PKM, PVR/PVRTC
+   (v2 y v3), `.pvr.gz`, `.pvr.ccz` y `.basis` con `--features gpu-formats`).
    Cada cambio de ajustes reempaqueta la vista al instante (debounce de
    120 ms).
 2. Ajusta tamaño de atlas, padding/extrude, rotación, recorte, polígonos, profundidad de color, formato y cifrado.
-3. Pulsa **«Publicar»**: la vista previa muestra el atlas con marcos, pivots, bordes 9-patch y zoom automático,
+3. Pulsa **«⏏ Publicar»**: la vista previa muestra el atlas con marcos, pivots, bordes 9-patch y zoom automático,
    y la pestaña *Log* los tiempos de cada etapa.
-4. Edita pivots y bordes 9-patch con **⚙** (se guardan en `pivots.json` y `borders.json` junto a
-   los sprites) y guarda la configuración con **Guardar** (`.tpproj` o `.tps`) para reutilizarla.
+4. Edita el pivot arrastrando su **cruz roja** (o con las nueve posiciones
+   predefinidas) y los bordes 9-patch con sus **barras verdes**, en la vista o
+   en **⚙ Sprite**; **💾 Guardar pivots** escribe `pivots.json` y
+   `borders.json` junto a los sprites. Guarda la configuración con
+   **Archivo → Guardar proyecto** (`.tpproj` o `.tps`) para reutilizarla.
 
 En la vista previa: **arrastra un sprite** para moverlo (en el algoritmo *Manual* fija su
 posición; en los demás muestra una vista fantasma que sugiere el modo Manual), **arrastra
 desde una zona vacía** para seleccionar varios por rectángulo, **clic en el vacío** para
 deseleccionar y **Supr** quita los seleccionados. Atajos: `Ctrl+O` abrir, `Ctrl+S` guardar,
-`Ctrl+P` publicar, `+`/`−`/`0` zoom (1:1), `F` encuadrar, `Esc` cierra ventanas flotantes.
+`Ctrl+P` publicar, `Ctrl+Mayús+P` forzar publicación, `Ctrl+Z` deshacer,
+`+`/`−`/`0` zoom (1:1), `F` encuadrar, `Esc` cierra ventanas y diálogos y
+`F1` muestra la lista completa de atajos.
 
 ## Uso rápido (CLI)
 
@@ -281,10 +195,10 @@ Las opciones desconocidas se rechazan con `error: opción desconocida: … (usa
 `--version`/`-V` y `--exporter-list`.
 `--data` y `--sheet` deben compartir carpeta y nombre base (el modelo tiene un
 nombre base por ejecución) y la extensión de `--data` tiene que corresponder al
-formato de datos elegido. Los huecos que quedaban ya están cerrados (Fase C):
-`--scale`, `--max-width`/`--max-height`, `--background-color`, `--ignore-files`,
+formato de datos elegido. Además están implementadas `--scale`,
+`--max-width`/`--max-height`, `--background-color`, `--ignore-files`,
 `--replace`, `--dpi`, `--heuristic-mask`, `--convert-texture`,
-`--force-publish` y `--save`; además `--custom-exporters-directory`,
+`--force-publish` y `--save`; también `--custom-exporters-directory`,
 `--css-sprite-prefix`, `--css-media-query-2x`,
 `--plain-string-property`/`--plain-bool-property` y los alias
 `--disable-rotation`/`--enable-cache-busting`. Las doce opciones de exportadores
@@ -401,8 +315,7 @@ enable_auto_detect_animations = true  # walk_001..N → animación "walk" en los
 Al cargar, el proyecto se valida de una vez: si faltan campos obligatorios,
 **un solo error los lista todos** (``faltan N campos obligatorios: `a`, `b`, …``)
 en vez de exigirlos de uno en uno. Los campos con valor por defecto y los
-`Option` (como `encryption_key`) siguen siendo opcionales, igual que en
-versiones anteriores.
+`Option` (como `encryption_key`) son opcionales.
 
 ## Metadatos
 
@@ -483,8 +396,8 @@ archivo:
 "TPENC2" (6 bytes) | salt (16 bytes) | nonce (12 bytes) | ciphertext + tag GCM
 ```
 
-Los archivos `TPENC1` de las versiones anteriores (clave = SHA-256 de la
-frase, sin sal) se siguen descifrando; sólo se deja de escribir ese formato.
+El formato antiguo `TPENC1` (clave = SHA-256 de la frase, sin sal) se sigue
+descifrando; sólo se deja de escribir.
 
 ## Limitaciones conocidas
 
@@ -538,40 +451,42 @@ frase, sin sal) se siguen descifrando; sólo se deja de escribir ese formato.
 
 ## Pruebas
 
-`cargo test --workspace` ejecuta más de 550 tests (entre ellos el del tipo de error
-`TpError`, con mensajes en español en el código que la GUI traduce al
-idioma elegido): algoritmos (trim, hash, pack, earcut,
-dithering, cuantización, alpha handling, escalado), **empaquetado del Lote 6**
-(algoritmos Grid/Basic, heurísticas Best/BottomLeft/ContactPoint, restricciones
-de tamaño POT/múltiplo 4/palabra, tamaño fijo, force squared y búsqueda
-Fast/Good/Best), **multipack del Lote 7** (expansión de placeholders
-`{n}`/`{n0}`/`{n1}`/`{v}`, extensión sin duplicar, data file por hoja, aviso
-cuando faltan placeholders y error con `multipack = false`), round-trip de ETC2 (5 modos
-+ EAC) y PVRTC 4BPP (opaco, gradientes, transparencia y layout morton) contra un
-decodificador independiente (`texture2ddecoder`), cifrado/descifrado, plantillas,
-configuración (round-trip TOML de los ajustes nuevos), CLI (flags y parseo de
-argumentos, rechazo de opciones desconocidas y de las de exportadores ajenas con
-su motivo, `--format` con doble acepción, `--data`/`--sheet`, las opciones de la
-Fase C —escala, fondo, `--save`, conversor y exportadores propios— y que la ayuda
-no prometa nada que el parser no lea), y 45 pruebas end-to-end que generan sprites reales en disco y
-verifican aliases, rotación, normal maps, variantes, multi-atlas, los tres
-formatos GPU (ETC2/PVRTC/ASTC), los ajustes de Lote 5 (padding de borde,
-divisor común, nombres con subcarpeta/extensión, `texture_path`, premultiply y
-alineación a rejilla), los del Lote 6 (Grid con POT y tamaño fijo con Basic) y
-los del Lote 7 (hojas nombradas con `{n1}`, un data file por hoja con solo sus
-frames, nomenclatura implícita con aviso, variantes `{v}` y multipack
-desactivado), además de los del **Lote 8** (JPG/PNG8/WebP y formatos de píxel,
-flip vertical solo en formatos GPU e ingesta de TGA/BMP/QOI con deduplicación
-por hash) y del **Lote 9** (bordes 9-patch desde `borders.json` hasta los
-metadatos `border` del JSON), además de los del **Lote 13** (la hoja publicada
-en KTX2 se vuelve a leer byte a byte y el `.basis` sale con su firma y con la
-calidad moviendo el tamaño; el `.basis` de entrada se transcodifica y entra en
-el atlas), de los del **Lote 15** (los seis contenedores de entrada que
-faltaban — `.pkm`, `.pvr`, `.pvr.gz`, `.pvr.ccz`, `.pvrtc` y `.svgz` — cada uno con
-su tamaño original en los metadatos) y de los **formatos de datos** (cada familia
-publica su propio fichero — atlas de texto, Plist, XML, CSS — o ninguno en
-«solo la hoja», y renderiza su forma: `offset` centrado, `frameX` negativo,
-`textures` por hoja y clases CSS saneadas).
+`cargo test --workspace` ejecuta más de 600 tests (entre ellos el del tipo de
+error `TpError`, con mensajes en español en el código que la GUI traduce al
+idioma elegido), organizados por áreas:
+
+- **Algoritmos**: trim, hash, pack, earcut, dithering, cuantización, alpha
+  handling y escalado.
+- **Empaquetado**: algoritmos Grid/Basic, heurísticas
+  Best/BottomLeft/ContactPoint, restricciones de tamaño POT/múltiplo 4/palabra,
+  tamaño fijo, atlas cuadrado y la búsqueda Fast/Good/Best.
+- **Multipack**: expansión de placeholders `{n}`/`{n0}`/`{n1}`/`{v}`, extensión
+  sin duplicar, data file por hoja, aviso cuando faltan placeholders y error
+  claro con `multipack = false`.
+- **Formatos GPU y cifrado**: round-trip de ETC2 (5 modos + EAC) y PVRTC 4BPP
+  (opaco, gradientes, transparencia y layout morton) contra un decodificador
+  independiente (`texture2ddecoder`), cifrado/descifrado y plantillas.
+- **Configuración y CLI**: round-trip TOML de los ajustes; flags y parseo de
+  argumentos, rechazo de opciones desconocidas y de las de exportadores ajenas
+  con su motivo, `--format` con doble acepción, `--data`/`--sheet`, y que la
+  ayuda no prometa nada que el parser no lea.
+- **Formatos de datos**: cada familia publica su propio fichero — atlas de
+  texto, Plist, XML, CSS — o ninguno en «solo la hoja», y renderiza su forma:
+  `offset` centrado, `frameX` negativo, `textures` por hoja y clases CSS
+  saneadas.
+- **End-to-end**: generan sprites reales en disco y verifican aliases,
+  rotación, normal maps, variantes, multi-atlas, los tres formatos GPU
+  (ETC2/PVRTC/ASTC), padding de borde, divisor común, nombres con
+  subcarpeta/extensión, `texture_path`, premultiply y alineación a rejilla,
+  hojas nombradas con `{n1}`, un data file por hoja con solo sus frames,
+  nomenclatura implícita con aviso, variantes `{v}` y multipack desactivado,
+  JPG/PNG8/WebP y formatos de píxel, flip vertical solo en formatos GPU,
+  ingesta de TGA/BMP/QOI con deduplicación por hash, bordes 9-patch desde
+  `borders.json` hasta el metadato `border`, la hoja publicada en KTX2
+  leída byte a byte, `.basis` con su firma y con la calidad moviendo el
+  tamaño, los contenedores de entrada (`.pkm`, `.pvr`, `.pvr.gz`, `.pvr.ccz`,
+  `.pvrtc` y `.svgz`) con su tamaño original en los metadatos, y los formatos
+  de entrada y salida en todas sus variantes.
 
 Además, `cargo run -p tp-app --bin tp-smoke` compila un **autotest binario
 de la app completa**: genera en un directorio temporal sprites de ejemplo y un
