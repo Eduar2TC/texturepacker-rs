@@ -1,4 +1,5 @@
 use super::options::EncodeOptions;
+#[cfg(feature = "gpu-formats")]
 use crate::config::GpuFormat;
 use crate::error::{Result, TpError};
 
