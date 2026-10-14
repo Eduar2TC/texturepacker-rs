@@ -439,6 +439,13 @@ impl App {
     /// frames to run, so releasing the marker at PREVIEW_DEBOUNCE_MS would
     /// freeze the atlas until the next user event («solo se ve al pulsar
     /// Publicar»).
+    ///
+    /// Se llama al FINAL de cada frame (ver `eframe::App::update`), no al
+    /// principio: los atajos y los widgets piden el trabajo mientras se
+    /// pinta, y un sondeo anterior a pintar no los vería —el frame
+    /// terminaría sin waker y la cadena moriría—. La publicación no entra
+    /// aquí: su spinner de la toolbar pinta el frame siguiente y, desde
+    /// el segundo, el sondeo de `running` de `update` mantiene la tira.
     pub(super) fn auto_repaint(&self, ctx: &egui::Context) {
         let needs = self.pending.is_some()
             || self
@@ -532,7 +539,9 @@ impl App {
             self.just_added_at = None;
             ctx.request_repaint();
         }
-        self.auto_repaint(ctx);
+        // El repintado en cadena ya no se programa aquí: mirar al principio
+        // del frame no ve lo que los widgets piden mientras se pinta. Lo
+        // hace `eframe::App::update`, al final de cada frame.
     }
 
     pub(super) fn parse_variants(&mut self) -> bool {
@@ -904,6 +913,86 @@ mod on_demand_tests {
             slot.lock().unwrap().is_none(),
             "la app no duerme con la vista previa al día"
         );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// El gesto que pide un repack a mitad de frame debe programar el
+    /// siguiente.
+    ///
+    /// Ctrl+Z llega por el teclado —después del sondeo que programa
+    /// repaints— y deja `pending_seq` marcado con el trabajo aún sin
+    /// lanzar (el debounce espera). Sin la llamada final de
+    /// `auto_repaint` ese frame termina sin waker que venga de la app:
+    /// la vista previa no volvería hasta el próximo evento del usuario
+    /// (medido en vivo: 40 s de «Actualizando…» con el puntero quieto
+    /// tras cambiar un ajuste).
+    ///
+    /// El aserto mira las **causas** (`ctx.repaint_causes`), no el
+    /// delay: egui programa un repaint inmediato en todo frame que lleva
+    /// eventos (su `begin_pass`, delay 0) y el aviso del gesto y el
+    /// scroll del registro añaden los suyos, así que mirar el delay
+    /// mediría a otros, no a `auto_repaint`. Con el repintado al final
+    /// del `update`, la única causa de `pipeline.rs` que el frame del
+    /// gesto puede tener es la que deja `auto_repaint` (las demás
+    /// necesitan pending, `just_added` o un evento del vigilante de
+    /// disco, y aquí no hay ninguno).
+    #[test]
+    fn el_gesto_que_pide_un_repack_programa_el_siguiente_frame() {
+        let (mut app, ctx, tmp) = demo("reencadena");
+        let boot = pump_until_fresh(&mut app, &ctx);
+        assert!(!boot.stuck, "preview de arranque: {boot:?}");
+        // Hasta aquí cualquier frame del bombeo es cosa del arranque: lo
+        // que se vea después tiene que venir del gesto, aislado aquí.
+        settle_until_quiet(&mut app, &ctx);
+
+        // Un paso anotado para que Ctrl+Z tenga algo que deshacer.
+        app.anotar_deshacer();
+
+        // Un frame con Ctrl+Z (la receta de las pruebas de atajos).
+        let mods = egui::Modifiers::CTRL;
+        let _ = app.run_frame(
+            &ctx,
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1360.0, 860.0),
+                )),
+                focused: true,
+                modifiers: mods,
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Z,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: mods,
+                }],
+                ..egui::RawInput::default()
+            },
+        );
+        assert!(
+            app.deshacer.is_empty(),
+            "Ctrl+Z debe deshacer el paso (¿no llegó el atajo?)"
+        );
+        assert!(
+            app.pending_seq.is_some(),
+            "el deshacer debe anotar el cambio: el repack queda pendiente de debounce"
+        );
+
+        // `repaint_causes` devuelve las del frame anterior: un frame
+        // idle más rota la lista (el intercambio ocurre al arrancar el
+        // pass) y las que deje su propio pintado quedan fuera de la
+        // lectura.
+        let _ = app.run_frame(&ctx, crate::testing::idle_input());
+        let causas = ctx.repaint_causes();
+        assert!(
+            causas.iter().any(|c| c.file.ends_with("app/pipeline.rs")),
+            "el frame que pidió el repack no llamó a `auto_repaint`: la \
+             vista previa esperaría al próximo evento del usuario \
+             (causas: {causas:?})"
+        );
+
+        let out = pump_until_fresh(&mut app, &ctx);
+        assert!(!out.stuck, "la cadena no arrancó tras el gesto: {out:?}");
         std::fs::remove_dir_all(&tmp).ok();
     }
 

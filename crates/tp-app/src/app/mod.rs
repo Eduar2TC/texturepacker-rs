@@ -758,6 +758,20 @@ impl eframe::App for App {
         // El aviso in-situ va el último: así queda por encima de todo lo
         // demás y ve el frame completo (reloj, puntero y repintado).
         aviso::pintar(ctx, &mut self.aviso);
+
+        // `auto_repaint` va también al FINAL del frame: los atajos y los
+        // widgets piden el trabajo (pending, pending_seq) mientras se
+        // pinta, DESPUÉS del sondeo que antes lo miraba al principio del
+        // update. Si el repintado solo se programara allí, ese frame
+        // terminaría sin waker y la cadena moriría: la vista previa se
+        // quedaría en su estado viejo —o en «Actualizando…»— hasta el
+        // próximo evento del usuario (medido en vivo: 40 s con el puntero
+        // quieto tras cambiar un ajuste). Con esta llamada, el frame que
+        // nace el trabajo programa el siguiente y `auto_repaint` lo
+        // encadena solo. La publicación no pasa por aquí: su spinner de
+        // la toolbar despierta el frame siguiente y, desde el segundo, el
+        // sondeo de `running` de ahí arriba mantiene la tira.
+        self.auto_repaint(ctx);
     }
 }
 
