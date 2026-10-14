@@ -984,8 +984,12 @@ mod on_demand_tests {
         // lectura.
         let _ = app.run_frame(&ctx, crate::testing::idle_input());
         let causas = ctx.repaint_causes();
+        // `Path` en vez de `ends_with` de texto: el compilador anota las
+        // rutas con el separador propio (Windows: `app\pipeline.rs`).
         assert!(
-            causas.iter().any(|c| c.file.ends_with("app/pipeline.rs")),
+            causas
+                .iter()
+                .any(|c| std::path::Path::new(c.file).ends_with("app/pipeline.rs")),
             "el frame que pidió el repack no llamó a `auto_repaint`: la \
              vista previa esperaría al próximo evento del usuario \
              (causas: {causas:?})"
