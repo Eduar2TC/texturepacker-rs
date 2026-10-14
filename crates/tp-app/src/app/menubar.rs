@@ -12,7 +12,7 @@
 
 use super::{
     preview,
-    toolbar::{confirm_reset, TUTORIAL_URL},
+    toolbar::{confirm_reset, tutorial_url},
     App, LogKind, OBJETIVO_MIN,
 };
 use crate::i18n::t;
@@ -203,7 +203,7 @@ pub(super) fn salir(ctx: &egui::Context) {
 /// —Mayús+F1 (re-review A4)— usa exactamente la misma receta que el
 /// menú: un atajo sin su aviso se sentía como una tecla muda.
 pub(super) fn tutorial(app: &mut App, ctx: &egui::Context) {
-    ctx.open_url(egui::OpenUrl::new_tab(TUTORIAL_URL));
+    ctx.open_url(egui::OpenUrl::new_tab(tutorial_url()));
     app.aviso(
         LogKind::Info,
         t!("Abriendo la documentación en el navegador.").into(),
@@ -231,7 +231,7 @@ pub(super) fn about_window(app: &mut App, ctx: &egui::Context) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 ui.hyperlink_to(t!("Repositorio"), REPO_URL);
-                ui.hyperlink_to(t!("Documentación"), TUTORIAL_URL);
+                ui.hyperlink_to(t!("Documentación"), tutorial_url());
             });
             ui.add_space(8.0);
             ui.label(egui::RichText::new(t!("Licencia MIT")).weak());

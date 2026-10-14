@@ -10,9 +10,25 @@ use super::{App, LogKind};
 use crate::i18n::t;
 use eframe::egui;
 
-/// Documentación que abre «Ayuda → Tutorial»: el README del proyecto,
-/// en una pestaña del navegador del usuario.
-pub(crate) const TUTORIAL_URL: &str = "https://github.com/Eduar2TC/texturepacker-rs#readme";
+/// Documentación que abren «Ayuda → Tutorial» y el enlace «Documentación»
+/// de «Acerca de»: el README del proyecto en el idioma de la interfaz, en
+/// una pestaña del navegador del usuario (la raíz está en inglés y
+/// `README.es.md` es su traducción).
+pub(crate) fn tutorial_url() -> &'static str {
+    tutorial_url_for(crate::i18n::lang())
+}
+
+/// Como [`tutorial_url`], pero para un idioma concreto. Va aparte para que
+/// el test compruebe los dos casos sin tocar el estado global de i18n, que
+/// todos los tests comparten.
+pub(crate) fn tutorial_url_for(lang: crate::i18n::Lang) -> &'static str {
+    const EN: &str = "https://github.com/Eduar2TC/texturepacker-rs#readme";
+    const ES: &str = "https://github.com/Eduar2TC/texturepacker-rs/blob/main/README.es.md";
+    match lang {
+        crate::i18n::Lang::Es => ES,
+        crate::i18n::Lang::En => EN,
+    }
+}
 
 pub(super) fn toolbar(app: &mut App, ctx: &egui::Context) {
     egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
@@ -227,10 +243,14 @@ mod tests {
     use crate::testing::texto_pintado;
 
     #[test]
-    fn tutorial_url_points_at_the_project_readme() {
+    fn tutorial_url_follows_the_interface_language() {
         assert_eq!(
-            TUTORIAL_URL,
+            super::tutorial_url_for(crate::i18n::Lang::En),
             "https://github.com/Eduar2TC/texturepacker-rs#readme"
+        );
+        assert_eq!(
+            super::tutorial_url_for(crate::i18n::Lang::Es),
+            "https://github.com/Eduar2TC/texturepacker-rs/blob/main/README.es.md"
         );
     }
 
