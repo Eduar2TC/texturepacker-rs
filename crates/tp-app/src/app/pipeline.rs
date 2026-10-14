@@ -1587,11 +1587,37 @@ mod on_demand_tests {
         ))
     }
 
+    /// Cronometra `n` frames en reposo, uno a uno, y devuelve
+    /// (mínimo, mediana, máximo) en milisegundos.
+    ///
+    /// El aserto se apoya en el **mínimo**: la carga que corre en paralelo
+    /// (los tests con Rayon que comparten núcleos, el propio CI) sólo puede
+    /// *añadir* tiempo a un frame, nunca quitarlo, así que el frame más
+    /// rápido de la tanda es el coste real de uno en reposo. Una media
+    /// sobre unas pocas lecturas se la tragaba una sola ráfaga larga —nos
+    /// desprogramaban el hilo— y el test saltaba sin regresión alguna. Un
+    /// frame que de verdad ejecuta trabajo sale caro hasta en su mejor
+    /// ronda; los casos intermitentes los cubren los tests estructurales
+    /// (`arranque_sin_proyecto_no_satura_la_secuencia`, los techos de
+    /// `pump_until_fresh` y los del arranque).
+    fn frames_en_reposo(app: &mut App, ctx: &egui::Context, n: usize) -> (u128, u128, u128) {
+        let mut ms: Vec<u128> = Vec::with_capacity(n);
+        for _ in 0..n {
+            let t = std::time::Instant::now();
+            let _ = app.run_frame(ctx, crate::testing::idle_input());
+            ms.push(t.elapsed().as_millis());
+        }
+        ms.sort_unstable();
+        (ms[0], ms[n / 2], ms[n - 1])
+    }
+
     /// Ensayo de rendimiento de la app completa, tal como corre la suite
     /// (compilación de debug): arranque con proyecto, frames de UI en
     /// marcha, repack al cambiar un ajuste y publicación a disco. Imprime
-    /// la tabla de tiempos y marca techos laxos: solo deben saltar con
-    /// regresiones de orden de magnitud, no con el ruido de la máquina.
+    /// la tabla de tiempos y marca techos laxos sobre el mínimo de los
+    /// frames —inmunes al ruido de la máquina—: solo deben saltar con
+    /// regresiones de orden de magnitud, no con la carga de quien comparte
+    /// el núcleo.
     #[test]
     fn rendimiento_de_la_app() {
         let tmp = carpeta_temporal("rendimiento");
@@ -1614,12 +1640,7 @@ mod on_demand_tests {
         assert!(total > 0, "la demo tiene sprites: {total}");
 
         // 2) Frames de UI con la app ya caliente (sin trabajo pendiente).
-        let n = 30u128;
-        let t = std::time::Instant::now();
-        for _ in 0..n {
-            let _ = app.run_frame(&ctx, crate::testing::idle_input());
-        }
-        let frame_ms = t.elapsed().as_millis() / n;
+        let (frame_min, frame_mediana, frame_max) = frames_en_reposo(&mut app, &ctx, 30);
 
         // 3) Repack tras cambiar un ajuste real.
         let antes = preview_updates(&app);
@@ -1666,7 +1687,7 @@ mod on_demand_tests {
         println!(
             "rendimiento ({total} sprites, debug):\n  \
              arranque + primer preview: {arranque_ms} ms\n  \
-             frame medio de UI: {frame_ms} ms\n  \
+             frame de UI en reposo (mín/med/máx): {frame_min}/{frame_mediana}/{frame_max} ms\n  \
              repack tras cambio de ajuste: {repack_ms} ms\n  \
              publicación a disco: {publicar_ms} ms"
         );
@@ -1675,8 +1696,9 @@ mod on_demand_tests {
             "arranque y primer preview demasiado lentos: {arranque_ms} ms"
         );
         assert!(
-            frame_ms < 150,
-            "frame de UI medio demasiado lento: {frame_ms} ms"
+            frame_min < 150,
+            "frame de UI en reposo demasiado lento: {frame_min} ms \
+             (mediana {frame_mediana}, máx {frame_max})"
         );
         assert!(
             repack_ms < 10_000,
@@ -1729,25 +1751,21 @@ mod on_demand_tests {
         let total = app.result().expect("atlas grande").result.total_sprites;
         assert_eq!(total, 150, "los 150 sprites deben empaquetarse");
 
-        let n = 10u128;
-        let t = std::time::Instant::now();
-        for _ in 0..n {
-            let _ = app.run_frame(&ctx, crate::testing::idle_input());
-        }
-        let frame_ms = t.elapsed().as_millis() / n;
+        let (frame_min, frame_mediana, frame_max) = frames_en_reposo(&mut app, &ctx, 30);
 
         println!(
             "rendimiento (150 sprites, debug):\n  \
              primer preview: {preview_ms} ms\n  \
-             frame medio de UI: {frame_ms} ms"
+             frame de UI en reposo (mín/med/máx): {frame_min}/{frame_mediana}/{frame_max} ms"
         );
         assert!(
             preview_ms < 60_000,
             "el preview de 150 sprites tardó demasiado: {preview_ms} ms"
         );
         assert!(
-            frame_ms < 150,
-            "frame de UI con atlas grande demasiado lento: {frame_ms} ms"
+            frame_min < 150,
+            "frame de UI con atlas grande demasiado lento: {frame_min} ms \
+             (mediana {frame_mediana}, máx {frame_max})"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
