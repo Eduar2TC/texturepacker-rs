@@ -1,41 +1,43 @@
 # packaging/windows
 
-Recursos del instalador `.msi` (WiX v3) que genera el release workflow.
+**English** | [Español](README.es.md)
 
-## Contenidos
+Resources for the `.msi` installer (WiX v3) built by the release workflow.
 
-- `texturepacker-rs.wxs` — manifiesto del instalador. El workflow sustituye
-  `@VERSION@`, `@EXE_APP@` y `@EXE_CLI@` antes de invocar `candle`/`light`.
-  Instala `tp-app.exe` y `tp-cli.exe` en *Archivos de programa*, crea el
-  acceso directo en el menú Inicio y añade `tp-cli` al `PATH` del sistema.
+## Contents
 
-## Ficheros opcionales
+- `texturepacker-rs.wxs` — installer manifest. The workflow replaces
+  `@VERSION@`, `@EXE_APP@` and `@EXE_CLI@` before invoking `candle`/`light`.
+  Installs `tp-app.exe` and `tp-cli.exe` in *Program Files*, creates the
+  Start menu shortcut and adds `tp-cli` to the system `PATH`.
 
-El `.wxs` referencia dos ficheros que **no** están en el repositorio por
-tamaño/licencia; si existen, el instalador los incluye:
+## Optional files
 
-- `icon.ico` — icono de la app (usado en el acceso directo y en
-  *Agregar o quitar programas*). Si no existe, el workflow lo elimina del
-  manifiesto (`<Icon>`, `ARPPRODUCTICON` y el atributo `Icon` del
-  shortcut) y el instalador usa el icono genérico de WiX.
-- `licencia.rtf` — licencia mostrada en la página del instalador. Si no
-  existe, el workflow elimina el `WixVariable WixUILicenseRtf` y la
-  página de licencia se omite.
+The `.wxs` references two files that are **not** in the repository for
+size/licensing reasons; if they exist, the installer includes them:
 
-Para generar un `.ico` desde un PNG existente (p. ej. el logo del
-proyecto) se puede usar ImageMagick:
+- `icon.ico` — app icon (used in the shortcut and in
+  *Add or Remove Programs*). If it doesn't exist, the workflow strips it
+  from the manifest (`<Icon>`, `ARPPRODUCTICON` and the shortcut's `Icon`
+  attribute) and the installer falls back to WiX's generic icon.
+- `licencia.rtf` — license shown on the installer page. If it doesn't
+  exist, the workflow removes the `WixVariable WixUILicenseRtf` and the
+  license page is skipped.
+
+To generate a `.ico` from an existing PNG (e.g. the project logo)
+you can use ImageMagick:
 
 ```sh
 magick logo.png -define icon:auto-resize=256,128,64,48,32,16 icon.ico
 ```
 
-## Validación local (opcional)
+## Local validation (optional)
 
-Requiere .NET SDK (wix v3 se instala como herramienta dotnet):
+Requires the .NET SDK (WiX v3 installs as a dotnet tool):
 
 ```sh
 dotnet tool install --global wix
-wix extension add -g WixToolset.Util.wixext   # no requerido por este wxs
+wix extension add -g WixToolset.Util.wixext   # not required by this wxs
 sed -e "s/@VERSION@/0.2.0/" \
     -e "s|@EXE_APP@|target/x86_64-pc-windows-msvc/release/tp-app.exe|" \
     -e "s|@EXE_CLI@|target/x86_64-pc-windows-msvc/release/tp-cli.exe|" \
@@ -43,6 +45,6 @@ sed -e "s/@VERSION@/0.2.0/" \
 wix build /tmp/tp.wxs -o /tmp/tp.msi
 ```
 
-En CI esto lo hace el paso «Instalar WiX» del release workflow, que
-instala la extensión UI necesaria (`WixToolset.UI.wixext`) porque el
-`.wxs` usa `WixUILicenseRtf`.
+In CI this is done by the "Install WiX" step of the release workflow, which
+installs the required UI extension (`WixToolset.UI.wixext`) because the
+`.wxs` uses `WixUILicenseRtf`.
