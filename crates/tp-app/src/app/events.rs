@@ -617,6 +617,16 @@ mod tests {
         );
 
         // Ctrl+AvPág / Ctrl+RePág navegan las hojas del atlas.
+        //
+        // El resultado de abajo se fabrica a mano, sin pasar por el pipeline,
+        // y `poll_changes` lo trataría como workspace obsoleto: su sondeo de
+        // disco (`SNAPSHOT_POLL_MS`) compara con `packed_snapshot`, que sin
+        // empaquetado real queda `None` («sí, cambió»), y su `request_preview`
+        // con el directorio de entrada vacío vacía `result`. Si el timer caía
+        // en el frame del atajo, el guard veía 0 páginas y la prueba fallaba
+        // de vez en cuando. Con la huella del snapshot al día, el sondeo no
+        // pide nada y el resultado fabricado llega intacto a la navegación.
+        app.packed_snapshot = Some(app.workspace_snapshot());
         app.result = Some(tp_core::pipeline::PipelineOutput {
             result: tp_core::types::PackResult {
                 config: tp_core::config::ProjectConfig::default(),
