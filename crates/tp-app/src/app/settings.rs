@@ -1452,20 +1452,38 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
 
 /// Avisos de configuración que solo se ven en la GUI (antes de publicar).
 fn warnings_section(app: &App, ui: &mut egui::Ui) {
+    let warnings = config_warnings(&app.config);
+    if warnings.is_empty() {
+        return;
+    }
+    ui.add_space(16.0);
+    ui.label(egui::RichText::new(t!("Avisos")).strong());
+    for w in warnings {
+        ui.label(egui::RichText::new(t!("- {}", w)).color(ui.visuals().warn_fg_color));
+    }
+}
+
+/// Los avisos como vector de textos puro, sin UI, para poder testearlos.
+///
+/// Una configuración de fábrica no debe producir ninguno: el aviso
+/// existe para explicar combinaciones que el usuario ha elegido y que no
+/// harán lo que parece —p. ej. dithering con RGBA8888—, no para señalar
+/// los valores con los que el programa se abre por primera vez.
+fn config_warnings(config: &ProjectConfig) -> Vec<String> {
     let mut warnings: Vec<String> = Vec::new();
-    if app.config.dithering_algorithm != DitheringAlgorithm::None
-        && app.config.color_depth == ColorDepth::Rgba8888
+    if config.dithering_algorithm != DitheringAlgorithm::None
+        && config.color_depth == ColorDepth::Rgba8888
     {
         warnings.push(t!("El dithering no se aplica con RGBA8888; usa RGBA4444 o RGB565.").into());
     }
-    if app.config.extrude > app.config.padding {
+    if config.extrude > config.padding {
         warnings.push(t!(
             "El extrude ({}) se limita internamente al padding ({}).",
-            app.config.extrude,
-            app.config.padding
+            config.extrude,
+            config.padding
         ));
     }
-    if let Some(path) = app.config.export_template.as_deref() {
+    if let Some(path) = config.export_template.as_deref() {
         if !path.is_file() {
             warnings.push(t!(
                 "La plantilla {} no existe: el empaquetado fallará.",
@@ -1473,7 +1491,7 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
             ));
         }
     }
-    if let Some(dir) = app.config.custom_exporters_directory.as_deref() {
+    if let Some(dir) = config.custom_exporters_directory.as_deref() {
         if tp_core::dataformats::custom_exporter_ids(dir).is_empty() {
             warnings.push(t!(
                 "No hay <id>.hbs en {}: no se podrá elegir un exportador propio.",
@@ -1481,20 +1499,20 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
             ));
         }
     }
-    if app.config.template_format != TemplateFormat::Css
-        && (app.config.css_sprite_prefix.is_some() || app.config.css_media_query_2x.is_some())
+    if config.template_format != TemplateFormat::Css
+        && (config.css_sprite_prefix.is_some() || config.css_media_query_2x.is_some())
     {
         warnings.push(
             t!("El prefijo de clase y la media query 2× sólo aplican al formato CSS; se ignorarán.")
                 .into(),
         );
     }
-    if !app.config.gpu_format.is_supported() {
+    if !config.gpu_format.is_supported() {
         warnings.push(
             t!("ASTC requiere compilar con --features gpu-formats; el publicado fallará.").into(),
         );
     }
-    if app.config.flip_vertical && !app.config.gpu_format.is_hardware() {
+    if config.flip_vertical && !config.gpu_format.is_hardware() {
         warnings.push(
             t!(
                 "Voltear verticalmente (flip Y) solo aplica a formatos de hardware \
@@ -1503,27 +1521,22 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
             .into(),
         );
     }
-    if !app
-        .config
-        .pixel_format
-        .is_compatible_with(app.config.gpu_format)
-    {
+    if !config.pixel_format.is_compatible_with(config.gpu_format) {
         warnings.push(t!(
             "El formato de píxel {} no está soportado por el formato de textura {}; se usará RGBA8888 al publicar.",
-            app.config.pixel_format.as_str(),
-            app.config.gpu_format.as_str()
+            config.pixel_format.as_str(),
+            config.gpu_format.as_str()
         ));
     }
-    if app.config.scale_variants.iter().any(|s| s.fract() != 0.0) {
+    if config.scale_variants.iter().any(|s| s.fract() != 0.0) {
         warnings.push(
             t!("Hay variantes de escala fraccionarias; las coordenadas se redondearán a píxeles.")
                 .into(),
         );
     }
-    if let Some(want) = app.config.scale_mode.required_factor() {
+    if let Some(want) = config.scale_mode.required_factor() {
         let want = want as f32;
-        let other: Vec<String> = app
-            .config
+        let other: Vec<String> = config
             .scale_variants
             .iter()
             .copied()
@@ -1533,46 +1546,44 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
         if !other.is_empty() {
             warnings.push(t!(
                 "{} solo se aplica a la escala exacta {}x; {} se reescalarán con Smooth.",
-                app.config.scale_mode.as_str(),
+                config.scale_mode.as_str(),
                 want,
                 other.join(", ")
             ));
         }
     }
-    let align = app.config.align_to_grid;
-    if align > 0 && (app.config.padding % align != 0 || app.config.border_padding % align != 0) {
+    let align = config.align_to_grid;
+    if align > 0 && (config.padding % align != 0 || config.border_padding % align != 0) {
         warnings.push(t!(
             "Para respetar la rejilla de {} px, el padding se redondeará al múltiplo de {} al publicar.",
             align,
             align
         ));
     }
-    if app.config.border_padding * 2 >= app.config.max_texture_size {
+    if config.border_padding * 2 >= config.max_texture_size {
         warnings
             .push(t!("El padding de borde deja el atlas interior vacío; publicar fallará.").into());
     }
-    if app.config.gpu_format == GpuFormat::Pvrtc4Bpp
-        && app.config.size_constraints != SizeConstraint::Pot
-    {
+    if config.gpu_format == GpuFormat::Pvrtc4Bpp && config.size_constraints != SizeConstraint::Pot {
         warnings.push(
             t!("PVRTC exige dimensiones potencia de dos; activa la restricción «POT» o fija el tamaño.")
                 .into(),
         );
     }
-    let fixed_min = [app.config.fixed_width, app.config.fixed_height]
+    let fixed_min = [config.fixed_width, config.fixed_height]
         .iter()
         .filter(|v| **v > 0)
         .copied()
         .min();
     if let Some(m) = fixed_min {
-        if m <= app.config.border_padding * 2 {
+        if m <= config.border_padding * 2 {
             warnings.push(
                 t!("El tamaño fijo no deja área interior con el padding de borde actual; publicar fallará.")
                     .into(),
             );
         }
     }
-    let (dx, dy) = app.config.effective_divisors();
+    let (dx, dy) = config.effective_divisors();
     if dx > 1 || dy > 1 {
         warnings.push(t!(
             "Los sprites se estirarán con transparencia hasta ser divisibles entre {}x{}.",
@@ -1580,14 +1591,7 @@ fn warnings_section(app: &App, ui: &mut egui::Ui) {
             dy
         ));
     }
-    if warnings.is_empty() {
-        return;
-    }
-    ui.add_space(16.0);
-    ui.label(egui::RichText::new(t!("Avisos")).strong());
-    for w in warnings {
-        ui.label(egui::RichText::new(t!("- {}", w)).color(ui.visuals().warn_fg_color));
-    }
+    warnings
 }
 
 /// Opciones de cada escala listada en «Scaling variants»: filtro de sprites,
@@ -2294,6 +2298,15 @@ const GPU_PIXEL_FORMATS: &[(PixelFormat, &str)] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// La config de fábrica no debe enseñar ningún aviso: los avisos
+    /// explican combinaciones que el usuario ha elegido (p. ej. dithering
+    /// sobre RGBA8888), no los valores con los que arranca el programa.
+    #[test]
+    fn la_config_de_fabrica_no_produce_avisos() {
+        let avisos = config_warnings(&ProjectConfig::default());
+        assert!(avisos.is_empty(), "la config de fábrica avisa: {avisos:?}");
+    }
 
     #[test]
     fn active_custom_exporter_id_only_reads_ids_inside_the_directory() {

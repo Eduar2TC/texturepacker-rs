@@ -412,7 +412,7 @@ impl Default for ProjectConfig {
             polygon_tolerance: 1.5,
             enable_aliasing: true,
             color_depth: ColorDepth::Rgba8888,
-            dithering_algorithm: DitheringAlgorithm::FloydSteinberg,
+            dithering_algorithm: DitheringAlgorithm::None,
             gpu_format: GpuFormat::Png,
             png_opt_level: 1,
             png8_dither: PngDither::default(),
