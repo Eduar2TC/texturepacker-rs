@@ -253,7 +253,7 @@ and in encryption.
 | Pixel format RGBA5551 / RGBA5555 / BGRA8888  | ✅     | `pixel_format = "RGBA5551"` quantizes to the 5-5-5-1 grid (bit-replication expansion, alpha 0/255); `"RGBA5555"` (20 bits) keeps alpha in 5 bits as well; `"BGRA8888"` swaps R/B in the file |
 | Dithering (Floyd–Steinberg / Atkinson)       | ✅     | Error diffusion per channel; `*-Alpha` variants also diffuse into alpha |
 | PNG / WebP                                   | ✅     | PNG and WebP lossless |
-| ASTC 4x4                                     | ✅*    | *With `--features gpu-formats` (official ARM astcenc) |
+| ASTC 4x4-12x12 (square blocks)           | ✅*    | *With `--features gpu-formats` (official ARM astcenc); `.astc` container |
 | ETC2 RGBA (EAC + ETC2)                       | ✅     | In-house encoder validated against an independent decoder |
 | PVRTC 4BPP                                   | ✅     | In-house PVRTC1 4bpp encoder (block-fit + modulation search) in `.pvr` v3, validated against `texture2ddecoder` |
 | KTX2 (ktx2)                                  | ✅     | Uncompressed 2.0 container: header + index of one level, DFD (RGBSDA, BT.709 linear) and KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 for RGBA8/RGB8/R8 |
@@ -442,8 +442,8 @@ decrypted; that format is simply no longer written.
   retired formats (`atf`, `pvr2`) are not implemented.
 - **Heuristics and pixel formats**: the engine implements the subset of the
   project's technical spec (RGBA8888/4444/565, RGBA5551/5555, BGRA8888,
-  RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp); other formats
-  (ETC1, DXT, other ASTC block sizes, Basis UASTC, …) are not included.
+  RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (4x4-12x12 square blocks),
+  ETC2 RGBA, PVRTC1 4bpp); Basis UASTC is not included.
 - **Patched winit (`third_party/winit`)**: winit 0.30 does not implement
   file drag-and-drop on Wayland (only XDND on X11), so on Wayland sessions
   the files dropped from the file manager never reached the app. The root

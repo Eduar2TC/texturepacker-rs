@@ -1,7 +1,8 @@
 use super::options::EncodeOptions;
 use crate::error::{Result, TpError};
 
-/// ASTC (bloque elegido por el pixel format `ASTC_*`, 4x4 por defecto) con
+/// ASTC (bloque del pixel format `ASTC_*` si fija uno, del formato GPU
+/// `ASTC_*` elegido si no, y 4x4 por defecto) con
 /// preset según `--astc-quality` 0-4: fastest, fast, medium, thorough,
 /// exhaustive. El contenedor es `.astc`.
 pub(super) fn encode_astc(
@@ -10,7 +11,11 @@ pub(super) fn encode_astc(
     height: usize,
     opts: &EncodeOptions,
 ) -> Result<Vec<u8>> {
-    let (bx, by) = opts.pixel_format.astc_block().unwrap_or((4, 4));
+    let (bx, by) = opts
+        .pixel_format
+        .astc_block()
+        .or_else(|| opts.format.astc_block())
+        .unwrap_or((4, 4));
     #[cfg(feature = "gpu-formats")]
     {
         use astcenc_rs::{
@@ -91,5 +96,25 @@ mod tests {
         assert_eq!(four[4], 4, "block_x");
         assert_eq!(four[5], 4, "block_y");
         assert_eq!(four.len(), 16 + 4 * 16, "4 bloques de 4x4");
+    }
+
+    /// Sin pixel format ASTC explícito, el bloque lo fija el formato GPU
+    /// elegido (hasta ahora el 4x4 era el único que existía).
+    #[cfg(feature = "gpu-formats")]
+    #[test]
+    fn el_bloque_astc_lo_fija_el_formato_gpu_cuando_el_pixel_format_no() {
+        let rgba = four_color_image();
+        let file = encode_astc(&rgba, 8, 8, &opts(GpuFormat::Astc6x6)).unwrap();
+        assert_eq!(
+            &file[4..6],
+            &[6, 6],
+            "las dimensiones del bloque salen del formato GPU"
+        );
+        // ceil(8/6) = 2 bloques por eje: 4 bloques de 16 bytes.
+        assert_eq!(file.len(), 16 + 4 * 16);
+
+        let file = encode_astc(&rgba, 8, 8, &opts(GpuFormat::Astc12x12)).unwrap();
+        assert_eq!(&file[4..6], &[12, 12]);
+        assert_eq!(file.len(), 16 + 16, "un único bloque de 12x12");
     }
 }

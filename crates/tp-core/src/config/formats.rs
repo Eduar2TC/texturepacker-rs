@@ -73,6 +73,21 @@ pub enum GpuFormat {
     Etc1Ktx,
     #[serde(rename = "ASTC_4x4")]
     Astc4x4,
+    /// ASTC con bloque cuadrado 5x5.
+    #[serde(rename = "ASTC_5x5")]
+    Astc5x5,
+    /// ASTC con bloque cuadrado 6x6.
+    #[serde(rename = "ASTC_6x6")]
+    Astc6x6,
+    /// ASTC con bloque cuadrado 8x8.
+    #[serde(rename = "ASTC_8x8")]
+    Astc8x8,
+    /// ASTC con bloque cuadrado 10x10.
+    #[serde(rename = "ASTC_10x10")]
+    Astc10x10,
+    /// ASTC con bloque cuadrado 12x12.
+    #[serde(rename = "ASTC_12x12")]
+    Astc12x12,
     #[serde(rename = "ETC2_RGBA")]
     Etc2Rgba,
     #[serde(rename = "PVRTC_4BPP")]
@@ -103,6 +118,11 @@ impl GpuFormat {
             GpuFormat::Etc1 => "ETC1",
             GpuFormat::Etc1Ktx => "ETC1_KTX",
             GpuFormat::Astc4x4 => "ASTC_4x4",
+            GpuFormat::Astc5x5 => "ASTC_5x5",
+            GpuFormat::Astc6x6 => "ASTC_6x6",
+            GpuFormat::Astc8x8 => "ASTC_8x8",
+            GpuFormat::Astc10x10 => "ASTC_10x10",
+            GpuFormat::Astc12x12 => "ASTC_12x12",
             GpuFormat::Etc2Rgba => "ETC2_RGBA",
             GpuFormat::Pvrtc4Bpp => "PVRTC_4BPP",
             GpuFormat::Ktx2 => "KTX2",
@@ -110,25 +130,52 @@ impl GpuFormat {
         }
     }
 
-    /// Whether this build can encode the format (`ASTC_4x4` and `BASIS` need
+    /// Whether this build can encode the format (`ASTC_*` and `BASIS` need
     /// the `gpu-formats` feature; every other format is always available).
     pub fn is_supported(&self) -> bool {
-        !matches!(self, GpuFormat::Astc4x4 | GpuFormat::Basis) || cfg!(feature = "gpu-formats")
+        let needs_feature = matches!(self, GpuFormat::Basis) || self.is_astc();
+        !needs_feature || cfg!(feature = "gpu-formats")
+    }
+
+    /// ASTC (bloques cuadrados de 4x4 a 12x12); todos salen en `.astc`.
+    pub fn is_astc(&self) -> bool {
+        matches!(
+            self,
+            GpuFormat::Astc4x4
+                | GpuFormat::Astc5x5
+                | GpuFormat::Astc6x6
+                | GpuFormat::Astc8x8
+                | GpuFormat::Astc10x10
+                | GpuFormat::Astc12x12
+        )
+    }
+
+    /// Tamaño de bloque ASTC (sólo los formatos ASTC; `None` en el resto).
+    pub fn astc_block(&self) -> Option<(u8, u8)> {
+        Some(match self {
+            GpuFormat::Astc4x4 => (4, 4),
+            GpuFormat::Astc5x5 => (5, 5),
+            GpuFormat::Astc6x6 => (6, 6),
+            GpuFormat::Astc8x8 => (8, 8),
+            GpuFormat::Astc10x10 => (10, 10),
+            GpuFormat::Astc12x12 => (12, 12),
+            _ => return None,
+        })
     }
 
     /// Hardware-compressed formats (flip-y solo aplica a estos).
     pub fn is_hardware(&self) -> bool {
-        matches!(
-            self,
-            GpuFormat::Astc4x4
-                | GpuFormat::Etc2Rgba
-                | GpuFormat::Pvrtc4Bpp
-                | GpuFormat::Pvr3Gz
-                | GpuFormat::Pvr3Ccz
-                | GpuFormat::Etc1
-                | GpuFormat::Etc1Ktx
-                | GpuFormat::Basis
-        )
+        self.is_astc()
+            || matches!(
+                self,
+                GpuFormat::Etc2Rgba
+                    | GpuFormat::Pvrtc4Bpp
+                    | GpuFormat::Pvr3Gz
+                    | GpuFormat::Pvr3Ccz
+                    | GpuFormat::Etc1
+                    | GpuFormat::Etc1Ktx
+                    | GpuFormat::Basis
+            )
     }
 
     pub fn file_extension(&self) -> &'static str {
@@ -145,7 +192,12 @@ impl GpuFormat {
             GpuFormat::Pvr3Ccz => "pvr.ccz",
             GpuFormat::Etc1 => "pkm",
             GpuFormat::Etc1Ktx => "ktx",
-            GpuFormat::Astc4x4 => "astc",
+            GpuFormat::Astc4x4
+            | GpuFormat::Astc5x5
+            | GpuFormat::Astc6x6
+            | GpuFormat::Astc8x8
+            | GpuFormat::Astc10x10
+            | GpuFormat::Astc12x12 => "astc",
             GpuFormat::Etc2Rgba => "ktx",
             GpuFormat::Pvrtc4Bpp => "pvr",
             GpuFormat::Ktx2 => "ktx2",
@@ -170,7 +222,12 @@ impl GpuFormat {
             "pvr3ccz" | "pvr-ccz" => GpuFormat::Pvr3Ccz,
             "pkm" | "etc1" => GpuFormat::Etc1,
             "ktx" | "etc1-ktx" | "etc1_ktx" => GpuFormat::Etc1Ktx,
-            "astc" => GpuFormat::Astc4x4,
+            "astc" | "astc-4x4" => GpuFormat::Astc4x4,
+            "astc-5x5" => GpuFormat::Astc5x5,
+            "astc-6x6" => GpuFormat::Astc6x6,
+            "astc-8x8" => GpuFormat::Astc8x8,
+            "astc-10x10" => GpuFormat::Astc10x10,
+            "astc-12x12" => GpuFormat::Astc12x12,
             "etc2" => GpuFormat::Etc2Rgba,
             "pvrtc" | "pvr3" => GpuFormat::Pvrtc4Bpp,
             "ktx2" => GpuFormat::Ktx2,
@@ -399,7 +456,7 @@ impl PixelFormat {
             PixelFormat::Etc1Rgb => matches!(format, GpuFormat::Etc1 | GpuFormat::Etc1Ktx),
             PixelFormat::Etc2Rgb | PixelFormat::Etc2Rgba => format == GpuFormat::Etc2Rgba,
             PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5 => format == GpuFormat::Dds,
-            f if f.astc_block().is_some() => format == GpuFormat::Astc4x4,
+            f if f.astc_block().is_some() => format.is_astc(),
             _ => false,
         }
     }
@@ -507,6 +564,12 @@ mod tests {
             ("pkm", GpuFormat::Etc1, "pkm"),
             ("ktx", GpuFormat::Etc1Ktx, "ktx"),
             ("astc", GpuFormat::Astc4x4, "astc"),
+            ("astc-4x4", GpuFormat::Astc4x4, "astc"),
+            ("astc-5x5", GpuFormat::Astc5x5, "astc"),
+            ("astc-6x6", GpuFormat::Astc6x6, "astc"),
+            ("astc-8x8", GpuFormat::Astc8x8, "astc"),
+            ("astc-10x10", GpuFormat::Astc10x10, "astc"),
+            ("astc-12x12", GpuFormat::Astc12x12, "astc"),
             ("etc2", GpuFormat::Etc2Rgba, "ktx"),
             ("pvrtc", GpuFormat::Pvrtc4Bpp, "pvr"),
             ("pvr3", GpuFormat::Pvrtc4Bpp, "pvr"),
@@ -535,6 +598,11 @@ mod tests {
             cfg!(feature = "gpu-formats"),
             "Basis depende de la feature gpu-formats"
         );
+        assert_eq!(
+            GpuFormat::Astc6x6.is_supported(),
+            cfg!(feature = "gpu-formats"),
+            "ASTC depende de la feature gpu-formats"
+        );
 
         // Serde: los nombres del TOML vuelven a la misma variante.
         for format in [
@@ -543,6 +611,7 @@ mod tests {
             GpuFormat::Etc1Ktx,
             GpuFormat::Ktx2,
             GpuFormat::Basis,
+            GpuFormat::Astc6x6,
         ] {
             let cfg = ProjectConfig {
                 gpu_format: format,
@@ -551,5 +620,32 @@ mod tests {
             let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
             assert_eq!(back.gpu_format, format, "{format:?}");
         }
+    }
+
+    /// Los formatos GPU ASTC cubren los tamaños cuadrados del spec: todos
+    /// se publican en `.astc`, todos son de hardware y cualquier pixel
+    /// format ASTC es compatible con cualquiera de ellos.
+    #[test]
+    fn los_formatos_gpu_astc_cubren_los_bloques_cuadrados() {
+        let casos = [
+            (GpuFormat::Astc4x4, "ASTC_4x4", (4, 4)),
+            (GpuFormat::Astc5x5, "ASTC_5x5", (5, 5)),
+            (GpuFormat::Astc6x6, "ASTC_6x6", (6, 6)),
+            (GpuFormat::Astc8x8, "ASTC_8x8", (8, 8)),
+            (GpuFormat::Astc10x10, "ASTC_10x10", (10, 10)),
+            (GpuFormat::Astc12x12, "ASTC_12x12", (12, 12)),
+        ];
+        for (format, nombre, bloque) in casos {
+            assert_eq!(format.as_str(), nombre, "{nombre}");
+            assert_eq!(format.astc_block(), Some(bloque), "{nombre}");
+            assert_eq!(format.file_extension(), "astc", "{nombre}");
+            assert!(format.is_astc() && format.is_hardware(), "{nombre}");
+            assert!(
+                PixelFormat::Astc6x6.is_compatible_with(format),
+                "ASTC_6x6 debe ser compatible con {nombre}"
+            );
+        }
+        assert!(!GpuFormat::Png.is_astc());
+        assert_eq!(GpuFormat::Png.astc_block(), None);
     }
 }

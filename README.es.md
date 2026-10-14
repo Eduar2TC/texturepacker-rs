@@ -251,7 +251,7 @@ aceptarse por diferencia de unidades y de cifrado.
 | Pixel format RGBA5551 / RGBA5555 / BGRA8888    | ✅     | `pixel_format = "RGBA5551"` cuantiza a la rejilla 5-5-5-1 (expansión por replicación de bits, alfa 0/255); `"RGBA5555"` (20 bits) mantiene el alfa también en 5 bits; `"BGRA8888"` intercambia R/B en el archivo |
 | Dithering (Floyd–Steinberg / Atkinson)         | ✅     | Error diffusion por canal; variantes `*-Alpha` difunden también al alfa |
 | PNG / WebP                                     | ✅     | PNG y WebP lossless |
-| ASTC 4x4                                       | ✅*    | *Con `--features gpu-formats` (ARM astcenc oficial) |
+| ASTC 4x4-12x12 (bloques cuadrados)       | ✅*    | *Con `--features gpu-formats` (ARM astcenc oficial); contenedor `.astc` |
 | ETC2 RGBA (EAC + ETC2)                         | ✅     | Encoder propio validado contra decodificador independiente |
 | PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación) en `.pvr` v3, validado contra `texture2ddecoder` |
 | KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
@@ -438,9 +438,8 @@ descifrando; sólo se deja de escribir.
   es solo ETC1S; no se implementan los formatos retirados (`atf`, `pvr2`).
 - **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
   especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
-  BGRA8888, RGB888, ALPHA/INTENSITY, ASTC 4x4, ETC2 RGBA, PVRTC1 4bpp); otros
-  formatos (ETC1, DXT, ASTC de otros tamaños de bloque, Basis UASTC, ...)
-  no están incluidos.
+  BGRA8888, RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (bloques cuadrados
+  de 4x4 a 12x12), ETC2 RGBA, PVRTC1 4bpp); Basis UASTC no está incluido.
 - **winit parcheado (`third_party/winit`)**: winit 0.30 no implementa el
   drag-and-drop de ficheros en Wayland (solo XDND en X11), de modo que en
   sesiones Wayland los ficheros soltados desde el gestor de archivos no

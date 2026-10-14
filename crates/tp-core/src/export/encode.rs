@@ -40,7 +40,12 @@ pub fn encode_to_bytes(
         // Formatos de hardware: comprimen RGBA directamente (ignoran el
         // pixel format salvo que este fije el bloque, la variante o la
         // calidad).
-        GpuFormat::Astc4x4 => encode_astc(rgba, width, height, opts),
+        GpuFormat::Astc4x4
+        | GpuFormat::Astc5x5
+        | GpuFormat::Astc6x6
+        | GpuFormat::Astc8x8
+        | GpuFormat::Astc10x10
+        | GpuFormat::Astc12x12 => encode_astc(rgba, width, height, opts),
         GpuFormat::Basis => encode_basis(rgba, width, height, opts),
         GpuFormat::Etc2Rgba => encode_etc2_ktx(rgba, width, height, opts),
         GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height, opts),

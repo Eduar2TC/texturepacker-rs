@@ -1270,6 +1270,19 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                 ui.selectable_value(v, GpuFormat::Dds, gpu_format_name(&GpuFormat::Dds));
                 super::separador(ui);
                 ui.selectable_value(v, GpuFormat::Astc4x4, gpu_format_name(&GpuFormat::Astc4x4));
+                ui.selectable_value(v, GpuFormat::Astc5x5, gpu_format_name(&GpuFormat::Astc5x5));
+                ui.selectable_value(v, GpuFormat::Astc6x6, gpu_format_name(&GpuFormat::Astc6x6));
+                ui.selectable_value(v, GpuFormat::Astc8x8, gpu_format_name(&GpuFormat::Astc8x8));
+                ui.selectable_value(
+                    v,
+                    GpuFormat::Astc10x10,
+                    gpu_format_name(&GpuFormat::Astc10x10),
+                );
+                ui.selectable_value(
+                    v,
+                    GpuFormat::Astc12x12,
+                    gpu_format_name(&GpuFormat::Astc12x12),
+                );
                 ui.selectable_value(
                     v,
                     GpuFormat::Etc2Rgba,
@@ -1399,7 +1412,7 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     ui.add(egui::DragValue::new(&mut app.config.etc2_quality).range(0..=100));
                 });
             }
-            GpuFormat::Astc4x4 => {
+            f if f.is_astc() => {
                 ui.label(t!("Calidad ASTC (0-4, 4 = exhaustivo)"));
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
@@ -1942,6 +1955,11 @@ fn gpu_format_name(g: &GpuFormat) -> &'static str {
         GpuFormat::Tiff => "TIFF",
         GpuFormat::Dds => "DDS",
         GpuFormat::Astc4x4 => "ASTC 4x4",
+        GpuFormat::Astc5x5 => "ASTC 5x5",
+        GpuFormat::Astc6x6 => "ASTC 6x6",
+        GpuFormat::Astc8x8 => "ASTC 8x8",
+        GpuFormat::Astc10x10 => "ASTC 10x10",
+        GpuFormat::Astc12x12 => "ASTC 12x12",
         GpuFormat::Etc2Rgba => "ETC2 RGBA (ktx)",
         GpuFormat::Etc1 => "ETC1 (pkm)",
         GpuFormat::Etc1Ktx => t!("ETC1 en KTX (ktx)"),
