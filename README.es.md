@@ -235,7 +235,7 @@ aceptarse por diferencia de unidades y de cifrado.
 | Multi-atlas auto-split                         | ✅     | Nueva página cuando no cabe; límite VRAM |
 | Multipack on/off                               | ✅     | `multipack` (por defecto activo; GUI + `--no-multipack`); si está desactivado y no cabe en una hoja, error claro |
 | Placeholders multipack                         | ✅     | `{n}`/`{n0}` (índice desde 0), `{n1}` (desde 1) y `{v}` (sufijo de variante) en el nombre base; cada hoja escribe su data file; aviso si faltan |
-| Encaje poligonal por bitmap / raster grid      | ✅     | Occupancy grid por página |
+| Encaje poligonal por bitmap / raster grid      | ✅     | Rejilla de ocupación por página sobre la máscara alfa exacta: cuando ningún rectángulo libre sirve, los sprites se interbloquean en las concavidades de sus vecinos — los marcos pueden solaparse, los píxeles opacos nunca (halo de extrusión incluido) |
 | Padding & Extrude                              | ✅     | Anti-bleeding |
 | Border padding                                 | ✅     | Margen entre sprites y borde del atlas; se redondea con la rejilla |
 | Common divisor (x/y)                           | ✅     | Los sprites se estiran (con transparencia) hasta ser divisibles; LCM con la rejilla |

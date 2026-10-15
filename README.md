@@ -237,7 +237,7 @@ and in encryption.
 | Multi-atlas auto-split                       | ✅     | New page when it doesn't fit; VRAM limit |
 | Multipack on/off                             | ✅     | `multipack` (on by default; GUI + `--no-multipack`); if off and it doesn't fit in one sheet, a clear error |
 | Multipack placeholders                       | ✅     | `{n}`/`{n0}` (index from 0), `{n1}` (from 1) and `{v}` (variant suffix) in the base name; every sheet writes its data file; warning if missing |
-| Polygon fit per bitmap / raster grid         | ✅     | Occupancy grid per page |
+| Polygon fit per bitmap / raster grid         | ✅     | Per-page occupancy grid over the exact alpha mask: when no free rectangle fits, sprites interlock into their neighbours' concavities — frames may overlap, opaque pixels never do (extrude halo included) |
 | Padding & Extrude                            | ✅     | Anti-bleeding |
 | Border padding                               | ✅     | Margin between sprites and the atlas edge; rounded to the grid |
 | Common divisor (x/y)                         | ✅     | Sprites are stretched (with transparency) until divisible; LCM with the grid |

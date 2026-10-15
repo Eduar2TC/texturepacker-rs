@@ -445,20 +445,31 @@ fn execute(
     // `enable_polygon` switch) enables mesh extraction and polygon packing.
     let use_polygon = config.effective_algorithm() == crate::config::PackingAlgorithm::Polygon;
     let mut meshes: Vec<Option<polygon::Polygons>> = vec![None; sprites.len()];
+    // Exact opaque footprint per sprite (alpha > 0): the occupancy grid
+    // claims those pixels plus the extrude halo, so disjointness is decided
+    // against the real texels instead of the RDP-simplified outline.
+    let mut masks: Vec<Option<Vec<bool>>> = vec![None; sprites.len()];
     if use_polygon {
-        meshes = sprites
+        let construidos: Vec<(Option<polygon::Polygons>, Option<Vec<bool>>)> = sprites
             .par_iter()
             .enumerate()
             .map(|(i, s)| {
                 if aliases[i].0 {
-                    return None;
+                    return (None, None);
                 }
                 let tw = s.trimmed_bounds.width as usize;
                 let th = s.trimmed_bounds.height as usize;
                 let alpha: Vec<u8> = s.pixels.chunks_exact(4).map(|px| px[3]).collect();
-                polygon::build_polygons(&alpha, tw as i32, th as i32, config.polygon_tolerance)
+                let malla =
+                    polygon::build_polygons(&alpha, tw as i32, th as i32, config.polygon_tolerance);
+                let mask = alpha.iter().map(|&a| a > 0).collect();
+                (malla, Some(mask))
             })
             .collect();
+        for (i, (malla, mask)) in construidos.into_iter().enumerate() {
+            meshes[i] = malla;
+            masks[i] = mask;
+        }
     }
     stage_times.push(("polygons".into(), t.elapsed().as_millis() as u64));
     if let Some(prog) = progreso {
@@ -480,6 +491,7 @@ fn execute(
             id: s.id.clone(),
             width: s.trimmed_bounds.width,
             height: s.trimmed_bounds.height,
+            mask: masks[i].take(),
             mesh: meshes[i].as_ref().map(|m| m.mesh.clone()),
         });
     }
@@ -497,6 +509,7 @@ fn execute(
         manual_grid: config.manual_grid,
         word_align_mod: config.word_align_mod(),
         align_grid: align,
+        extrude: config.extrude,
         max_width: config.effective_max_width(),
         max_height: config.effective_max_height(),
         ..PackerOptions::new(

@@ -7,9 +7,12 @@
 //!   WordAligned, fixed size (`fixed_width`/`fixed_height`) and force-squared
 //! - 90° rotation support
 //! - Multi-atlas auto-split (new page when nothing fits)
-//! - Polygon-aware placement: AABB placement from MaxRects is validated against
-//!   a per-page occupancy grid rasterized from the sprite mesh, so polygon
-//!   sprites can be packed tighter than their bounding boxes.
+//! - Polygon-aware placement: a per-page occupancy grid claims the **pixels**
+//!   of each placed sprite (mask + extrude halo), and when the AABB placement
+//!   finds no free rectangle the packer searches the concavities next to
+//!   already-claimed pixels. Frames may therefore overlap while every opaque
+//!   pixel stays disjoint, so polygon sprites pack tighter than their
+//!   bounding boxes.
 
 use crate::error::{Result, TpError};
 
@@ -19,12 +22,17 @@ use crate::config::{
 use crate::polygon::{rasterize_polygon, rotate_90_cw};
 use crate::types::{Point2D, Rect, TriangleMesh};
 
-/// A sprite ready for packing (trimmed size + optional local-space mesh).
+/// A sprite ready for packing (trimmed size + optional alpha mask and mesh).
 #[derive(Debug, Clone)]
 pub struct PackItem {
     pub id: String,
     pub width: i32,
     pub height: i32,
+    /// Exact opaque footprint of the trimmed sprite (`width * height`,
+    /// row-major, `true` = alpha > 0). The occupancy grid claims exactly
+    /// these pixels (plus the extrude halo); it takes precedence over the
+    /// mesh, whose RDP simplification can deviate from the real outline.
+    pub mask: Option<Vec<bool>>,
     pub mesh: Option<TriangleMesh>,
 }
 
@@ -74,6 +82,10 @@ pub struct PackerOptions {
     /// (border padding).
     pub border_padding: i32,
     pub polygon_mode: bool,
+    /// Extrusion in pixels (copied from the project config). The occupancy
+    /// grid inflates each footprint by `extrude.clamp(0, padding)` so a
+    /// sprite's extruded border pixels never land on another sprite.
+    pub extrude: i32,
     /// Packing algorithm family.
     pub algorithm: PackingAlgorithm,
     /// Effort spent searching the minimum atlas size.
@@ -119,6 +131,7 @@ impl PackerOptions {
             padding,
             border_padding,
             polygon_mode,
+            extrude: 0,
             algorithm: PackingAlgorithm::MaxRects,
             pack_mode: PackMode::default(),
             size_constraints: SizeConstraint::AnySize,
@@ -143,6 +156,11 @@ struct PageState {
     free_rects: Vec<Rect>,
     /// Occupancy grid (only maintained in polygon mode).
     occupied: Vec<bool>,
+    /// Candidate origins for the interlock search (polygon mode): a cell
+    /// becomes an origin the moment the cell to its left or above it is
+    /// claimed. Stale entries (the origin itself got claimed later) are
+    /// filtered when the search reads them.
+    run_starts: Vec<(i32, i32)>,
     /// Already placed frames (used by the Contact Point heuristic).
     placed: Vec<Rect>,
     placements: Vec<Placement>,
@@ -157,6 +175,7 @@ impl PageState {
             height,
             free_rects: vec![Rect::new(bp, bp, width - 2 * bp, height - 2 * bp)],
             occupied: Vec::new(),
+            run_starts: Vec::new(),
             placed: Vec::new(),
             placements: Vec::new(),
         }
@@ -1289,8 +1308,18 @@ fn pack_basic(
     Ok(pages)
 }
 
+/// Budget (in work units) for one interlock search: origins walked plus
+/// grid cells scanned. A pathological page can list a huge boundary of
+/// candidate origins; hitting the cap simply gives up and opens a new page,
+/// which is exactly what happened before interlock existed. Deterministic:
+/// the work counter is thread-local and the origin list is insertion-ordered.
+const FASE2_PRESUPUESTO: u64 = 250_000;
+
 /// Try to place `(w, h)` (inflated) on `page`. Candidates are ranked by the
-/// heuristic; in polygon mode, invalid (overlapping) placements are skipped.
+/// heuristic; in polygon mode every candidate is validated against the
+/// occupancy grid and, when no free rectangle fits, a second pass searches
+/// the concavities next to already-claimed pixels (interlock): frames may
+/// overlap, opaque pixels may not.
 fn try_place(
     page: &mut PageState,
     item: &PackItem,
@@ -1300,6 +1329,19 @@ fn try_place(
     guillotine: bool,
 ) -> Result<Option<Placement>> {
     let align = opts.align_grid.max(0);
+    let pad = opts.padding.max(0);
+    // Claim halo: the extruded border the blit will paint, clamped to
+    // padding exactly like `pixels::prepare_blit`. Items without mask or
+    // mesh claim their whole frame (the blit cannot write past it), so
+    // they need no halo.
+    let halo = if opts.polygon_mode && (item.mask.is_some() || item.mesh.is_some()) {
+        opts.extrude.max(0).min(pad)
+    } else {
+        0
+    };
+    if opts.polygon_mode && page.occupied.is_empty() {
+        page.occupied = vec![false; (page.width * page.height) as usize];
+    }
     // Collect all candidate placements, ranked by score. With *Align to grid*
     // the origin is snapped up first, so only free rects that still hold the
     // snapped frame become candidates.
@@ -1343,24 +1385,20 @@ fn try_place(
         }
         let frame = Rect::new(sx, sy, pw, ph);
 
-        // Polygon validation against the occupancy grid.
+        // Polygon validation against the occupancy grid: the claim
+        // (footprint + halo) must not touch any cell already claimed on
+        // this page, and must stay inside the canvas.
         if opts.polygon_mode {
-            if page.occupied.is_empty() {
-                page.occupied = vec![false; (page.width * page.height) as usize];
-            }
-            if let Some(mesh) = &item.mesh {
-                let footprint = footprints[rotated as usize].get_or_insert_with(|| {
-                    polygon_footprint(mesh, item.width, item.height, rotated, opts.padding)
-                });
-                if overlaps(
-                    &page.occupied,
-                    footprint.as_slice(),
-                    page.width,
-                    page.height,
-                    frame,
-                ) {
-                    continue;
-                }
+            let footprint = item_footprint(item, rotated, pad, &mut footprints);
+            if overlaps(
+                &page.occupied,
+                footprint.as_slice(),
+                page.width,
+                page.height,
+                frame,
+                halo,
+            ) {
+                continue;
             }
         }
 
@@ -1373,20 +1411,11 @@ fn try_place(
         prune_contained(&mut page.free_rects);
         page.placed.push(frame);
 
-        match &item.mesh {
-            Some(mesh) if opts.polygon_mode => {
-                let footprint = footprints[rotated as usize].get_or_insert_with(|| {
-                    polygon_footprint(mesh, item.width, item.height, rotated, opts.padding)
-                });
-                blit_footprint(
-                    &mut page.occupied,
-                    footprint.as_slice(),
-                    page.width,
-                    page.height,
-                    frame,
-                );
-            }
-            _ => mark_rect(&mut page.occupied, page.width, page.height, frame),
+        if opts.polygon_mode {
+            let footprint = item_footprint(item, rotated, pad, &mut footprints);
+            blit_footprint(page, footprint.as_slice(), frame, halo);
+        } else {
+            mark_rect(page, frame);
         }
 
         return Ok(Some(Placement {
@@ -1395,6 +1424,81 @@ fn try_place(
             rotated,
             page: page.index,
         }));
+    }
+
+    // Phase 2 — interlock. No free rectangle holds the frame; the grid now
+    // decides where the pixels fit, even inside another sprite's frame.
+    // Origins are the cells that became a candidate when the cell to their
+    // left or above them was claimed (the concavities: notches, holes,
+    // strips between sprites), so the search is bounded by the claimed
+    // boundary, not by the page area.
+    if opts.polygon_mode && !guillotine && !page.run_starts.is_empty() {
+        let t0 = trabajo_consumido();
+        let bp = opts.border_padding.max(0);
+        let mut f2: Vec<((i32, i32), bool, Score)> = Vec::new();
+        let mut i = 0;
+        'origenes: while i < page.run_starts.len() {
+            let (ox, oy) = page.run_starts[i];
+            i += 1;
+            gastar_trabajo(1);
+            if trabajo_consumido().saturating_sub(t0) >= FASE2_PRESUPUESTO {
+                break 'origenes;
+            }
+            // Filtro de entradas caducadas: el origen ya está reclamado o
+            // dejó de lindar con un píxel reclamado.
+            let idx = (oy * page.width + ox) as usize;
+            let linda_izq = ox > 0 && page.occupied[idx - 1];
+            let linda_arr = oy > 0 && page.occupied[idx - page.width as usize];
+            if page.occupied[idx] || !(linda_izq || linda_arr) {
+                continue;
+            }
+            for rotated in [false, true] {
+                if rotated && (!opts.allow_rotation || w == h) {
+                    continue;
+                }
+                let (pw, ph) = if rotated { (h, w) } else { (w, h) };
+                let (sx, sy) = snap_pos(ox, oy, align);
+                // El marco completo debe caber en el interior (borde y
+                // alineación incluidos); el hueco se valida después, en la
+                // rejilla, celda a celda.
+                if sx < bp || sy < bp || sx + pw > page.width - bp || sy + ph > page.height - bp {
+                    continue;
+                }
+                let room = Rect::new(sx, sy, page.width - bp - sx, page.height - bp - sy);
+                let score = score_placement(&room, pw, ph, opts, page);
+                f2.push(((sx, sy), rotated, score));
+            }
+        }
+        f2.sort_by_key(|(_, _, s)| *s);
+
+        for ((sx, sy), rotated, _) in f2 {
+            let (pw, ph) = if rotated { (h, w) } else { (w, h) };
+            let frame = Rect::new(sx, sy, pw, ph);
+            let footprint = item_footprint(item, rotated, pad, &mut footprints);
+            if overlaps(
+                &page.occupied,
+                footprint.as_slice(),
+                page.width,
+                page.height,
+                frame,
+                halo,
+            ) {
+                continue;
+            }
+            // Commit: the frame may overlap other frames (the grid already
+            // proved the pixels do not), so free rectangles are split by the
+            // frame as usual — conservative, never grants overlapping room.
+            split_rects(&mut page.free_rects, frame);
+            prune_contained(&mut page.free_rects);
+            page.placed.push(frame);
+            blit_footprint(page, footprint.as_slice(), frame, halo);
+            return Ok(Some(Placement {
+                id: item.id.clone(),
+                frame,
+                rotated,
+                page: page.index,
+            }));
+        }
     }
 
     Ok(None)
@@ -1559,9 +1663,69 @@ fn polygon_footprint(
     rasterize_polygon(&local, grid_w, grid_h)
 }
 
-/// True if any solid pixel of `footprint` (frame-local) lands on an occupied
-/// pixel (or outside the canvas) when placed at `frame`.
-fn overlaps(occupied: &[bool], footprint: &[bool], pw: i32, ph: i32, frame: Rect) -> bool {
+/// Exact footprint of `item` in frame-local coordinates (padding included),
+/// for one orientation. The alpha mask wins over the mesh — the RDP
+/// simplification can shave real pixels off the outline — and an item with
+/// neither claims its whole frame (the blit cannot write past it).
+fn build_footprint(item: &PackItem, rotated: bool, pad: i32) -> Vec<bool> {
+    let (gw, gh) = if rotated {
+        (item.height, item.width)
+    } else {
+        (item.width, item.height)
+    };
+    let grid_w = (gw + 2 * pad) as usize;
+    let grid_h = (gh + 2 * pad) as usize;
+    let mut grid = vec![false; grid_w * grid_h];
+    if let Some(mask) = &item.mask {
+        for y in 0..item.height {
+            for x in 0..item.width {
+                if !mask[(y * item.width + x) as usize] {
+                    continue;
+                }
+                // 90° CW matching `pixels::blit_prepared`: (x, y) -> (h-1-y, x).
+                let (lx, ly) = if rotated {
+                    (item.height - 1 - y, x)
+                } else {
+                    (x, y)
+                };
+                let idx = ((ly + pad) as usize) * grid_w + (lx + pad) as usize;
+                grid[idx] = true;
+            }
+        }
+        return grid;
+    }
+    if let Some(mesh) = &item.mesh {
+        return polygon_footprint(mesh, item.width, item.height, rotated, pad);
+    }
+    grid.fill(true);
+    grid
+}
+
+/// Cached footprint of `item` for one orientation (at most two per item:
+/// the candidate loop reuses them across phases).
+fn item_footprint<'a>(
+    item: &PackItem,
+    rotated: bool,
+    pad: i32,
+    cache: &'a mut [Option<Vec<bool>>; 2],
+) -> &'a Vec<bool> {
+    let slot = &mut cache[rotated as usize];
+    slot.get_or_insert_with(|| build_footprint(item, rotated, pad))
+}
+
+/// True if the claim of `footprint` (frame-local) placed at `frame` touches
+/// a cell already claimed, or if a core pixel would land outside the
+/// canvas. `halo` inflates every solid cell (the extrude border, Chebyshev);
+/// halo cells outside the canvas are skipped because [`blit_footprint`]
+/// never stores them either — check and marking stay symmetric.
+fn overlaps(
+    occupied: &[bool],
+    footprint: &[bool],
+    pw: i32,
+    ph: i32,
+    frame: Rect,
+    halo: i32,
+) -> bool {
     let fw = frame.width;
     let fh = frame.height;
     debug_assert_eq!(footprint.len(), (fw * fh) as usize);
@@ -1584,9 +1748,19 @@ fn overlaps(occupied: &[bool], footprint: &[bool], pw: i32, ph: i32, frame: Rect
                 solapa = true;
                 break 'barrido;
             }
-            if occupied[(ay * pw + ax) as usize] {
-                solapa = true;
-                break 'barrido;
+            for dy in -halo..=halo {
+                for dx in -halo..=halo {
+                    let cx = ax + dx;
+                    let cy = ay + dy;
+                    if cx < 0 || cy < 0 || cx >= pw || cy >= ph {
+                        continue;
+                    }
+                    visitadas += 1;
+                    if occupied[(cy * pw + cx) as usize] {
+                        solapa = true;
+                        break 'barrido;
+                    }
+                }
             }
         }
     }
@@ -1594,30 +1768,57 @@ fn overlaps(occupied: &[bool], footprint: &[bool], pw: i32, ph: i32, frame: Rect
     solapa
 }
 
-fn mark_rect(occupied: &mut [bool], pw: i32, ph: i32, r: Rect) {
-    if occupied.is_empty() {
-        return; // grid only allocated in polygon mode
-    }
-    for y in r.y..r.y + r.height {
-        for x in r.x..r.x + r.width {
-            if x >= 0 && y >= 0 && x < pw && y < ph {
-                occupied[(y * pw + x) as usize] = true;
+/// Store the claim of one solid cell (inflated by `halo`) and, whenever a
+/// cell flips to claimed, register the interlock origins it creates: the
+/// free cell to its right and the free cell below it. Entries are filtered
+/// against the live grid when the phase-2 search reads them, so a later
+/// neighbour claim invalidates them for free.
+fn claim_cells(page: &mut PageState, x: i32, y: i32, halo: i32) {
+    let (pw, ph) = (page.width, page.height);
+    for dy in -halo..=halo {
+        for dx in -halo..=halo {
+            let cx = x + dx;
+            let cy = y + dy;
+            if cx < 0 || cy < 0 || cx >= pw || cy >= ph {
+                continue;
+            }
+            let idx = (cy * pw + cx) as usize;
+            if page.occupied[idx] {
+                continue;
+            }
+            page.occupied[idx] = true;
+            if cx + 1 < pw && !page.occupied[idx + 1] {
+                page.run_starts.push((cx + 1, cy));
+            }
+            if cy + 1 < ph && !page.occupied[idx + pw as usize] {
+                page.run_starts.push((cx, cy + 1));
             }
         }
     }
 }
 
-fn blit_footprint(occupied: &mut [bool], footprint: &[bool], pw: i32, ph: i32, frame: Rect) {
+fn mark_rect(page: &mut PageState, r: Rect) {
+    if page.occupied.is_empty() {
+        return; // grid only allocated in polygon mode
+    }
+    for y in r.y..r.y + r.height {
+        for x in r.x..r.x + r.width {
+            claim_cells(page, x, y, 0);
+        }
+    }
+}
+
+fn blit_footprint(page: &mut PageState, footprint: &[bool], frame: Rect, halo: i32) {
+    if page.occupied.is_empty() {
+        return;
+    }
     let fw = frame.width;
     let fh = frame.height;
+    debug_assert_eq!(footprint.len(), (fw * fh) as usize);
     for y in 0..fh {
         for x in 0..fw {
             if footprint[(y * fw + x) as usize] {
-                let ax = frame.x + x;
-                let ay = frame.y + y;
-                if ax >= 0 && ay >= 0 && ax < pw && ay < ph {
-                    occupied[(ay * pw + ax) as usize] = true;
-                }
+                claim_cells(page, frame.x + x, frame.y + y, halo);
             }
         }
     }
@@ -1632,6 +1833,7 @@ mod tests {
             id: id.into(),
             width: w,
             height: h,
+            mask: None,
             mesh: None,
         }
     }
@@ -1843,12 +2045,14 @@ mod tests {
                     id: "l1".into(),
                     width: 4,
                     height: 4,
+                    mask: None,
                     mesh: Some(l_mesh.clone()),
                 },
                 PackItem {
                     id: "l2".into(),
                     width: 4,
                     height: 4,
+                    mask: None,
                     mesh: Some(l_mesh),
                 },
             ],
@@ -1857,6 +2061,191 @@ mod tests {
         .unwrap();
         assert_eq!(out.pages.len(), 1);
         assert_eq!(out.pages[0].placements.len(), 2);
+    }
+
+    // ------------------------------------------------------------------
+    // Interbloqueo poligonal: el grid de ocupación decide de verdad
+    // ------------------------------------------------------------------
+
+    /// Sprite L de 4×4 (columna izquierda completa + fila inferior ancha,
+    /// hueco de 2×2 arriba a la derecha) con máscara exacta, que es lo que
+    /// la producción construye a partir del alfa recortado.
+    fn l_item(id: &str) -> PackItem {
+        let mask = (0..16)
+            .map(|i| {
+                let (x, y) = (i % 4, i / 4);
+                x < 2 || y >= 2
+            })
+            .collect();
+        PackItem {
+            id: id.into(),
+            width: 4,
+            height: 4,
+            mask: Some(mask),
+            mesh: None,
+        }
+    }
+
+    /// L grande de 6×6 (columna izquierda + dos filas inferiores; hueco de
+    /// 4×4 arriba a la derecha).
+    fn big_l_item(id: &str) -> PackItem {
+        let mask = (0..36)
+            .map(|i| {
+                let (x, y) = (i % 6, i / 6);
+                x < 2 || y >= 4
+            })
+            .collect();
+        PackItem {
+            id: id.into(),
+            width: 6,
+            height: 6,
+            mask: Some(mask),
+            mesh: None,
+        }
+    }
+
+    /// Sprite sólido (máscara llena): reclama todos sus píxeles.
+    fn solid_item(id: &str, w: i32, h: i32) -> PackItem {
+        PackItem {
+            id: id.into(),
+            width: w,
+            height: h,
+            mask: Some(vec![true; (w * h) as usize]),
+            mesh: None,
+        }
+    }
+
+    /// Vuelve a construir la reclama de cada colocación en una rejilla
+    /// aparte y prueba que ninguna pareja comparte píxel: es el invariante
+    /// real que el blit asume (marcos solapables, píxeles opacos disjuntos).
+    fn assert_claims_disjoint(out: &PackOutput, items: &[PackItem], opts: &PackerOptions) {
+        let pad = opts.padding.max(0);
+        let halo = opts.extrude.max(0).min(pad);
+        for page in &out.pages {
+            let area = (page.width * page.height) as usize;
+            for (i, a) in page.placements.iter().enumerate() {
+                let ia = items.iter().find(|it| it.id == a.id).unwrap();
+                let fa = build_footprint(ia, a.rotated, pad);
+                let mut grid = vec![false; area];
+                let (fw, fh) = (a.frame.width, a.frame.height);
+                for y in 0..fh {
+                    for x in 0..fw {
+                        if !fa[(y * fw + x) as usize] {
+                            continue;
+                        }
+                        for dy in -halo..=halo {
+                            for dx in -halo..=halo {
+                                let cx = a.frame.x + x + dx;
+                                let cy = a.frame.y + y + dy;
+                                if cx >= 0 && cy >= 0 && cx < page.width && cy < page.height {
+                                    grid[(cy * page.width + cx) as usize] = true;
+                                }
+                            }
+                        }
+                    }
+                }
+                for b in page.placements.iter().skip(i + 1) {
+                    let ib = items.iter().find(|it| it.id == b.id).unwrap();
+                    let fb = build_footprint(ib, b.rotated, pad);
+                    assert!(
+                        !overlaps(&grid, &fb, page.width, page.height, b.frame, halo),
+                        "{} y {} comparten píxeles reclamados ({:?} vs {:?})",
+                        a.id,
+                        b.id,
+                        a.frame,
+                        b.frame
+                    );
+                }
+            }
+        }
+    }
+
+    /// El empaquetado por bounding boxes necesita dos páginas en un lienzo
+    /// de 6×6: el marco de la L de 4×4 tocaría el de la L de 6×6 y el
+    /// hueco no es un rectángulo libre para MaxRects. El grid de ocupación
+    /// deja que la L pequeña se interbloquee dentro del hueco de la grande
+    /// y el 2×2 nide en el resto: píxeles opacos disjuntos, una hoja.
+    #[test]
+    fn polygon_grid_interlocks_l_shapes_inside_their_bounding_boxes() {
+        let items = vec![big_l_item("big"), l_item("small"), solid_item("tiny", 2, 2)];
+        let opts = PackerOptions::new(PackingStrategy::Bssf, false, 6, 0, 0, true);
+        let out = pack(&items, &opts).unwrap();
+        assert_eq!(
+            out.pages.len(),
+            1,
+            "el interbloqueo debe evitar la segunda página"
+        );
+        assert_eq!(out.pages[0].placements.len(), 3);
+        let frame = |id: &str| {
+            out.pages[0]
+                .placements
+                .iter()
+                .find(|p| p.id == id)
+                .unwrap()
+                .frame
+        };
+        let (b, s) = (frame("big"), frame("small"));
+        assert!(
+            b.intersects(&s),
+            "las dos L deben interbloquearse: {b:?} vs {s:?}"
+        );
+        assert!(
+            b.x <= s.x
+                && b.y <= s.y
+                && s.x + s.width <= b.x + b.width
+                && s.y + s.height <= b.y + b.height,
+            "la L pequeña debe quedar dentro del marco de la grande: {b:?} vs {s:?}"
+        );
+        assert_claims_disjoint(&out, &items, &opts);
+    }
+
+    /// Dos sprites sólidos no pueden interbloquear (no hay píxeles
+    /// transparentes que ceder): el grid los rechaza y cada uno abre su
+    /// página, igual que el empaquetado por bounding boxes.
+    #[test]
+    fn polygon_grid_never_overlaps_solid_sprites() {
+        let items = vec![solid_item("a", 4, 4), solid_item("b", 4, 4)];
+        let opts = PackerOptions::new(PackingStrategy::Bssf, false, 6, 0, 0, true);
+        let out = pack(&items, &opts).unwrap();
+        assert_eq!(out.pages.len(), 2, "los sólidos no se interbloquean");
+        assert_claims_disjoint(&out, &items, &opts);
+    }
+
+    /// El halo de extrusión: la reclama de un píxel inflada por `halo`
+    /// (Chebyshev) es lo que separa el anillo que el blit pintará después.
+    /// Un candidato pegado al píxel reclamado se rechaza con halo 1 y se
+    /// acepta a un píxel de distancia.
+    #[test]
+    fn polygon_halo_rejects_neighbors_within_the_extrude_ring() {
+        let mut page = PageState::new(0, 8, 8, 0);
+        page.occupied = vec![false; 64];
+        claim_cells(&mut page, 2, 2, 1); // reclama (1..3)²
+        let fp = vec![true];
+        let at = |x: i32, y: i32| Rect::new(x, y, 1, 1);
+        assert!(
+            overlaps(&page.occupied, &fp, 8, 8, at(3, 3), 1),
+            "el halo toca al píxel vecino"
+        );
+        assert!(
+            overlaps(&page.occupied, &fp, 8, 8, at(1, 1), 1),
+            "el halo también infla hacia arriba a la izquierda"
+        );
+        assert!(
+            overlaps(&page.occupied, &fp, 8, 8, at(4, 3), 1),
+            "el halo alcanza al candidato libre que linda con lo reclamado"
+        );
+        assert!(
+            !overlaps(&page.occupied, &fp, 8, 8, at(5, 5), 1),
+            "un píxel de margen deja el anillo de extrusión libre"
+        );
+        assert!(
+            !overlaps(&page.occupied, &fp, 8, 8, at(0, 7), 1),
+            "el halo recortado contra la esquina del lienzo no rechaza"
+        );
+        // Y la marca con halo debe ocupar exactamente la ventana: la celda
+        // (3, 3) queda reclamada, la (4, 3) no.
+        assert!(page.occupied[(3 * 8 + 3) as usize]);
+        assert!(!page.occupied[(3 * 8 + 4) as usize]);
     }
 
     // ------------------------------------------------------------------
@@ -2419,6 +2808,7 @@ mod presupuesto_m3_tests {
                 id: format!("s{i}"),
                 width: w + i % 7,
                 height: h + i % 5,
+                mask: None,
                 mesh: None,
             })
             .collect()
@@ -2500,6 +2890,7 @@ mod presupuesto_m3_tests {
                 id: format!("p{i}"),
                 width: 160,
                 height: 120,
+                mask: None,
                 mesh: Some(mesh.clone()),
             })
             .collect();

@@ -102,15 +102,25 @@ pub fn prepare_blit(layout: BlitLayout, sprite: TrimmedSprite<'_>) -> PreparedBl
 
 /// Phase 2 of [`blit_sprite`]: copy a [`prepare_blit`]ed sprite into `page`.
 ///
-/// This is the only phase that touches the canvas, so it is the only one that
-/// needs exclusive access to it — frames are disjoint by construction, which
-/// is what makes the copy safe to serialise while phase 1 runs in parallel.
+/// This is the only phase that touches the canvas, so it is the only one
+/// that needs exclusive access to it. The copy is order-independent even
+/// when polygon interlock lets frames overlap: opaque source pixels never
+/// share a destination (the packing grid claims them), and transparent
+/// source pixels skip the write, so no sprite can erase another while
+/// phase 1 runs in parallel. On the disjoint paths (frames that do not
+/// touch) the skip is a no-op: those destinations are still zeroed
+/// background.
 pub fn blit_prepared(page: &mut [u8], page_w: i32, page_h: i32, prep: &PreparedBlit) {
     let (ew, eh, ox, oy, rotated) = (prep.ew, prep.eh, prep.ox, prep.oy, prep.rotated);
     let ext = &prep.buf;
     for ey in 0..eh {
         for ex in 0..ew {
             let src = ((ey * ew + ex) * 4) as usize;
+            // Transparent source (extruded border clamps included): leave
+            // whatever is already at the destination alone.
+            if ext[src + 3] == 0 {
+                continue;
+            }
             let (ax, ay) = if rotated {
                 // Rotate 90° CW: (ex, ey) -> (eh - 1 - ey, ex)
                 (ox + (eh - 1 - ey), oy + ex)
@@ -481,6 +491,46 @@ mod tests {
         assert_eq!(at(3, 1), vec![10, 20, 30, 255]); // extruded top
         assert_eq!(at(3, 3), vec![10, 20, 30, 255]); // actual sprite pixel
         assert_eq!(at(0, 0), vec![0, 0, 0, 0]); // outside frame stays empty
+    }
+
+    /// El blit de dos sprites interbloqueados (marcos solapados, píxeles
+    /// disjuntos) puede pintar primero el opaco y luego la zona
+    /// transparente del otro: la copia incondicional borraba el píxel ajeno
+    /// con ceros y el resultado dependía del orden. El salto por alfa
+    /// elimina esa dependencia.
+    #[test]
+    fn transparent_source_does_not_erase_another_sprite() {
+        let mut page = vec![0u8; 2 * 2 * 4];
+        let b = PreparedBlit {
+            buf: vec![200, 100, 50, 255],
+            ew: 1,
+            eh: 1,
+            ox: 0,
+            oy: 0,
+            rotated: false,
+        };
+        blit_prepared(&mut page, 2, 2, &b);
+        // A: transparente en (0,0) —la zona compartida de dos marcos
+        // interbloqueados— y opaco en (1,0).
+        let a = PreparedBlit {
+            buf: vec![0, 0, 0, 0, 90, 90, 90, 255, 0, 0, 0, 0, 0, 0, 0, 0],
+            ew: 2,
+            eh: 2,
+            ox: 0,
+            oy: 0,
+            rotated: false,
+        };
+        blit_prepared(&mut page, 2, 2, &a);
+        assert_eq!(
+            &page[0..4],
+            &[200, 100, 50, 255],
+            "el píxel transparente de A no debe pisar el píxel de B"
+        );
+        assert_eq!(
+            &page[4..8],
+            &[90, 90, 90, 255],
+            "los píxeles opacos de A sí se pintan"
+        );
     }
 
     #[test]
