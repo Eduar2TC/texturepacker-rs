@@ -235,45 +235,40 @@ jobs:
           body: |
             ## Novedades
 
-            - **Interfaz rediseñada**: una acción, una sede —la barra de
-              menús y la de herramientas dejan de repetirse—, tira de estado
-              única con el progreso de la corrida entera, lienzo centrado con
-              retícula y zoom en %, dock de Ajustes con buscador y secciones
-              plegables, tamaño de letra ajustable y menú de app con «Acerca
-              de», versión y `Ctrl+Q`.
-            - **Deshacer y cambios sin guardar**: pila de deshacer con
-              `Ctrl+Z` (reset, posiciones y sprites), aviso de los cambios
-              sin guardar antes de cerrar y confirmación del
-              restablecimiento de la configuración.
-            - **Proyectos del original**: los `.tps` (QSettings XML) se leen
-              y se escriben, y arrastrar un proyecto sobre la ventana lo
-              abre.
-            - **Sprites**: editor de pivots visual con valores en píxeles,
-              detección automática de barras sólidas para los bordes
-              9-patch, fondo de color libre en la vista de animación y el
-              menú «Publicar» con «Forzar publicación» al estilo del
-              original.
-            - **Accesibilidad**: objetivo de 24 px en todos los controles,
-              diálogo de atajos completo, el Log se copia al portapapeles de
-              un clic, foco visible del árbol, ayuda en los destinos
-              pequeños y un guardián de glifos que cubre el inglés y la
-              monoespaciada.
-            - **Idioma hasta el último rincón**: i18n en su propio crate
-              compartido con la CLI, mensajes del CLI en el idioma del
-              sistema (`LC_ALL=C` habla inglés), plurales según el recuento,
-              motivos de E/S traducidos y **documentación en inglés con
-              versión en español** —el Tutorial abre la doc en tu idioma—.
-            - **Motor**: cifrado TPENC2 (AES-256-GCM con Argon2id y sal
-              aleatoria por fichero), DXT3/BC2 con alfa explícito, hojas que
-              se reutilizan antes de abrir otra, codificación en paralelo sin
-              clonar lienzos y una búsqueda de tamaño que se corta por
-              trabajo, no por reloj.
-            - **Fiabilidad**: la vista previa no se queda en «Actualizando…»
-              cuando el repack nace a mitad de frame, la suite corre en
-              Windows y macOS, los tests de rendimiento miden el mínimo de
-              los frames —sin flasear con la carga— y decenas de
-              correcciones de UI (progreso, foco, atajos, watcher, árbol y
-              registro).
+            - **Supercompresión Basis completa**: `.basis` ya sale en ETC1S
+              **o UASTC4x4** —el modo que usan los pipelines modernos de
+              Unity y Unreal— con la calidad 0-100 del proyecto, y los
+              formatos `ktx2-basis` y `ktx2-basis-uastc` envuelven ese
+              payload en el contenedor KTX 2.0 con el mismo layout que el
+              codificador de referencia de Basis Universal. Los `.ktx2` con
+              payload Basis ya se leen y se transcodifican al cargar, y el
+              aviso de «transcoder necesario» desaparece.
+            - **ASTC de todos los tamaños cuadrados del spec**: 4x4, 5x5,
+              6x6, 8x8, 10x10 y 12x12 en la GUI y en la CLI
+              (`--format astc-6x6`…), todos en `.astc` y con la calidad
+              ASTC común.
+            - **Mallas poligonales sin agujeros**: un donut deja el centro
+              al aire y las islas dentro de un hueco se mallan como sólidos
+              propios —marching squares cruza bien las esquinas ambiguas, los
+              contornos se corrigen medio píxel para cubrir exactamente el
+              sprite y cada agujero se puentea por la mínima distancia
+              mutuamente visible antes de earcut—, con el área exacta de
+              exterior menos agujeros.
+            - **PVRTC HQ**: las calidades 6 y 7 del encoder PVRTC1 4bpp
+              ejecutan barridos iterativos al estilo PVRTexTool —uno y dos,
+              con parada temprana— re-ajustando los extremos de cada bloque
+              contra el error real decodificado (interpolación toroidal
+              incluida); la calidad nunca empeora y en un gradiente 32×32 la
+              q7 recorta un 16-26 % del error.
+            - **Avisos que significan algo**: la configuración de fábrica
+              deja de encender el aviso de dithering al abrir el programa —
+              el default era inerte sobre RGBA8888—, y un test nuevo hace
+              fallar cualquier default que vuelva a producir un aviso.
+            - **Fiabilidad**: la suite de la app deja de flakear (el sondeo
+              de vigilia ya no vacía el atlas ficticio de las pruebas),
+              tp-core compila limpio sin la feature `gpu-formats`, y las
+              capturas del README se regeneran con la interfaz rediseñada en
+              los seis combinaciones de idioma y tema.
 
             ## Descargas
 
