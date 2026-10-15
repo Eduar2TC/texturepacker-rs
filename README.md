@@ -221,7 +221,7 @@ and in encryption.
 | Auto-downscaling (@2x/@1x)                   | ✅     | `scale_variants` (e.g. `1.0, 0.5`) with scaled metadata |
 | Marching Squares + ambiguity                 | ✅     | Resolved with 8-direction connectivity analysis |
 | Ramer–Douglas–Peucker                        | ✅     | Tolerance in pixels |
-| Earcut triangulation                         | ✅     | Outer contours; holes detected (`is_hole` contour) |
+| Earcut triangulation                         | ✅     | Solid contours with every hole bridged into the mesh, so a donut stays open (`is_hole` contour) |
 | Algorithm → Polygon                          | ✅     | *Trim mode Polygon* switches the algorithm to *Polygon* automatically (meshes + per-contour packing) |
 | MaxRects BSSF / BAF / BLSF                   | ✅     | Selectable |
 | Guillotine                                   | ✅     | Selectable |
@@ -421,8 +421,6 @@ decrypted; that format is simply no longer written.
   reference) and are validated against `texture2ddecoder`
   (individual/differential/T) and in-house decoders of the ETCPACK layout
   (H/planar). For maximum quality use ASTC.
-- The polygon mesh does not fill holes (the hole is transparent in the
-  atlas, so it produces no visible artifacts).
 - The BMP/GIF/ICO/TIFF/DDS input formats inherit the limitations of the
   `image` crate's decoders; animated GIFs are read as their first frame.
   XBM/XPM are read as a mask (set bit = opaque black). `.ktx2` files with a

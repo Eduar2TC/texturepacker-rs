@@ -219,7 +219,7 @@ aceptarse por diferencia de unidades y de cifrado.
 | Auto-downscaling (@2x/@1x)                     | ✅     | `scale_variants` (p. ej. `1.0, 0.5`) con metadatos escalados |
 | Marching Squares + ambigüedad                  | ✅     | Resuelta con análisis de conectividad 8-dir |
 | Ramer–Douglas–Peucker                          | ✅     | Tolerancia en píxeles |
-| Triangulación Earcut                           | ✅     | Contornos exteriores; agujeros detectados (contorno `is_hole`) |
+| Triangulación Earcut                           | ✅     | Contornos sólidos con cada agujero puenteado en la malla, así un donut queda abierto (contorno `is_hole`) |
 | Algorithm → Polygon                            | ✅     | El *Trim mode Polygon* cambia el algoritmo a *Polygon* automáticamente (mallas + empaquetado por contorno) |
 | MaxRects BSSF / BAF / BLSF                     | ✅     | Seleccionable |
 | Guillotine                                     | ✅     | Seleccionable |
@@ -417,8 +417,6 @@ descifrando; sólo se deja de escribir.
   oficial de Ericsson) y se validan contra `texture2ddecoder`
   (individual/differential/T) y decoders propios del layout ETCPACK (H/planar).
   Para máxima calidad usa ASTC.
-- La malla poligonal no rellena los agujeros (el agujero es transparente en el
-  atlas, por lo que no produce artefactos visibles).
 - Los formatos de entrada BMP/GIF/ICO/TIFF/DDS heredan las limitaciones de los
   decodificadores de la crate `image`; los GIF animados se leen como su primer
   fotograma. XBM/XPM se leen como máscara (bit encendido = negro opaco). Los

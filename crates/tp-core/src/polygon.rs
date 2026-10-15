@@ -3,9 +3,9 @@
 //! - Marching Squares contour extraction over the alpha mask
 //!   (ambiguity resolved by 8-connected component analysis)
 //! - Ramer–Douglas–Peucker simplification
-//! - Ear-clipping triangulation (simple polygons; hole contours are kept for
-//!   visualization but not meshed — the hole region is transparent in the
-//!   atlas, so a filled mesh over it renders nothing visible)
+//! - Ear-clipping triangulation; hole contours are bridged into their solid
+//!   ring (the bridge vertices appear twice) so a donut mesh leaves the hole
+//!   open instead of painting it with transparent texels
 //!
 //! Mesh vertices live in *trimmed sprite local space* (y-down, origin at the
 //! top-left of the trimmed region, coordinates in `[0, w] x [0, h]`). UVs are
@@ -26,7 +26,8 @@ pub fn build_polygons(alpha: &[u8], w: i32, h: i32, tolerance: f32) -> Option<Po
 
     // Pad the mask with a one-pixel empty border so marching squares traces
     // the *outer* boundary of the sprite (otherwise interior cells are all
-    // solid and produce no segments). Coordinates are translated back by -1.
+    // solid and produce no segments). Coordinates are translated back by the
+    // one-pixel padding, plus the half-pixel corner-sample correction below.
     let pw = w + 2;
     let ph = h + 2;
     let mut padded = vec![0u8; (pw * ph) as usize];
@@ -36,11 +37,15 @@ pub fn build_polygons(alpha: &[u8], w: i32, h: i32, tolerance: f32) -> Option<Po
     }
 
     let loops = marching_squares(&padded, pw, ph);
+    // Marching squares samples alpha at the pixel corners, so its isolines
+    // land half a pixel *before* the true pixel edges: the +0.5 correction
+    // puts the contours on the real boundaries (a sprite then meshes exactly
+    // `[0, w] x [0, h]`, and its UVs sample texel centers).
     let loops: Vec<Vec<Point2D>> = loops
         .into_iter()
         .map(|l| {
             l.into_iter()
-                .map(|p| Point2D::new(p.x - 1.0, p.y - 1.0))
+                .map(|p| Point2D::new(p.x - 0.5, p.y - 0.5))
                 .collect()
         })
         .collect();
@@ -57,31 +62,46 @@ pub fn build_polygons(alpha: &[u8], w: i32, h: i32, tolerance: f32) -> Option<Po
         return None;
     }
 
-    // Classify loops into outers and holes via containment nesting.
-    let nesting = classify_nesting(&loops);
+    // Classify loops into solids (even nesting) and holes (odd), keeping each
+    // hole with the solid that contains it directly.
+    let (nesting, parent) = classify_nesting(&loops);
 
     let mut contours: Vec<Contour> = Vec::new();
     let mut vertices: Vec<Point2D> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
 
-    let outer_indices: Vec<usize> = (0..loops.len()).filter(|&i| nesting[i] == 0).collect();
+    let solids: Vec<usize> = (0..loops.len()).filter(|&i| nesting[i] % 2 == 0).collect();
 
-    for &outer in &outer_indices {
+    for &outer in &solids {
         contours.push(Contour {
             points: loops[outer].clone(),
             is_hole: false,
         });
-        let tri = earcut(&loops[outer]);
+        let holes: Vec<&[Point2D]> = (0..loops.len())
+            .filter(|&i| nesting[i] % 2 == 1 && parent[i] == Some(outer))
+            .map(|i| loops[i].as_slice())
+            .collect();
+        // El anillo puenteado lleva los vértices de los agujeros, así que la
+        // malla los deja abiertos: cada vértice puente aparece dos veces.
+        let mut ring = bridge_holes(&loops[outer], &holes);
+        let mut tri = earcut(&ring);
+        if tri.is_empty() && !holes.is_empty() {
+            // Un clip degenerado sobre el anillo puenteado no debe dejar al
+            // sólido sin malla: se rellena el agujero (como antes de los
+            // puentes) y el contorno sigue enseñando el agujero.
+            ring = loops[outer].clone();
+            tri = earcut(&ring);
+        }
         if tri.is_empty() {
             continue;
         }
         let base = vertices.len() as u32;
-        vertices.extend_from_slice(&loops[outer]);
+        vertices.extend_from_slice(&ring);
         indices.extend(tri.into_iter().map(|t| t + base));
     }
 
     for (i, loop_pts) in loops.iter().enumerate() {
-        if nesting[i] > 0 {
+        if nesting[i] % 2 == 1 {
             contours.push(Contour {
                 points: loop_pts.clone(),
                 is_hole: true,
@@ -108,7 +128,8 @@ pub fn build_polygons(alpha: &[u8], w: i32, h: i32, tolerance: f32) -> Option<Po
 pub struct Polygons {
     /// Contours (outer + holes) after simplification.
     pub contours: Vec<Contour>,
-    /// Triangulated mesh (outer-contour vertices only).
+    /// Triangulated mesh: every solid ring with its holes bridged in, so the
+    /// mesh leaves holes open (each bridge vertex appears twice).
     pub mesh: TriangleMesh,
 }
 
@@ -165,16 +186,23 @@ pub fn rasterize_polygon(vertices: &[Point2D], w: usize, h: usize) -> Vec<bool> 
         // las coordenadas (fichero corrupto) revienta el sort.
         xs.sort_by(|a, b| a.total_cmp(b));
         for pair in xs.chunks_exact(2) {
-            let (x0, x1) = (pair[0].ceil(), pair[1].floor());
-            // Span NaN o entero fuera del lienzo (izquierda o derecha): no
-            // pinta nada. Antes solo se recortaba la derecha, así que un
-            // span a la izquierda acababa pintando el píxel 0.
-            if !x0.is_finite() || !x1.is_finite() || x1 < 0.0 || x0 > w as f32 - 1.0 {
+            let (x0, x1) = (pair[0], pair[1]);
+            // Span NaN o fuera del lienzo (izquierda o derecha): no pinta
+            // nada. Antes solo se recortaba la derecha, así que un span a la
+            // izquierda acababa pintando el píxel 0.
+            if !x0.is_finite() || !x1.is_finite() || x1 <= 0.0 || x0 >= w as f32 {
                 continue;
             }
-            let x0 = x0.max(0.0) as usize;
-            let x1 = x1.min(w as f32 - 1.0) as usize;
-            for x in x0..=x1 {
+            // Un píxel se pinta si la intersección con el span tiene medida
+            // positiva: x recorre [floor(x0), ceil(x1) - 1]. El antiguo
+            // ceil(x0)..=floor(x1) pintaba de más con extremos enteros (el
+            // span [0, 1] mojaba también el píxel 1) y de menos con
+            // extremos fraccionarios (el span [0.5, 2.5] se comía el 0).
+            let from = x0.floor().max(0.0) as usize;
+            let to = (x1.ceil() as usize)
+                .saturating_sub(1)
+                .min(w.saturating_sub(1));
+            for x in from..=to {
                 grid[y * w + x] = true;
             }
         }
@@ -243,11 +271,15 @@ fn marching_squares(alpha: &[u8], w: i32, h: i32) -> Vec<Vec<Point2D>> {
                 6 => segments.push((mt, mb)),  // TR+BR
                 12 => segments.push((ml, mr)), // TL+TR
                 9 => segments.push((mt, mb)),  // TL+BL
-                // three solid corners (single empty corner)
-                7 => segments.push((mb, ml)),  // empty TL
-                11 => segments.push((mr, mb)), // empty TR
-                13 => segments.push((mt, mr)), // empty BR
-                14 => segments.push((ml, mt)), // empty BL
+                // Three solid corners (single empty corner): the isoline
+                // wraps the empty corner, so it crosses exactly the two
+                // edges that touch it — an edge lies on the isoline iff its
+                // two corners differ, and the other two edges join solid
+                // corners (same edges as the mirrored single-solid case).
+                7 => segments.push((ml, mt)),  // empty TL
+                11 => segments.push((mt, mr)), // empty TR
+                13 => segments.push((mr, mb)), // empty BR
+                14 => segments.push((mb, ml)), // empty BL
                 // ambiguous diagonals (resolved via connectivity)
                 5 => {
                     // TL + BR
@@ -391,9 +423,11 @@ fn signed_area(points: &[Point2D]) -> f32 {
     area * 0.5
 }
 
-/// For each loop, return its nesting depth (0 = outermost). Depth-0 loops are
-/// sprite silhouettes; depth 1 are holes; depth 2 are islands inside holes.
-fn classify_nesting(loops: &[Vec<Point2D>]) -> Vec<usize> {
+/// For each loop, return its nesting depth (0 = outermost) and its immediate
+/// container (`None` at depth 0). Even depths are solid regions (silhouettes
+/// and islands); odd depths are holes punched into the loop that contains
+/// them.
+fn classify_nesting(loops: &[Vec<Point2D>]) -> (Vec<usize>, Vec<Option<usize>>) {
     let n = loops.len();
     let mut contains = vec![vec![false; n]; n];
     for i in 0..n {
@@ -418,7 +452,17 @@ fn classify_nesting(loops: &[Vec<Point2D>]) -> Vec<usize> {
             break;
         }
     }
-    depth
+    // The immediate container of j is its deepest known container: exactly the
+    // loop one level up in the nesting that `depth` just measured.
+    let parent = (0..n)
+        .map(|j| {
+            (0..n)
+                .filter(|&i| contains[i][j])
+                .max_by_key(|&i| depth[i])
+                .filter(|&i| depth[i] + 1 == depth[j])
+        })
+        .collect();
+    (depth, parent)
 }
 
 fn loop_contains(outer: &[Point2D], inner: &[Point2D]) -> bool {
@@ -470,7 +514,9 @@ fn point_in_polygon(p: Point2D, poly: &[Point2D]) -> bool {
 // Ear clipping triangulation (simple polygons)
 // ---------------------------------------------------------------------------
 
-/// Triangulate a simple polygon (no holes) into triangle indices.
+/// Triangulate a simple polygon into triangle indices. Holes must already be
+/// spliced in by [`bridge_holes`]; the duplicated bridge vertices are
+/// absorbed by the collinear cleanup below.
 pub fn earcut(points: &[Point2D]) -> Vec<u32> {
     if points.len() < 3 {
         return Vec::new();
@@ -615,6 +661,111 @@ fn point_in_triangle(p: Point2D, a: Point2D, b: Point2D, c: Point2D) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Hole bridging
+// ---------------------------------------------------------------------------
+
+/// Splice every hole into the outer ring through the shortest mutually
+/// visible bridge.
+///
+/// Outer and holes are normalized to opposite orientations first, so the
+/// combined ring has area `outer - holes` and the plain ear clipper
+/// triangulates the donut without any hole-aware logic. Each bridge vertex
+/// shows up twice in the result (the classic weakly-simple splice).
+fn bridge_holes(outer: &[Point2D], holes: &[&[Point2D]]) -> Vec<Point2D> {
+    let mut ring = oriented(outer, true);
+    let holes: Vec<Vec<Point2D>> = holes.iter().map(|h| oriented(h, false)).collect();
+    for hole in &holes {
+        if hole.len() < 3 {
+            continue;
+        }
+        ring = splice_hole(&ring, hole, &holes);
+    }
+    ring
+}
+
+/// Copy of `pts` with positive area when `positive`, negative otherwise
+/// (the ear clipper normalizes again, so only the sign pair matters).
+fn oriented(pts: &[Point2D], positive: bool) -> Vec<Point2D> {
+    if (signed_area(pts) > 0.0) != positive {
+        pts.iter().rev().copied().collect()
+    } else {
+        pts.to_vec()
+    }
+}
+
+/// Insert `hole` (negative area) into `ring` (positive area) across the
+/// shortest segment that crosses no edge of the geometry. When every
+/// candidate bridge is blocked the ring is returned unchanged.
+fn splice_hole(ring: &[Point2D], hole: &[Point2D], loops: &[Vec<Point2D>]) -> Vec<Point2D> {
+    let obstacles: Vec<&[Point2D]> = std::iter::once(ring)
+        .chain(loops.iter().map(Vec::as_slice))
+        .collect();
+    let Some((p, m)) = shortest_visible_bridge(ring, hole, &obstacles) else {
+        return ring.to_vec();
+    };
+    // O0..Op, puente a Hm, la vuelta al agujero desde m+1 hasta m, puente de
+    // vuelta a Op y el resto del anillo: A y B quedan duplicados.
+    let mut out = Vec::with_capacity(ring.len() + hole.len() + 2);
+    out.extend_from_slice(&ring[..=p]);
+    out.push(hole[m]);
+    out.extend_from_slice(&hole[m + 1..]);
+    out.extend_from_slice(&hole[..=m]);
+    out.push(ring[p]);
+    out.extend_from_slice(&ring[p + 1..]);
+    out
+}
+
+/// Indices `(ring, hole)` of the shortest segment joining both loops that
+/// crosses no edge of the geometry; `None` when every candidate is blocked.
+fn shortest_visible_bridge(
+    ring: &[Point2D],
+    hole: &[Point2D],
+    obstacles: &[&[Point2D]],
+) -> Option<(usize, usize)> {
+    let mut best: Option<(f32, usize, usize)> = None;
+    for (m, &b) in hole.iter().enumerate() {
+        for (p, &a) in ring.iter().enumerate() {
+            let dx = a.x - b.x;
+            let dy = a.y - b.y;
+            let d2 = dx * dx + dy * dy;
+            if d2 <= 1e-12 {
+                continue; // misma posición: no hay puente que construir
+            }
+            if best.is_some_and(|(best_d2, _, _)| d2 >= best_d2) {
+                continue;
+            }
+            if crosses_nothing(b, a, obstacles) {
+                best = Some((d2, p, m));
+            }
+        }
+    }
+    best.map(|(_, p, m)| (p, m))
+}
+
+/// True when the segment runs from `b` to `a` without properly crossing any
+/// edge of any loop. Both endpoints sit on the geometry, so the edges they
+/// touch never count as crossings — that is how the bridge attaches.
+fn crosses_nothing(b: Point2D, a: Point2D, loops: &[&[Point2D]]) -> bool {
+    loops.iter().all(|pts| {
+        let n = pts.len();
+        (0..n).all(|i| !segments_properly_cross(b, a, pts[i], pts[(i + 1) % n]))
+    })
+}
+
+/// Strict crossing: the segments share interior points. Touching at an
+/// endpoint or running along a common line is not a crossing (holes from
+/// marching squares never touch the outer loop, so a bridge can only graze
+/// an unrelated vertex, and the ear clipper's collinear cleanup absorbs it).
+fn segments_properly_cross(p1: Point2D, p2: Point2D, q1: Point2D, q2: Point2D) -> bool {
+    let d1 = cross(q1, q2, p1);
+    let d2 = cross(q1, q2, p2);
+    let d3 = cross(p1, p2, q1);
+    let d4 = cross(p1, p2, q2);
+    ((d1 > 1e-6 && d2 < -1e-6) || (d1 < -1e-6 && d2 > 1e-6))
+        && ((d3 > 1e-6 && d4 < -1e-6) || (d3 < -1e-6 && d4 > 1e-6))
+}
+
+// ---------------------------------------------------------------------------
 // Union-Find
 // ---------------------------------------------------------------------------
 
@@ -658,6 +809,26 @@ mod tests {
             }
         }
         out
+    }
+
+    /// Rasterize every triangle of the mesh into one coverage grid: the union
+    /// is what a consumer painting the mesh would fill.
+    fn rasterize_mesh(vertices: &[Point2D], indices: &[u32], w: i32, h: i32) -> Vec<bool> {
+        let mut grid = vec![false; (w * h) as usize];
+        for t in indices.chunks_exact(3) {
+            let tri = [
+                vertices[t[0] as usize],
+                vertices[t[1] as usize],
+                vertices[t[2] as usize],
+            ];
+            for (cell, &on) in rasterize_polygon(&tri, w as usize, h as usize)
+                .iter()
+                .enumerate()
+            {
+                grid[cell] |= on;
+            }
+        }
+        grid
     }
 
     #[test]
@@ -729,6 +900,70 @@ mod tests {
         assert!(!poly.mesh.indices.is_empty());
         let n = poly.mesh.vertices.len() as u32;
         assert!(poly.mesh.indices.iter().all(|&i| i < n));
+
+        // La malla debe pintar el anillo y dejar el agujero al aire: antes
+        // del puente el exterior relleno cubría también el centro.
+        let mask = rasterize_mesh(&poly.mesh.vertices, &poly.mesh.indices, 8, 8);
+        let at = |x: i32, y: i32| mask[(y * 8 + x) as usize];
+        assert!(at(0, 3), "borde izquierdo");
+        assert!(at(3, 0), "borde superior");
+        assert!(!at(3, 3), "el centro del donut debe quedar sin cubrir");
+        assert!(!at(4, 4), "el centro del donut debe quedar sin cubrir");
+    }
+
+    /// La suma de áreas de los triángulos es exactamente exterior menos
+    /// agujeros: ni el relleno viejo (de más) ni un agujero comido (de
+    /// menos) pasan esta invariant.
+    #[test]
+    fn donut_mesh_area_is_outer_minus_hole() {
+        let a = alpha_from_shape(9, 9, |x, y| x == 0 || y == 0 || x == 8 || y == 8);
+        let poly = build_polygons(&a, 9, 9, 0.01).unwrap();
+        let mut expected = 0.0f32;
+        for c in &poly.contours {
+            let area = signed_area(&c.points).abs();
+            expected = if c.is_hole {
+                expected - area
+            } else {
+                expected + area
+            };
+        }
+        let mut got = 0.0f32;
+        for t in poly.mesh.indices.chunks_exact(3) {
+            let tri = [
+                poly.mesh.vertices[t[0] as usize],
+                poly.mesh.vertices[t[1] as usize],
+                poly.mesh.vertices[t[2] as usize],
+            ];
+            got += signed_area(&tri).abs();
+        }
+        assert!(expected > 0.0, "el contorno debe tener área");
+        assert!(
+            (got - expected).abs() <= 0.01 * expected,
+            "malla {got} frente a contornos {expected}"
+        );
+    }
+
+    /// Una isla dentro de un agujero es sólida por paridad (profundidad par)
+    /// y malla con el anillo que la rodea: dos sólidos y un agujero.
+    #[test]
+    fn island_inside_a_hole_is_meshed_as_a_solid() {
+        let a = alpha_from_shape(8, 8, |x, y| {
+            let borde = x == 0 || y == 0 || x == 7 || y == 7;
+            let isla = (3..=4).contains(&x) && (3..=4).contains(&y);
+            borde || isla
+        });
+        let poly = build_polygons(&a, 8, 8, 0.01).unwrap();
+        let solids = poly.contours.iter().filter(|c| !c.is_hole).count();
+        let holes = poly.contours.iter().filter(|c| c.is_hole).count();
+        assert_eq!(solids, 2, "anillo e isla");
+        assert_eq!(holes, 1, "el hueco que rodea la isla");
+
+        let mask = rasterize_mesh(&poly.mesh.vertices, &poly.mesh.indices, 8, 8);
+        let at = |x: i32, y: i32| mask[(y * 8 + x) as usize];
+        assert!(at(0, 3), "el anillo sí se malla");
+        assert!(at(3, 3), "la isla sí se malla");
+        assert!(!at(1, 1), "el hueco entre anillo e isla queda al aire");
+        assert!(!at(6, 6), "el hueco entre anillo e isla queda al aire");
     }
 
     #[test]
