@@ -133,7 +133,7 @@ fn help_text() -> String {
          \x20                        rgba4444 | rgb565 | pvrtc2bpp-rgba | pvrtc4bpp-rgba | pvrtc2bpp-rgb | pvrtc4bpp-rgb\n\
          \x20                        etc1 | etc2 | etc2-rgb | dxt1 | dxt3 | dxt5 | astc-4x4 | astc-8x8 | astc-12x12\n\
          \x20                        (alias: --opt)\n\
-         \x20 --pvr-quality N       Calidad PVRTC 0-7 (defecto 3)\n\
+         \x20 --pvr-quality N       Calidad PVRTC 0-7; 6-7 = HQ iterativo (defecto 3)\n\
          \x20 --etc1-quality N      Calidad ETC1 0-100 (defecto 70)\n\
          \x20 --etc2-quality N      Calidad ETC2 0-100 (defecto 70)\n\
          \x20 --astc-quality N      Calidad ASTC 0-4: 0=fastest .. 4=exhaustive (defecto 2)\n\

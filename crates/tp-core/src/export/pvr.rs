@@ -7,7 +7,8 @@ use crate::pvrtc;
 /// PVRTC1 2/4bpp (según el pixel format `PVRTC*`) in a PVR v3 container
 /// (`.pvr`). El pixel format también decide si se descarta el alfa y el
 /// código `pixelFormat` de la cabecera; la calidad (`--pvr-quality`, 0-7)
-/// controla el refinamiento de extremos.
+/// controla el refinamiento de extremos y, en 6-7, añade barridos HQ
+/// iterativos contra el error real decodificado.
 pub(super) fn encode_pvrtc_pvr(
     rgba: &[u8],
     width: usize,

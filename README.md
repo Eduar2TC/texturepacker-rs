@@ -255,7 +255,7 @@ and in encryption.
 | PNG / WebP                                   | ✅     | PNG and WebP lossless |
 | ASTC 4x4-12x12 (square blocks)           | ✅*    | *With `--features gpu-formats` (official ARM astcenc); `.astc` container |
 | ETC2 RGBA (EAC + ETC2)                       | ✅     | In-house encoder validated against an independent decoder |
-| PVRTC 4BPP                                   | ✅     | In-house PVRTC1 4bpp encoder (block-fit + modulation search) in `.pvr` v3, validated against `texture2ddecoder` |
+| PVRTC 4BPP                                   | ✅     | In-house PVRTC1 4bpp encoder (block-fit + modulation search + iterative HQ sweeps at quality 6-7) in `.pvr` v3, validated against `texture2ddecoder` |
 | KTX2 (ktx2)                                  | ✅     | Uncompressed 2.0 container: header + index of one level, DFD (RGBSDA, BT.709 linear) and KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 for RGBA8/RGB8/R8 |
 | Basis (.basis)                               | ✅*    | *With `--features gpu-formats`; ETC1S or UASTC4x4 via `basis-universal` (crate `tp-basis`) and 0-100 quality (`--basis-quality`) |
 | KTX2 Basis (ktx2-basis)                      | ✅*    | *With `--features gpu-formats`; the ETC1S Basis payload wrapped in a KTX 2.0 container (vkFormat 0 + DFD ETC1S, BasisLZ supercompression); same 0-100 quality (`--basis-quality`) |
@@ -411,8 +411,10 @@ decrypted; that format is simply no longer written.
 ## Known limitations
 
 - **PVRTC 4BPP**: in-house PVRTC1 4bpp encoder (`.pvr` v3). *fast/medium*
-  quality (2-color fit per block + exhaustive modulation search per texel),
-  not iterative like PVRTexTool HQ. Requires an atlas with power-of-two
+  quality by default (2-color fit per block + exhaustive modulation search
+  per texel); quality 6-7 add PVRTexTool-style iterative HQ sweeps that
+  re-step every block's endpoints against the true decoded neighbourhood
+  error. Requires an atlas with power-of-two
   dimensions; a non-power-of-two `scale_variant` (e.g. 0.75) returns a clear
   error. PVRTC interpolates toroidally: the atlas edges mix color with the
   opposite edge, so leave some margin around edge sprites if you see

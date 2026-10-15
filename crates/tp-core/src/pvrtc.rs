@@ -26,10 +26,13 @@
 //!
 //! Encoder strategy: an independent per-block two-colour fit (mean plus the
 //! dominant RGB axis), followed by an exhaustive per-texel modulation search
-//! against the exact interpolation the decoder performs. Not iterative like
-//! PVRTexTool HQ, but valid and good enough for game assets. Alpha uses the
-//! format's coarse 3-bit translucent endpoints (blocks with alpha ≥ 250 use
-//! the opaque encoding, which reproduces alpha 255 exactly).
+//! against the exact interpolation the decoder performs. Quality 6 and 7 add
+//! PVRTexTool-style HQ sweeps: every block's endpoints are greedily
+//! re-stepped against the *true* decoded error (toroidal neighbourhood
+//! blending included) with the modulation re-chosen, so the decoded error
+//! can only go down. Alpha uses the format's coarse 3-bit translucent
+//! endpoints (blocks with alpha ≥ 250 use the opaque encoding, which
+//! reproduces alpha 255 exactly).
 //!
 //! PVRTC1 requires power-of-two dimensions with at least two words per side,
 //! so textures smaller than 8×8 or non-power-of-two sizes return an error.
@@ -559,6 +562,73 @@ const INTERP_X8: [[i32; 3]; 8] = [
     [0, 5, 3],
 ];
 
+/// Decoded 8-bit colour at texel (tx, ty) of block (bx, by), obtained by
+/// bilinearly interpolating the 3×3 colour neighbourhood (toroidal wrap)
+/// exactly as the PVRTC decoder does, including the UNORM conversions
+/// (4bpp RGB: `(c >> 1) + (c >> 6)`; alpha: `c + (c >> 4)`; 2bpp scales
+/// the same result by its 32-wide weight sums). `ov` overrides one block by
+/// index — the HQ search scores candidate endpoints this way without copying
+/// the grid (a block that appears twice in the stencil of a tiny grid is
+/// overridden at every entry, just as the decoder would read it).
+fn interp_at(
+    grid: &Plane,
+    bx: usize,
+    by: usize,
+    tx: usize,
+    ty: usize,
+    use_b: bool,
+    ov: Option<(usize, &BlockColours)>,
+) -> [u8; 4] {
+    let (nb_x, nb_y, wide) = (grid.nb_x, grid.nb_y, grid.wide);
+    let row_weights = INTERP[ty];
+    let col_weights = if wide { INTERP_X8[tx] } else { INTERP[tx] };
+    let mut clr = [0i32; 4];
+    for (dy, &wy) in row_weights.iter().enumerate() {
+        let yb = (by + nb_y - 1 + dy) % nb_y;
+        for (dx, &wx) in col_weights.iter().enumerate() {
+            let xb = (bx + nb_x - 1 + dx) % nb_x;
+            let idx = yb * nb_x + xb;
+            let c = match ov {
+                Some((i, cd)) if i == idx => {
+                    if use_b {
+                        cd.b
+                    } else {
+                        cd.a
+                    }
+                }
+                _ => {
+                    if use_b {
+                        grid.blocks[idx].b
+                    } else {
+                        grid.blocks[idx].a
+                    }
+                }
+            };
+            let w = wx * wy;
+            clr[0] += c.r as i32 * w;
+            clr[1] += c.g as i32 * w;
+            clr[2] += c.b as i32 * w;
+            clr[3] += c.a as i32 * w;
+        }
+    }
+    if wide {
+        [
+            (clr[0] >> 2) + (clr[0] >> 7),
+            (clr[1] >> 2) + (clr[1] >> 7),
+            (clr[2] >> 2) + (clr[2] >> 7),
+            (clr[3] >> 1) + (clr[3] >> 5),
+        ]
+    } else {
+        [
+            (clr[0] >> 1) + (clr[0] >> 6),
+            (clr[1] >> 1) + (clr[1] >> 6),
+            (clr[2] >> 1) + (clr[2] >> 6),
+            (clr[3]) + (clr[3] >> 4),
+        ]
+    }
+    .map(|v: i32| v as u8)
+}
+
 /// One colour plane (A or B) of the block grid.
 struct Plane<'a> {
     blocks: &'a [BlockColours],
@@ -569,48 +639,10 @@ struct Plane<'a> {
 }
 
 impl Plane<'_> {
-    /// Decoded 8-bit colour at texel (tx, ty) of block (bx, by), obtained by
-    /// bilinearly interpolating the 3×3 colour neighbourhood (toroidal wrap)
-    /// exactly as the PVRTC decoder does, including the UNORM conversions
-    /// (4bpp RGB: `(c >> 1) + (c >> 6)`; alpha: `c + (c >> 4)`; 2bpp scales
-    /// the same result by its 32-wide weight sums).
+    /// Decoded 8-bit colour at texel (tx, ty) of block (bx, by) — see
+    /// [`interp_at`], which this wraps for the plain, no-override case.
     fn interpolate(&self, bx: usize, by: usize, tx: usize, ty: usize, use_b: bool) -> [u8; 4] {
-        let (blocks, nb_x, nb_y) = (self.blocks, self.nb_x, self.nb_y);
-        let row_weights = INTERP[ty];
-        let col_weights = if self.wide { INTERP_X8[tx] } else { INTERP[tx] };
-        let mut clr = [0i32; 4];
-        for (dy, &wy) in row_weights.iter().enumerate() {
-            let yb = (by + nb_y - 1 + dy) % nb_y;
-            for (dx, &wx) in col_weights.iter().enumerate() {
-                let xb = (bx + nb_x - 1 + dx) % nb_x;
-                let c = if use_b {
-                    blocks[yb * nb_x + xb].b
-                } else {
-                    blocks[yb * nb_x + xb].a
-                };
-                let w = wx * wy;
-                clr[0] += c.r as i32 * w;
-                clr[1] += c.g as i32 * w;
-                clr[2] += c.b as i32 * w;
-                clr[3] += c.a as i32 * w;
-            }
-        }
-        if self.wide {
-            [
-                (clr[0] >> 2) + (clr[0] >> 7),
-                (clr[1] >> 2) + (clr[1] >> 7),
-                (clr[2] >> 2) + (clr[2] >> 7),
-                (clr[3] >> 1) + (clr[3] >> 5),
-            ]
-        } else {
-            [
-                (clr[0] >> 1) + (clr[0] >> 6),
-                (clr[1] >> 1) + (clr[1] >> 6),
-                (clr[2] >> 1) + (clr[2] >> 6),
-                (clr[3]) + (clr[3] >> 4),
-            ]
-        }
-        .map(|v: i32| v as u8)
+        interp_at(self, bx, by, tx, ty, use_b, None)
     }
 }
 
@@ -663,6 +695,19 @@ fn choose_mod_binary(src: &[u8; 4], a8: &[u8; 4], b8: &[u8; 4]) -> u8 {
     best
 }
 
+/// Squared error of the decoded blend at modulation weight `w` against `src`
+/// (the quantity [`choose_mod`] minimises over its weights).
+#[inline]
+fn blend_err(src: &[u8; 4], a8: &[u8; 4], b8: &[u8; 4], w: i32) -> i64 {
+    let mut err = 0i64;
+    for ch in 0..4 {
+        let v = ((a8[ch] as i32 * (8 - w) + b8[ch] as i32 * w) >> 3) as i64;
+        let d = src[ch] as i64 - v;
+        err += d * d;
+    }
+    err
+}
+
 // ---------------------------------------------------------------------------
 // Morton ordering
 // ---------------------------------------------------------------------------
@@ -684,40 +729,229 @@ fn morton(x: usize, y: usize, min_dim: usize) -> usize {
 }
 
 // ---------------------------------------------------------------------------
+// Iterative HQ refinement (quality 6-7)
+// ---------------------------------------------------------------------------
+
+/// Texels of the block at region slot `d` (0 = −1, 1 = 0, 2 = +1) whose
+/// interpolation actually reads the candidate's column/row, for the `INTERP`
+/// kernel (both axes at 4bpp, Y at 2bpp): only these change when the
+/// candidate endpoints change, so the HQ error scores exactly them — the
+/// rest of the 3×3 region is a candidate-independent constant.
+const AFFECTED_T: [&[usize]; 3] = [&[3], &[0, 1, 2, 3], &[0, 1]];
+
+/// Same, for the 2bpp X axis (`INTERP_X8`).
+const AFFECTED_T_X8: [&[usize]; 3] = [&[5, 6, 7], &[0, 1, 2, 3, 4, 5, 6, 7], &[0, 1, 2, 3, 4]];
+
+/// Inner greedy rounds per block per HQ sweep: ±1 canonical endpoint steps
+/// that keep lowering the true error (mirrors `refine`, but on the decoded
+/// metric instead of the block-local proxy).
+const HQ_ROUNDS: usize = 3;
+
+/// HQ state: the block grid plus the per-block modulation words, with the
+/// source image for scoring and the per-slot rewrite masks for applying an
+/// accepted step back onto the modulation words.
+struct Hq<'a> {
+    rgba: &'a [u8],
+    width: usize,
+    nb_x: usize,
+    nb_y: usize,
+    bw: usize,
+    wide: bool,
+    blocks: Vec<BlockColours>,
+    mods: Vec<u32>,
+    /// Bit positions each region slot's evaluation rewrites (`dy * 3 + dx`).
+    masks: [u32; 9],
+}
+
+impl Hq<'_> {
+    fn new(
+        rgba: &[u8],
+        width: usize,
+        nb_x: usize,
+        nb_y: usize,
+        bw: usize,
+        wide: bool,
+        state: (Vec<BlockColours>, Vec<u32>),
+    ) -> Hq<'_> {
+        let (blocks, mods) = state;
+        let tx_lists: [&[usize]; 3] = if wide { AFFECTED_T_X8 } else { AFFECTED_T };
+        let mut masks = [0u32; 9];
+        for dy in 0..3 {
+            for dx in 0..3 {
+                let mut m = 0u32;
+                for &ty in AFFECTED_T[dy] {
+                    for &tx in tx_lists[dx] {
+                        let pos = ty * bw + tx;
+                        m |= if wide { 1 << pos } else { 3 << (2 * pos) };
+                    }
+                }
+                masks[dy * 3 + dx] = m;
+            }
+        }
+        Hq {
+            rgba,
+            width,
+            nb_x,
+            nb_y,
+            bw,
+            wide,
+            blocks,
+            mods,
+            masks,
+        }
+    }
+
+    /// True decoded error (SSE against the source) of every texel whose
+    /// interpolation depends on block (bx, by) if that block held `cand`,
+    /// with each such texel's modulation re-chosen optimally; returns it
+    /// alongside the nine region modulation words (base word with the
+    /// rewritten texel positions updated).
+    fn eval(&self, bx: usize, by: usize, cand: &BlockColours) -> (i64, [u32; 9]) {
+        let tidx = by * self.nb_x + bx;
+        let grid = Plane {
+            blocks: &self.blocks,
+            nb_x: self.nb_x,
+            nb_y: self.nb_y,
+            wide: self.wide,
+        };
+        let tx_lists: [&[usize]; 3] = if self.wide { AFFECTED_T_X8 } else { AFFECTED_T };
+        let mut words = [0u32; 9];
+        let mut err = 0i64;
+        for dy in 0..3 {
+            let yb = (by + self.nb_y - 1 + dy) % self.nb_y;
+            for dx in 0..3 {
+                let xb = (bx + self.nb_x - 1 + dx) % self.nb_x;
+                let mut word = self.mods[yb * self.nb_x + xb];
+                for &ty in AFFECTED_T[dy] {
+                    let y = yb * 4 + ty;
+                    for &tx in tx_lists[dx] {
+                        let x = xb * self.bw + tx;
+                        let a8 = interp_at(&grid, xb, yb, tx, ty, false, Some((tidx, cand)));
+                        let b8 = interp_at(&grid, xb, yb, tx, ty, true, Some((tidx, cand)));
+                        let s = (y * self.width + x) * 4;
+                        let src = [
+                            self.rgba[s],
+                            self.rgba[s + 1],
+                            self.rgba[s + 2],
+                            self.rgba[s + 3],
+                        ];
+                        let bits = if self.wide {
+                            choose_mod_binary(&src, &a8, &b8)
+                        } else {
+                            choose_mod(&src, &a8, &b8)
+                        };
+                        let pos = ty * self.bw + tx;
+                        let shift = if self.wide { pos } else { 2 * pos };
+                        let mask = if self.wide {
+                            1u32 << shift
+                        } else {
+                            3u32 << shift
+                        };
+                        word = (word & !mask) | ((bits as u32) << shift);
+                        // MOD_WEIGHTS está ordenado por bits: 0,1,2,3 → 0,3,5,8.
+                        let w = if self.wide {
+                            if bits == 0 {
+                                0
+                            } else {
+                                8
+                            }
+                        } else {
+                            MOD_WEIGHTS[bits as usize].0
+                        };
+                        err += blend_err(&src, &a8, &b8, w);
+                    }
+                }
+                words[dy * 3 + dx] = word;
+            }
+        }
+        (err, words)
+    }
+
+    /// One block-coordinate step: greedily re-step (bx, by)'s endpoints
+    /// (±1 canonical steps, [`HQ_ROUNDS`] rounds) against the true
+    /// neighbourhood error; on any strict improvement the block and the
+    /// region's modulation words are updated. Returns whether it improved.
+    fn improve(&mut self, bx: usize, by: usize) -> bool {
+        let tidx = by * self.nb_x + bx;
+        let start = self.blocks[tidx];
+        let (start_err, mut best_words) = self.eval(bx, by, &start);
+        let mut best = start;
+        let mut best_err = start_err;
+        for _ in 0..HQ_ROUNDS {
+            let mut stepped = false;
+            for is_a in [true, false] {
+                for ch in 0..4 {
+                    for dir in [-1, 1] {
+                        if let Some(next) = step_endpoint(&best, is_a, ch, dir) {
+                            let (e, words) = self.eval(bx, by, &next);
+                            if e < best_err {
+                                best_err = e;
+                                best = next;
+                                best_words = words;
+                                stepped = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if !stepped {
+                break;
+            }
+        }
+        if best_err >= start_err {
+            return false;
+        }
+        self.blocks[tidx] = best;
+        for dy in 0..3 {
+            let yb = (by + self.nb_y - 1 + dy) % self.nb_y;
+            for dx in 0..3 {
+                let xb = (bx + self.nb_x - 1 + dx) % self.nb_x;
+                let s = dy * 3 + dx;
+                let m = self.masks[s];
+                let idx = yb * self.nb_x + xb;
+                self.mods[idx] = (self.mods[idx] & !m) | (best_words[s] & m);
+            }
+        }
+        true
+    }
+}
+
+/// PVRTexTool-style HQ sweeps: repeated full passes of [`Hq::improve`] until
+/// a pass makes no progress (at most `sweeps`). Every accepted step strictly
+/// lowers the true decoded error, so the sweeps can never make the image
+/// worse than the state they start from.
+fn iterate_hq(hq: &mut Hq, sweeps: usize) {
+    for _ in 0..sweeps {
+        let mut progressed = false;
+        for by in 0..hq.nb_y {
+            for bx in 0..hq.nb_x {
+                if hq.improve(bx, by) {
+                    progressed = true;
+                }
+            }
+        }
+        if !progressed {
+            break;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Public encoder
 // ---------------------------------------------------------------------------
 
-/// Encode an RGBA8 image (row-major, 4 bytes per pixel) as raw PVRTC1 data in
-/// reflected Morton word order: `width * height / 2` bytes at 4bpp and
-/// `width * height / 4` at 2bpp.
-///
-/// `is_2bpp` selects 8×4 blocks with one modulation bit per texel instead of
-/// 4×4 blocks with two; `quality` (0-7) widens the endpoint search (0 keeps
-/// the baseline fit).
-///
-/// Requires `width` and `height` to be powers of two ≥ 8 (PVRTC1 constraint).
-pub fn encode_pvrtc(
+/// Passes 1-2: an independent [`fit_block`] per block, then the per-texel
+/// modulation search against the decoder's true interpolation of those
+/// endpoints. Returns the endpoint grid and the per-block modulation words.
+fn fit_state(
     rgba: &[u8],
     width: usize,
-    height: usize,
+    nb_x: usize,
+    nb_y: usize,
+    bw: usize,
     is_2bpp: bool,
     quality: u8,
-) -> Result<Vec<u8>> {
-    if width < 8 || height < 8 || !width.is_power_of_two() || !height.is_power_of_two() {
-        return Err(crate::error::TpError::Other(format!(
-            "PVRTC requiere dimensiones potencia de dos ≥ 8x8 \
-             (se obtuvo {width}x{height})"
-        )));
-    }
-    if rgba.len() != width * height * 4 {
-        return Err("PVRTC: buffer RGBA de tamaño incorrecto".into());
-    }
-
-    let bw = if is_2bpp { 8 } else { 4 };
-    let nb_x = width / bw;
-    let nb_y = height / 4;
-    let min_dim = nb_x.min(nb_y);
-
+) -> (Vec<BlockColours>, Vec<u32>) {
     // Pass 1: independent per-block colour fits.
     let mut blocks = vec![BlockColours::default(); nb_x * nb_y];
     let mut px = vec![0u8; bw * 4 * 4];
@@ -736,14 +970,14 @@ pub fn encode_pvrtc(
         }
     }
 
-    // Pass 2: per-texel modulation search, then assemble the 64-bit words.
+    // Pass 2: per-texel modulation search against the true interpolation.
     let plane = Plane {
         blocks: &blocks,
         nb_x,
         nb_y,
         wide: is_2bpp,
     };
-    let mut out = vec![0u8; nb_x * nb_y * 8];
+    let mut mods = vec![0u32; nb_x * nb_y];
     for by in 0..nb_y {
         for bx in 0..nb_x {
             let mut mod_bits: u32 = 0;
@@ -768,6 +1002,62 @@ pub fn encode_pvrtc(
                     mod_bits |= bits << shift;
                 }
             }
+            mods[by * nb_x + bx] = mod_bits;
+        }
+    }
+    (blocks, mods)
+}
+
+/// Encode an RGBA8 image (row-major, 4 bytes per pixel) as raw PVRTC1 data in
+/// reflected Morton word order: `width * height / 2` bytes at 4bpp and
+/// `width * height / 4` at 2bpp.
+///
+/// `is_2bpp` selects 8×4 blocks with one modulation bit per texel instead of
+/// 4×4 blocks with two; `quality` (0-7) widens the endpoint search (0 keeps
+/// the baseline fit) and quality 6-7 add iterative HQ sweeps that re-step
+/// every block's endpoints against the true decoded neighbourhood error.
+///
+/// Requires `width` and `height` to be powers of two ≥ 8 (PVRTC1 constraint).
+pub fn encode_pvrtc(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    is_2bpp: bool,
+    quality: u8,
+) -> Result<Vec<u8>> {
+    if width < 8 || height < 8 || !width.is_power_of_two() || !height.is_power_of_two() {
+        return Err(crate::error::TpError::Other(format!(
+            "PVRTC requiere dimensiones potencia de dos ≥ 8x8 \
+             (se obtuvo {width}x{height})"
+        )));
+    }
+    if rgba.len() != width * height * 4 {
+        return Err("PVRTC: buffer RGBA de tamaño incorrecto".into());
+    }
+
+    let bw = if is_2bpp { 8 } else { 4 };
+    let nb_x = width / bw;
+    let nb_y = height / 4;
+    let min_dim = nb_x.min(nb_y);
+
+    // Passes 1-2: block fits + modulation search.
+    let (mut blocks, mut mods) = fit_state(rgba, width, nb_x, nb_y, bw, is_2bpp, quality);
+
+    // Pass 3 (quality 6-7): iterative HQ sweeps — greedy endpoint re-stepping
+    // against the true, already-neighbourhood-blended decoded error. Quality
+    // 6 runs one sweep, quality 7 two (each stops early when converged).
+    if quality >= 6 {
+        let mut hq = Hq::new(rgba, width, nb_x, nb_y, bw, is_2bpp, (blocks, mods));
+        iterate_hq(&mut hq, (quality - 5) as usize);
+        blocks = hq.blocks;
+        mods = hq.mods;
+    }
+
+    // Pass 4: assemble the 64-bit words in reflected Morton order.
+    let mut out = vec![0u8; nb_x * nb_y * 8];
+    for by in 0..nb_y {
+        for bx in 0..nb_x {
+            let mod_bits = mods[by * nb_x + bx];
             let blk = blocks[by * nb_x + bx];
             let ca = pack_word(blk.a, blk.a_opaque, true);
             let cb = pack_word(blk.b, blk.b_opaque, false);
@@ -1049,6 +1339,118 @@ mod tests {
                 }
                 prev = Some(prev.map_or(err, |p: f64| p.max(err)));
             }
+        }
+    }
+
+    /// Decoded SSE of a whole state: the source versus the true interpolation
+    /// of `blocks` blended with `mods` — the exact metric the HQ sweeps use.
+    fn state_error(
+        rgba: &[u8],
+        width: usize,
+        bw: usize,
+        wide: bool,
+        blocks: &[BlockColours],
+        mods: &[u32],
+    ) -> i64 {
+        let nb_x = width / bw;
+        let nb_y = (rgba.len() / 4 / width) / 4;
+        let grid = Plane {
+            blocks,
+            nb_x,
+            nb_y,
+            wide,
+        };
+        let mut total = 0i64;
+        for by in 0..nb_y {
+            for bx in 0..nb_x {
+                for ty in 0..4 {
+                    let y = by * 4 + ty;
+                    for tx in 0..bw {
+                        let x = bx * bw + tx;
+                        let a8 = interp_at(&grid, bx, by, tx, ty, false, None);
+                        let b8 = interp_at(&grid, bx, by, tx, ty, true, None);
+                        let pos = ty * bw + tx;
+                        let shift = if wide { pos } else { 2 * pos };
+                        let bits =
+                            ((mods[by * nb_x + bx] >> shift) & if wide { 1 } else { 3 }) as u8;
+                        // MOD_WEIGHTS está ordenado por bits: 0,1,2,3 → 0,3,5,8.
+                        let w = if wide {
+                            if bits == 0 {
+                                0
+                            } else {
+                                8
+                            }
+                        } else {
+                            MOD_WEIGHTS[bits as usize].0
+                        };
+                        let s = (y * width + x) * 4;
+                        let src = [rgba[s], rgba[s + 1], rgba[s + 2], rgba[s + 3]];
+                        total += blend_err(&src, &a8, &b8, w);
+                    }
+                }
+            }
+        }
+        total
+    }
+
+    #[test]
+    fn hq_sweeps_strictly_lower_the_decoded_error() {
+        let (w, h) = (32, 32);
+        let src = gradient(w, h);
+        for is2 in [false, true] {
+            let bw = if is2 { 8 } else { 4 };
+            let (blocks, mods) = fit_state(&src, w, w / bw, h / 4, bw, is2, 3);
+            let before = state_error(&src, w, bw, is2, &blocks, &mods);
+            let mut hq = Hq::new(&src, w, w / bw, h / 4, bw, is2, (blocks, mods));
+            iterate_hq(&mut hq, 3);
+            let after = state_error(&src, w, bw, is2, &hq.blocks, &hq.mods);
+            assert!(
+                after <= before,
+                "2bpp={is2}: los barridos HQ nunca empeoran: {before} -> {after}"
+            );
+            assert!(
+                after < before,
+                "2bpp={is2}: los barridos HQ deben bajar el error decodificado: \
+                 {before} -> {after}"
+            );
+        }
+    }
+
+    #[test]
+    fn hq_quality_lowers_the_decoded_error_end_to_end() {
+        let (w, h) = (32, 32);
+        let src = gradient(w, h);
+        for is2 in [false, true] {
+            let mut errs = [0.0f64; 3];
+            for (i, q) in [5u8, 6, 7].into_iter().enumerate() {
+                let enc = encode_pvrtc(&src, w, h, is2, q).unwrap();
+                let dec = if is2 {
+                    decode2(&enc, w, h)
+                } else {
+                    decode(&enc, w, h)
+                };
+                errs[i] = mean_err(&src, &dec, 4);
+            }
+            assert!(
+                errs[1] < errs[0],
+                "2bpp={is2}: la calidad 6 (HQ) debe superar a la 5 (no iterativa): \
+                 {:.3} vs {:.3}",
+                errs[1],
+                errs[0]
+            );
+            assert!(
+                errs[2] < errs[0] * 0.9,
+                "2bpp={is2}: la calidad 7 debe superar claramente a la no iterativa: \
+                 {:.3} vs {:.3}",
+                errs[2],
+                errs[0]
+            );
+            assert!(
+                errs[2] < errs[1],
+                "2bpp={is2}: la calidad 7 debe superar a la 6: {:.3} vs {:.3}",
+                errs[2],
+                errs[1]
+            );
         }
     }
 }

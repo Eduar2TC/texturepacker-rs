@@ -253,7 +253,7 @@ aceptarse por diferencia de unidades y de cifrado.
 | PNG / WebP                                     | ✅     | PNG y WebP lossless |
 | ASTC 4x4-12x12 (bloques cuadrados)       | ✅*    | *Con `--features gpu-formats` (ARM astcenc oficial); contenedor `.astc` |
 | ETC2 RGBA (EAC + ETC2)                         | ✅     | Encoder propio validado contra decodificador independiente |
-| PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación) en `.pvr` v3, validado contra `texture2ddecoder` |
+| PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación + barridos HQ iterativos en calidad 6-7) en `.pvr` v3, validado contra `texture2ddecoder` |
 | KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
 | Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S o UASTC4x4 vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
 | KTX2 Basis (ktx2-basis)                        | ✅*    | *Con `--features gpu-formats`; payload Basis ETC1S envuelto en un contenedor KTX 2.0 (vkFormat 0 + DFD ETC1S, supercompresión BasisLZ); misma calidad 0-100 (`--basis-quality`) |
@@ -407,8 +407,10 @@ descifrando; sólo se deja de escribir.
 ## Limitaciones conocidas
 
 - **PVRTC 4BPP**: encoder propio PVRTC1 4bpp (`.pvr` v3). Calidad tipo
-  *fast/medium* (ajuste de 2 colores por bloque + búsqueda exhaustiva de
-  modulación por texel), no iterativa como PVRTexTool HQ. Requiere atlas con
+  *fast/medium* por defecto (ajuste de 2 colores por bloque + búsqueda
+  exhaustiva de modulación por texel); la calidad 6-7 añade barridos HQ
+  iterativos al estilo PVRTexTool que re-ajustan los extremos de cada
+  bloque contra el error real del vecindario decodificado. Requiere atlas con
   dimensiones potencia de dos; un `scale_variant` no-potencia-de-2 (p. ej.
   0.75) devuelve un error claro. PVRTC interpola toroidalmente: los bordes
   del atlas mezclan color con el borde opuesto, así que deja margen alrededor

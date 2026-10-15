@@ -11,7 +11,8 @@ pub struct EncodeOptions {
     pub webp_quality: u16,
     pub pixel_format: PixelFormat,
     /// Calidad PVRTC (`--pvr-quality`), 0-7, controla el refinamiento de los
-    /// extremos de cada bloque.
+    /// extremos de cada bloque; 6-7 añaden barridos HQ iterativos contra el
+    /// error real decodificado.
     pub pvr_quality: u8,
     /// Calidad ETC1 (`--etc1-quality`), 0-100, controla el esfuerzo del
     /// buscador de estructuras y candidatos.
