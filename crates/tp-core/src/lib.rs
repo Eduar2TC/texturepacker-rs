@@ -20,6 +20,8 @@
 //!
 //! Entry point: [`pipeline::run`].
 
+#[cfg(feature = "gpu-formats")]
+mod basis_ktx2;
 pub mod config;
 pub mod dataformats;
 pub mod dxt;

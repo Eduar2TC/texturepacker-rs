@@ -678,8 +678,10 @@ fn astc_block_of(internal: u32) -> DecodeResult<(usize, usize)> {
 const KTX2_IDENTIFIER: [u8; 12] = KTX1_IDENTIFIER;
 
 /// Reads a `.ktx` **v2** file. Uncompressed `vkFormat` payloads (RGBA8,
-/// BGRA8, RGB8, R8) with optional zlib supercompression are supported; Basis
-/// Universal payloads need a transcoder and are reported as such.
+/// BGRA8, RGB8, R8) with optional zlib supercompression are supported, and
+/// so are Basis Universal payloads (ETC1S/UASTC): the container is rewritten
+/// as `.basis` in memory and transcoded with the same crate that writes it
+/// (behind the `gpu-formats` feature).
 fn decode_ktx2(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
     if bytes.len() < 80 || bytes[..12] != KTX2_IDENTIFIER {
         return Err("KTX2: cabecera inválida".to_string());
@@ -701,12 +703,19 @@ fn decode_ktx2(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
     if width == 0 || height == 0 {
         return Err("KTX2 con ancho o alto 0".to_string());
     }
-    if supercompression == 1 {
-        return Err(
-            "KTX2: payload con Basis Universal (se necesita un transcoder); \
-             exporta el sprite sin comprimir o en KTX v1"
-                .to_string(),
-        );
+    // Payload Basis: supercompresión BasisLZ o un DFD (vkFormat 0) que
+    // describa ETC1S/UASTC. Se reconstruye el `.basis` dentro del
+    // contenedor y se transcodifica con la misma crate que lo escribe.
+    if supercompression == 1 || vk_format == 0 {
+        #[cfg(feature = "gpu-formats")]
+        {
+            let basis = crate::basis_ktx2::ktx2_to_basis(bytes)?;
+            return decode_basis(&basis);
+        }
+        #[cfg(not(feature = "gpu-formats"))]
+        {
+            return Err("Basis requiere la feature \"gpu-formats\"".to_string());
+        }
     }
     if supercompression > 3 {
         return Err(format!(
@@ -761,13 +770,7 @@ fn decode_ktx2(bytes: &[u8]) -> DecodeResult<(i32, i32, Vec<u8>)> {
                 out.extend_from_slice(&[*v, *v, *v, 255]);
             }
         }
-        0 => {
-            return Err(
-                "KTX2: vkFormat = 0 (formato descrito por el DFD, p. ej. Basis); \
-                 no se puede leer aquí"
-                    .to_string(),
-            )
-        }
+        0 => return Err("KTX2: vkFormat = 0 sin payload Basis legible".to_string()),
         _ => {
             return Err(format!(
                 "KTX2: vkFormat no soportado ({vk_format}); solo se leen RGBA8/BGRA8/RGB8/R8"
@@ -1202,6 +1205,18 @@ mod tests {
     #[test]
     fn basis_input_requires_the_gpu_formats_feature() {
         let path = temp("basis.basis", b"sB\x00\x01basiseeeeeee");
+        let err = load_image_rgba(&path).unwrap_err().to_string();
+        assert!(err.contains("gpu-formats"), "{err}");
+        let _ = std::fs::remove_file(path);
+
+        // Un KTX2 con payload Basis también pide la feature.
+        let mut ktx2 = Vec::with_capacity(80);
+        ktx2.extend_from_slice(&KTX2_IDENTIFIER);
+        ktx2.extend_from_slice(&[0u8; 68]);
+        ktx2[20..24].copy_from_slice(&4u32.to_le_bytes()); // width
+        ktx2[24..28].copy_from_slice(&4u32.to_le_bytes()); // height
+        ktx2[44..48].copy_from_slice(&1u32.to_le_bytes()); // BasisLZ
+        let path = temp("ktx2_basis.ktx2", &ktx2);
         let err = load_image_rgba(&path).unwrap_err().to_string();
         assert!(err.contains("gpu-formats"), "{err}");
         let _ = std::fs::remove_file(path);
@@ -1680,6 +1695,28 @@ static char * test[] = {
         let _ = std::fs::remove_file(path);
     }
 
+    #[cfg(feature = "gpu-formats")]
+    #[test]
+    fn ktx2_basis_payloads_are_transcoded_back() {
+        let rgba = quadrants();
+        for basis in [
+            tp_basis::encode_etc1s(&rgba, 8, 8, 80).unwrap(),
+            tp_basis::encode_uastc(&rgba, 8, 8, 50).unwrap(),
+        ] {
+            let ktx2 = crate::basis_ktx2::basis_to_ktx2(&basis).unwrap();
+            let path = temp("ktx2_basis.ktx2", &ktx2);
+            let (w, h, out) = load_image_rgba(&path).unwrap();
+            assert_eq!((w, h), (8, 8));
+            assert_eq!(out.len(), rgba.len());
+            // Los dos contenedores dan exactamente la misma imagen.
+            let path_basis = temp("direct.basis", &basis);
+            let (_, _, direct) = load_image_rgba(&path_basis).unwrap();
+            assert_eq!(out, direct, "ktx2 y .basis leídos dan la misma imagen");
+            let _ = std::fs::remove_file(path);
+            let _ = std::fs::remove_file(path_basis);
+        }
+    }
+
     #[test]
     fn ktx2_reports_basis_payloads() {
         let mut out = Vec::new();
@@ -1696,9 +1733,9 @@ static char * test[] = {
         out.extend_from_slice(&[0u8; 16]); // dfd + kvd (u32 × 4)
         out.extend_from_slice(&[0u8; 16]); // sgd (u64 × 2)
         out.extend_from_slice(&[0u8; 24]); // índice de niveles
-        let path = temp("ktx2_basis.ktx2", &out);
+        let path = temp("ktx2_basis_broken.ktx2", &out);
         let err = load_image_rgba(&path).unwrap_err().to_string();
-        assert!(err.contains("Basis") || err.contains("transcoder"), "{err}");
+        assert!(err.contains("KTX2") || err.contains("Basis"), "{err}");
         let _ = std::fs::remove_file(path);
     }
 

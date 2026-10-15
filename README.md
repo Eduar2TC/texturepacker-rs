@@ -215,7 +215,7 @@ and in encryption.
 
 | Spec module                                  | Status | Details |
 |----------------------------------------------|--------|---------|
-| Parallel image loading                       | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis`* (*with `--features gpu-formats`), PKM, PVR/PVRTC v2 and v3, `.pvr.gz` and `.pvr.ccz` — 28 input formats |
+| Parallel image loading                       | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis` and Basis-compressed `.ktx2`* (*with `--features gpu-formats`), PKM, PVR/PVRTC v2 and v3, `.pvr.gz` and `.pvr.ccz` — 28 input formats |
 | Alpha trimming + bounding box                | ✅     | Configurable threshold (0-255) |
 | Deduplication by hashing (aliases)           | ✅     | xxh3 + byte-exact comparison; aliases take no space |
 | Auto-downscaling (@2x/@1x)                   | ✅     | `scale_variants` (e.g. `1.0, 0.5`) with scaled metadata |
@@ -258,6 +258,8 @@ and in encryption.
 | PVRTC 4BPP                                   | ✅     | In-house PVRTC1 4bpp encoder (block-fit + modulation search) in `.pvr` v3, validated against `texture2ddecoder` |
 | KTX2 (ktx2)                                  | ✅     | Uncompressed 2.0 container: header + index of one level, DFD (RGBSDA, BT.709 linear) and KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 for RGBA8/RGB8/R8 |
 | Basis (.basis)                               | ✅*    | *With `--features gpu-formats`; ETC1S or UASTC4x4 via `basis-universal` (crate `tp-basis`) and 0-100 quality (`--basis-quality`) |
+| KTX2 Basis (ktx2-basis)                      | ✅*    | *With `--features gpu-formats`; the ETC1S Basis payload wrapped in a KTX 2.0 container (vkFormat 0 + DFD ETC1S, BasisLZ supercompression); same 0-100 quality (`--basis-quality`) |
+| KTX2 Basis UASTC (ktx2-basis-uastc)          | ✅*    | *With `--features gpu-formats`; UASTC4x4 wrapped in a KTX 2.0 container (vkFormat 0 + DFD UASTC, no supercompression), transcodifiable at load time |
 | Symmetric texture encryption (AES-GCM)       | ✅     | AES-256-GCM; `*.tpenc` files, `tp-cli decrypt` |
 | Template engine (Mustache)                   | ✅     | handlebars; **63 metadata format presets in 15 families** (JSON list/hash, Phaser, PixiJS, XML, Starling, Plist Cocos2D/UIKit, libGDX/Spine atlas, CSS, C++ header, TSV, text, sheet only) + custom templates |
 | Original's projects (`.tps`)                 | ✅     | QSettings XML read and written by `tp-core::tps` (`tp-cli pack project.tps`, `Ctrl+O`/`Ctrl+S`); settings without an equivalent are grouped into a single notice |
@@ -423,21 +425,23 @@ decrypted; that format is simply no longer written.
   (H/planar). For maximum quality use ASTC.
 - The BMP/GIF/ICO/TIFF/DDS input formats inherit the limitations of the
   `image` crate's decoders; animated GIFs are read as their first frame.
-  XBM/XPM are read as a mask (set bit = opaque black). `.ktx2` files with a
-  Basis Universal payload cannot be decoded without a transcoder (rejected
-  with a clear message), but a standalone `.basis` can be read with the same
-  crate that writes it, after `--features gpu-formats` (without it the error
-  says so); only the first mip level is read from containers. `.pkm` only
+  XBM/XPM are read as a mask (set bit = opaque black). `.basis` files and
+  `.ktx2` files with a Basis Universal payload (ETC1S or UASTC4x4) are read
+  with the same crate that writes them, after `--features gpu-formats`
+  (without it the error says so); only the first mip level is read from
+  containers. `.pkm` only
   supports ETC1, `.pvr` only PVRTC1 of 2/4 bpp (v3 `pixelFormat` 0-3) or raw
   16/32 bits per mask (v2) and `.pvr.ccz` only with `compression_type` zlib;
   a `.gz` not preceded by `.pvr` is not taken as an image. PSD opens as the
   flattened composite (merged layers) and SVG is rasterized at its intrinsic
   size (or 100×100 if none) with the system fonts.
-- **Output formats**: writes the 17 documented output formats (PNG, PNG8,
+- **Output formats**: writes the 19 documented output formats (PNG, PNG8,
   JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ, PKM, KTX, KTX2, ZKTX,
-  ASTC and Basis). KTX2 stores **raw** content (RGBA8/RGB8/R8, no Basis
-  supercompression inside the container) and `basis` writes ETC1S or
-  UASTC4x4; the retired formats (`atf`, `pvr2`) are not implemented.
+  ASTC, Basis and KTX2 Basis). `basis` writes ETC1S or UASTC4x4 and the KTX2
+  variants wrap the same payload in a KTX 2.0 container (`ktx2` stores raw
+  content RGBA8/RGB8/R8, `ktx2-basis` adds BasisLZ supercompression and
+  `ktx2-basis-uastc` keeps UASTC uncompressed); the retired formats (`atf`,
+  `pvr2`) are not implemented.
 - **Heuristics and pixel formats**: the engine implements the subset of the
   project's technical spec (RGBA8888/4444/565, RGBA5551/5555, BGRA8888,
   RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (4x4-12x12 square blocks),

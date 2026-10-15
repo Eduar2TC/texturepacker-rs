@@ -154,7 +154,7 @@ fn ktx2_dfd(color: image::ExtendedColorType, bytes_per_texel: u8) -> Vec<u8> {
 /// Key/value data con las dos claves que define la spec, ordenadas por el
 /// código Unicode de la clave: `KTXorientation` (x→derecha, y→abajo, el
 /// orden de filas que escribimos) y `KTXwriter`.
-fn ktx2_kvd() -> Vec<u8> {
+pub(crate) fn ktx2_kvd() -> Vec<u8> {
     let entries: [(&str, &str); 2] = [
         ("KTXorientation", "rd"),
         (

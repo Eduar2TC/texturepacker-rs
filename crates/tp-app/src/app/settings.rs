@@ -1302,6 +1302,16 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     GpuFormat::BasisUastc,
                     gpu_format_name(&GpuFormat::BasisUastc),
                 );
+                ui.selectable_value(
+                    v,
+                    GpuFormat::Ktx2Basis,
+                    gpu_format_name(&GpuFormat::Ktx2Basis),
+                );
+                ui.selectable_value(
+                    v,
+                    GpuFormat::Ktx2BasisUastc,
+                    gpu_format_name(&GpuFormat::Ktx2BasisUastc),
+                );
                 super::separador(ui);
                 ui.selectable_value(v, GpuFormat::Zktx, gpu_format_name(&GpuFormat::Zktx));
                 ui.selectable_value(v, GpuFormat::Ktx2, gpu_format_name(&GpuFormat::Ktx2));
@@ -1424,13 +1434,13 @@ fn processing_section(app: &mut App, ui: &mut egui::Ui) {
                     ui.add(egui::DragValue::new(&mut app.config.astc_quality).range(0..=4));
                 });
             }
-            GpuFormat::Basis => {
+            GpuFormat::Basis | GpuFormat::Ktx2Basis => {
                 ui.label(t!("Calidad Basis ETC1S (0-100)"));
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
                 });
             }
-            GpuFormat::BasisUastc => {
+            GpuFormat::BasisUastc | GpuFormat::Ktx2BasisUastc => {
                 ui.label(t!("Calidad Basis UASTC (0-100)"));
                 ui.horizontal(|ui| {
                     ui.add(egui::DragValue::new(&mut app.config.basis_quality).range(0..=100));
@@ -1978,6 +1988,8 @@ fn gpu_format_name(g: &GpuFormat) -> &'static str {
         GpuFormat::Pvrtc4Bpp => "PVRTC 4BPP (pvr)",
         GpuFormat::Basis => "Basis (basis)",
         GpuFormat::BasisUastc => "Basis UASTC (basis)",
+        GpuFormat::Ktx2Basis => t!("KTX2 con Basis (ktx2)"),
+        GpuFormat::Ktx2BasisUastc => t!("KTX2 con Basis UASTC (ktx2)"),
         GpuFormat::Zktx => t!("KTX con zlib (zktx)"),
         GpuFormat::Ktx2 => t!("KTX2 sin comprimir (ktx2)"),
         GpuFormat::Pvr3Gz => t!("PVR3 en gzip (pvr.gz)"),

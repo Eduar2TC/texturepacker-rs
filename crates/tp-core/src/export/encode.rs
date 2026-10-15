@@ -1,5 +1,5 @@
 use super::astc::encode_astc;
-use super::basis::encode_basis;
+use super::basis::{encode_basis, encode_ktx2_basis};
 use super::dds::{encode_dds, encode_dds_dxt};
 use super::etc::{encode_etc1_ktx, encode_etc1_pkm, encode_etc2_ktx};
 use super::image_formats::encode_image_format;
@@ -47,6 +47,9 @@ pub fn encode_to_bytes(
         | GpuFormat::Astc10x10
         | GpuFormat::Astc12x12 => encode_astc(rgba, width, height, opts),
         GpuFormat::Basis | GpuFormat::BasisUastc => encode_basis(rgba, width, height, opts),
+        GpuFormat::Ktx2Basis | GpuFormat::Ktx2BasisUastc => {
+            encode_ktx2_basis(rgba, width, height, opts)
+        }
         GpuFormat::Etc2Rgba => encode_etc2_ktx(rgba, width, height, opts),
         GpuFormat::Pvrtc4Bpp => encode_pvrtc_pvr(rgba, width, height, opts),
         GpuFormat::Pvr3Gz => encode_pvrtc_pvr(rgba, width, height, opts).map(gzip_bytes),

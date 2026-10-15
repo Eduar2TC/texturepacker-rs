@@ -19,7 +19,7 @@ mod encode;
 mod etc;
 mod image_formats;
 mod jpg;
-mod ktx;
+pub(crate) mod ktx;
 mod ops;
 mod options;
 mod pixel;

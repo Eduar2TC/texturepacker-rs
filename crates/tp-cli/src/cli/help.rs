@@ -39,7 +39,8 @@ fn help_text() -> String {
          \x20                            dds | zktx | pvr3gz | pvr3ccz | pkm | ktx | astc |\n\
          \x20                            astc-4x4 | astc-5x5 | astc-6x6 | astc-8x8 |\n\
          \x20                            astc-10x10 | astc-12x12 | etc2 | pvrtc | ktx2 |\n\
-         \x20                            basis | basis-uastc\n\
+         \x20                            basis | basis-uastc | ktx2-basis |\n\
+         \x20                            ktx2-basis-uastc\n\
          \x20                          datos: json | xml | plist | cpp | tsv | text o un\n\
          \x20                            exportador (json-hash, libgdx, cocos2d, phaser,\n\
          \x20                            pixijs4, sparrow, spine…)\n\

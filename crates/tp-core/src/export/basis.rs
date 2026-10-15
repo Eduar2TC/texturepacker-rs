@@ -16,10 +16,35 @@ pub(super) fn encode_basis(
     #[cfg(feature = "gpu-formats")]
     {
         let encode = match opts.format {
-            GpuFormat::BasisUastc => tp_basis::encode_uastc,
+            GpuFormat::BasisUastc | GpuFormat::Ktx2BasisUastc => tp_basis::encode_uastc,
             _ => tp_basis::encode_etc1s,
         };
         encode(rgba, width as u32, height as u32, opts.basis_quality).map_err(TpError::Other)
+    }
+    #[cfg(not(feature = "gpu-formats"))]
+    {
+        let _ = (rgba, width, height, opts);
+        Err(TpError::Other(
+            "Basis requiere compilar con la feature `gpu-formats` \
+             (cargo build --features gpu-formats)"
+                .to_string(),
+        ))
+    }
+}
+
+/// KTX2 con supercompresión Basis: el `.basis` que produzca [`encode_basis`]
+/// (ETC1S o UASTC según el formato elegido) reescrito dentro del contenedor
+/// 2.0 con el layout del codificador de referencia.
+pub(super) fn encode_ktx2_basis(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    opts: &EncodeOptions,
+) -> Result<Vec<u8>> {
+    #[cfg(feature = "gpu-formats")]
+    {
+        let basis = encode_basis(rgba, width, height, opts)?;
+        crate::basis_ktx2::basis_to_ktx2(&basis).map_err(TpError::Other)
     }
     #[cfg(not(feature = "gpu-formats"))]
     {
@@ -84,11 +109,41 @@ mod tests {
         );
     }
 
+    /// `KTX2_BASIS` envuelve el mismo `.basis` en el contenedor 2.0 y se
+    /// vuelve a leer (a RGBA) con el mismo transcoder.
+    #[cfg(feature = "gpu-formats")]
+    #[test]
+    fn ktx2_basis_wraps_the_basis_payload() {
+        let rgba = four_color_image();
+        let ktx2 = encode_to_bytes(&rgba, 8, 8, &opts(GpuFormat::Ktx2Basis)).unwrap();
+        assert_eq!(
+            &ktx2[..12],
+            b"\xABKTX 20\xBB\r\n\x1A\n",
+            "identificador KTX2"
+        );
+        let le = |off: usize| u32::from_le_bytes(ktx2[off..off + 4].try_into().unwrap());
+        assert_eq!(le(12), 0, "vkFormat = 0 (DFD)");
+        assert_eq!(le(44), 1, "supercompresión BasisLZ");
+
+        let basis = crate::basis_ktx2::ktx2_to_basis(&ktx2).unwrap();
+        let (w, h, out) = tp_basis::transcode_rgba(&basis).unwrap();
+        assert_eq!((w, h), (8, 8));
+        // El mismo payload que el .basis suelto transcodifica igual.
+        let plain = encode_to_bytes(&rgba, 8, 8, &opts(GpuFormat::Basis)).unwrap();
+        let (_, _, plain_out) = tp_basis::transcode_rgba(&plain).unwrap();
+        assert_eq!(out, plain_out, "misma imagen por los dos contenedores");
+    }
+
     #[cfg(not(feature = "gpu-formats"))]
     #[test]
     fn basis_requires_the_gpu_formats_feature() {
         let rgba = gradient(4, 4);
-        for format in [GpuFormat::Basis, GpuFormat::BasisUastc] {
+        for format in [
+            GpuFormat::Basis,
+            GpuFormat::BasisUastc,
+            GpuFormat::Ktx2Basis,
+            GpuFormat::Ktx2BasisUastc,
+        ] {
             let err = encode_to_bytes(&rgba, 4, 4, &opts(format))
                 .unwrap_err()
                 .to_string();

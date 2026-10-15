@@ -328,6 +328,8 @@ pub static EN: &[(&str, &str)] = &[
     ("ETC1 en KTX (ktx)", "ETC1 in KTX (ktx)"),
     ("KTX con zlib (zktx)", "KTX with zlib (zktx)"),
     ("KTX2 sin comprimir (ktx2)", "Uncompressed KTX2 (ktx2)"),
+    ("KTX2 con Basis (ktx2)", "KTX2 with Basis (ktx2)"),
+    ("KTX2 con Basis UASTC (ktx2)", "KTX2 with Basis UASTC (ktx2)"),
     ("PVR3 en gzip (pvr.gz)", "PVR3 in gzip (pvr.gz)"),
     ("PVR3 en CCZ (pvr.ccz)", "PVR3 in CCZ (pvr.ccz)"),
     ("Optimización PNG (0-7)", "PNG optimization (0-7)"),

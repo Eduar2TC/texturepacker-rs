@@ -103,6 +103,14 @@ pub enum GpuFormat {
     /// ficheros más grandes, también transcodificable en tiempo de carga.
     #[serde(rename = "BASIS_UASTC")]
     BasisUastc,
+    /// KTX2 con supercompresión Basis ETC1S (vkFormat 0 + DFD ETC1S): el
+    /// mismo payload que `Basis` dentro del contenedor 2.0.
+    #[serde(rename = "KTX2_BASIS")]
+    Ktx2Basis,
+    /// KTX2 con Basis UASTC 4x4 sin supercompresión (vkFormat 0 + DFD
+    /// UASTC): más calidad que ETC1S, también transcodificable al cargar.
+    #[serde(rename = "KTX2_BASIS_UASTC")]
+    Ktx2BasisUastc,
 }
 
 impl GpuFormat {
@@ -132,15 +140,22 @@ impl GpuFormat {
             GpuFormat::Ktx2 => "KTX2",
             GpuFormat::Basis => "BASIS",
             GpuFormat::BasisUastc => "BASIS_UASTC",
+            GpuFormat::Ktx2Basis => "KTX2_BASIS",
+            GpuFormat::Ktx2BasisUastc => "KTX2_BASIS_UASTC",
         }
     }
 
-    /// Whether this build can encode the format (`ASTC_*`, `BASIS` and
-    /// `BASIS_UASTC` need the `gpu-formats` feature; every other format is
-    /// always available).
+    /// Whether this build can encode the format (`ASTC_*`, `BASIS`,
+    /// `BASIS_UASTC`, `KTX2_BASIS` and `KTX2_BASIS_UASTC` need the
+    /// `gpu-formats` feature; every other format is always available).
     pub fn is_supported(&self) -> bool {
-        let needs_feature =
-            matches!(self, GpuFormat::Basis | GpuFormat::BasisUastc) || self.is_astc();
+        let needs_feature = matches!(
+            self,
+            GpuFormat::Basis
+                | GpuFormat::BasisUastc
+                | GpuFormat::Ktx2Basis
+                | GpuFormat::Ktx2BasisUastc
+        ) || self.is_astc();
         !needs_feature || cfg!(feature = "gpu-formats")
     }
 
@@ -183,6 +198,8 @@ impl GpuFormat {
                     | GpuFormat::Etc1Ktx
                     | GpuFormat::Basis
                     | GpuFormat::BasisUastc
+                    | GpuFormat::Ktx2Basis
+                    | GpuFormat::Ktx2BasisUastc
             )
     }
 
@@ -208,7 +225,7 @@ impl GpuFormat {
             | GpuFormat::Astc12x12 => "astc",
             GpuFormat::Etc2Rgba => "ktx",
             GpuFormat::Pvrtc4Bpp => "pvr",
-            GpuFormat::Ktx2 => "ktx2",
+            GpuFormat::Ktx2 | GpuFormat::Ktx2Basis | GpuFormat::Ktx2BasisUastc => "ktx2",
             GpuFormat::Basis | GpuFormat::BasisUastc => "basis",
         }
     }
@@ -241,6 +258,8 @@ impl GpuFormat {
             "ktx2" => GpuFormat::Ktx2,
             "basis" | "basis-etc1s" => GpuFormat::Basis,
             "basis-uastc" => GpuFormat::BasisUastc,
+            "ktx2-basis" | "ktx2-basis-etc1s" => GpuFormat::Ktx2Basis,
+            "ktx2-basis-uastc" => GpuFormat::Ktx2BasisUastc,
             _ => return None,
         })
     }
@@ -585,6 +604,9 @@ mod tests {
             ("ktx2", GpuFormat::Ktx2, "ktx2"),
             ("basis", GpuFormat::Basis, "basis"),
             ("basis-uastc", GpuFormat::BasisUastc, "basis"),
+            ("ktx2-basis", GpuFormat::Ktx2Basis, "ktx2"),
+            ("ktx2-basis-etc1s", GpuFormat::Ktx2Basis, "ktx2"),
+            ("ktx2-basis-uastc", GpuFormat::Ktx2BasisUastc, "ktx2"),
         ];
         for (token, want, ext) in cases {
             let got = GpuFormat::parse(token).unwrap_or_else(|| panic!("token {token}"));
@@ -598,6 +620,14 @@ mod tests {
         assert!(GpuFormat::Pvr3Ccz.is_hardware());
         assert!(GpuFormat::Basis.is_hardware(), "Basis comprime en GPU");
         assert!(GpuFormat::BasisUastc.is_hardware(), "UASTC comprime en GPU");
+        assert!(
+            GpuFormat::Ktx2Basis.is_hardware(),
+            "KTX2 Basis comprime en GPU"
+        );
+        assert!(
+            GpuFormat::Ktx2BasisUastc.is_hardware(),
+            "KTX2 UASTC comprime en GPU"
+        );
         assert!(!GpuFormat::Bmp.is_hardware());
         assert!(!GpuFormat::Dds.is_hardware());
         assert!(!GpuFormat::Zktx.is_hardware());
@@ -615,6 +645,16 @@ mod tests {
             "Basis UASTC depende de la feature gpu-formats"
         );
         assert_eq!(
+            GpuFormat::Ktx2Basis.is_supported(),
+            cfg!(feature = "gpu-formats"),
+            "KTX2 Basis depende de la feature gpu-formats"
+        );
+        assert_eq!(
+            GpuFormat::Ktx2BasisUastc.is_supported(),
+            cfg!(feature = "gpu-formats"),
+            "KTX2 Basis UASTC depende de la feature gpu-formats"
+        );
+        assert_eq!(
             GpuFormat::Astc6x6.is_supported(),
             cfg!(feature = "gpu-formats"),
             "ASTC depende de la feature gpu-formats"
@@ -628,6 +668,8 @@ mod tests {
             GpuFormat::Ktx2,
             GpuFormat::Basis,
             GpuFormat::BasisUastc,
+            GpuFormat::Ktx2Basis,
+            GpuFormat::Ktx2BasisUastc,
             GpuFormat::Astc6x6,
         ] {
             let cfg = ProjectConfig {

@@ -2702,6 +2702,39 @@ fn lote13_ktx2_container_and_basis_export() {
             lo.len(),
             hi.len()
         );
+
+        // ---- KTX2_BASIS / KTX2_BASIS_UASTC: el mismo Basis en el 2.0 ------
+        let ktx2_basis = |format: GpuFormat, scheme: u32| {
+            let dir = fx
+                .dir
+                .join(format!("out_{}", format.as_str().to_lowercase()));
+            pack(dir.clone(), format, 80);
+            let file = std::fs::read(dir.join("atlas.ktx2")).unwrap();
+            assert_eq!(
+                &file[..12],
+                b"\xABKTX 20\xBB\r\n\x1A\n",
+                "identificador KTX2"
+            );
+            let le = |off: usize| u32::from_le_bytes(file[off..off + 4].try_into().unwrap());
+            assert_eq!(le(12), 0, "vkFormat = 0 (DFD)");
+            assert_eq!(le(44), scheme, "supercompresión del contenedor");
+            let (w, h, px) = reader::load_image_rgba(&dir.join("atlas.ktx2")).unwrap();
+            assert_eq!((w, h), (pw, ph), "misma hoja que el PNG");
+            px
+        };
+        // Ambos son con pérdida: no se desvían demasiado del PNG publicado.
+        for (name, px) in [
+            ("KTX2_BASIS", ktx2_basis(GpuFormat::Ktx2Basis, 1)),
+            ("KTX2_BASIS_UASTC", ktx2_basis(GpuFormat::Ktx2BasisUastc, 0)),
+        ] {
+            let err: f64 = px
+                .iter()
+                .zip(&png_px)
+                .map(|(a, b)| (i16::from(*a) - i16::from(*b)).abs() as f64)
+                .sum::<f64>()
+                / px.len() as f64;
+            assert!(err < 10.0, "error medio de {name} contra el PNG: {err:.2}");
+        }
     }
 }
 

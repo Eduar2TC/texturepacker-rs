@@ -213,7 +213,7 @@ aceptarse por diferencia de unidades y de cifrado.
 
 | Módulo de la especificación                    | Estado | Detalles |
 |------------------------------------------------|--------|----------|
-| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis`* (*con `--features gpu-formats`), PKM, PVR/PVRTC v2 y v3, `.pvr.gz` y `.pvr.ccz` — 28 formatos de entrada |
+| Carga paralela de imágenes                     | ✅     | Rayon; PNG, WebP, JPEG, TGA, BMP, GIF, ICO, TIFF, DDS, QOI, PBM/PGM/PPM, XBM, XPM, PSD, SVG/SVGZ, ASTC, KTX/KTX2, `.basis` y `.ktx2` con Basis* (*con `--features gpu-formats`), PKM, PVR/PVRTC v2 y v3, `.pvr.gz` y `.pvr.ccz` — 28 formatos de entrada |
 | Alpha trimming + bounding box                  | ✅     | Umbral configurable (0-255) |
 | Deduplicación por hashing (aliases)            | ✅     | xxh3 + comparación byte-exacta; los aliases no ocupan espacio |
 | Auto-downscaling (@2x/@1x)                     | ✅     | `scale_variants` (p. ej. `1.0, 0.5`) con metadatos escalados |
@@ -256,6 +256,8 @@ aceptarse por diferencia de unidades y de cifrado.
 | PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación) en `.pvr` v3, validado contra `texture2ddecoder` |
 | KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
 | Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S o UASTC4x4 vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
+| KTX2 Basis (ktx2-basis)                        | ✅*    | *Con `--features gpu-formats`; payload Basis ETC1S envuelto en un contenedor KTX 2.0 (vkFormat 0 + DFD ETC1S, supercompresión BasisLZ); misma calidad 0-100 (`--basis-quality`) |
+| KTX2 Basis UASTC (ktx2-basis-uastc)            | ✅*    | *Con `--features gpu-formats`; UASTC4x4 envuelto en un contenedor KTX 2.0 (vkFormat 0 + DFD UASTC, sin supercompresión), transcodificable al cargar |
 | Cifrado simétrico de textura (AES-GCM)         | ✅     | AES-256-GCM; archivos `*.tpenc`, `tp-cli decrypt` |
 | Motor de plantillas (Mustache)                 | ✅     | handlebars; **63 presets de formato de datos en 15 familias** (JSON lista/hash, Phaser, PixiJS, XML, Starling, Plist Cocos2D/UIKit, atlas libGDX/Spine, CSS, C++ header, TSV, texto, solo hoja) + plantillas personalizadas |
 | Proyectos del original (`.tps`)                | ✅     | XML de QSettings leído y escrito por `tp-core::tps` (`tp-cli pack proyecto.tps`, `Ctrl+O`/`Ctrl+S`); los ajustes sin equivalente se agrupan en un único aviso |
@@ -419,22 +421,23 @@ descifrando; sólo se deja de escribir.
   Para máxima calidad usa ASTC.
 - Los formatos de entrada BMP/GIF/ICO/TIFF/DDS heredan las limitaciones de los
   decodificadores de la crate `image`; los GIF animados se leen como su primer
-  fotograma. XBM/XPM se leen como máscara (bit encendido = negro opaco). Los
-  `.ktx2` con payload Basis Universal no se pueden decodificar sin un transcoder
-  (se rechaza con un mensaje claro), pero un `.basis` suelto sí se lee con la
-  misma crate que lo escribe, tras `--features gpu-formats` (sin ella el error
-  lo dice); de los contenedores se lee el primer nivel de mipmap. El `.pkm` sólo
+  fotograma. XBM/XPM se leen como máscara (bit encendido = negro opaco). Un
+  `.basis` y un `.ktx2` con payload Basis Universal (ETC1S o UASTC4x4) sí se
+  leen con la misma crate que los escribe, tras `--features gpu-formats` (sin
+  ella el error lo dice); de los contenedores se lee el primer nivel de
+  mipmap. El `.pkm` sólo
   admite ETC1, el `.pvr` sólo PVRTC1 de 2/4 bpp (v3 `pixelFormat` 0-3) o crudos
   16/32 bits por máscara (v2) y `.pvr.ccz` sólo con `compression_type` zlib; un
   `.gz` que no lleve `.pvr` delante no se toma como imagen. El PSD
   se abre como el compuesto aplanado (capas fundidas) y el SVG se rasteriza a
   su tamaño intrínseco (o 100×100 si no lo trae) con las fuentes del sistema.
-- **Formatos de salida**: escribe los 17 formatos de salida documentados
+- **Formatos de salida**: escribe los 19 formatos de salida documentados
   (PNG, PNG8, JPG, WebP, BMP, TGA, TIFF, DDS, PVR3/PVR3GZ/PVR3CCZ,
-  PKM, KTX, KTX2, ZKTX, ASTC y Basis). KTX2 guarda el contenido **crudo**
-  (RGBA8/RGB8/R8, sin supercompresión Basis dentro del contenedor) y
-  `basis` escribe ETC1S o UASTC4x4; no se implementan los formatos
-  retirados (`atf`, `pvr2`).
+  PKM, KTX, KTX2, ZKTX, ASTC, Basis y KTX2 Basis). `basis` escribe ETC1S o
+  UASTC4x4 y las variantes KTX2 envuelven el mismo payload en un contenedor
+  KTX 2.0 (`ktx2` guarda contenido crudo RGBA8/RGB8/R8, `ktx2-basis` añade
+  supercompresión BasisLZ y `ktx2-basis-uastc` deja UASTC sin comprimir); no
+  se implementan los formatos retirados (`atf`, `pvr2`).
 - **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
   especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
   BGRA8888, RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (bloques cuadrados
