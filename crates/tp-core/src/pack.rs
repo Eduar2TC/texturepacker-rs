@@ -1334,7 +1334,8 @@ fn try_place(
     // padding exactly like `pixels::prepare_blit`. Items without mask or
     // mesh claim their whole frame (the blit cannot write past it), so
     // they need no halo.
-    let halo = if opts.polygon_mode && (item.mask.is_some() || item.mesh.is_some()) {
+    let con_huella = opts.polygon_mode && (item.mask.is_some() || item.mesh.is_some());
+    let halo = if con_huella {
         opts.extrude.max(0).min(pad)
     } else {
         0
@@ -1348,7 +1349,10 @@ fn try_place(
     let mut candidates: Vec<(usize, bool, Score)> = Vec::new();
     for (ri, fr) in page.free_rects.iter().enumerate() {
         for rotated in [false, true] {
-            if rotated && (!opts.allow_rotation || w == h) {
+            // Un marco cuadrado AABB girado es el mismo marco, así que fuera
+            // de polígono sigue sin rentar. Con huella de píxeles, en cambio,
+            // la L rotada es otra silueta: rotar sí abre interbloqueos.
+            if rotated && (!opts.allow_rotation || (w == h && !con_huella)) {
                 continue;
             }
             // Un candidato = una comprobación de solape + una puntuación:
@@ -1453,7 +1457,7 @@ fn try_place(
                 continue;
             }
             for rotated in [false, true] {
-                if rotated && (!opts.allow_rotation || w == h) {
+                if rotated && (!opts.allow_rotation || (w == h && !con_huella)) {
                     continue;
                 }
                 let (pw, ph) = if rotated { (h, w) } else { (w, h) };
@@ -2197,6 +2201,65 @@ mod tests {
             "la L pequeña debe quedar dentro del marco de la grande: {b:?} vs {s:?}"
         );
         assert_claims_disjoint(&out, &items, &opts);
+    }
+
+    /// L grande de 6×6 con una pestaña en el flanco derecho (x 4–5,
+    /// filas 2–3): sella la entrada recta del hueco de 4×4 de arriba a
+    /// la derecha, que solo se abre para la silueta girada 90°.
+    fn tabbed_big_l_item(id: &str) -> PackItem {
+        let mask = (0..36)
+            .map(|i| {
+                let (x, y) = (i % 6, i / 6);
+                x < 2 || y >= 4 || ((2..4).contains(&y) && x >= 4)
+            })
+            .collect();
+        PackItem {
+            id: id.into(),
+            width: 6,
+            height: 6,
+            mask: Some(mask),
+            mesh: None,
+        }
+    }
+
+    /// En polígono un marco cuadrado también puede rotar: la L pequeña es
+    /// cuadrada (4×4) y su silueta recta chocaría con la pestaña de la
+    /// grande, pero la girada 90° encaja en el hueco y las dos caben en
+    /// una hoja. Sin rotación el mismo par necesita dos hojas — es la
+    /// rotación la que abre el interbloqueo, no un empate de puntuación.
+    #[test]
+    fn polygon_grid_rotates_square_sprites_to_interlock() {
+        let items = vec![tabbed_big_l_item("big"), l_item("small")];
+        let opts = PackerOptions::new(PackingStrategy::Bssf, true, 6, 0, 0, true);
+        let out = pack(&items, &opts).unwrap();
+        assert_eq!(
+            out.pages.len(),
+            1,
+            "la rotación debe permitir el interbloqueo en una hoja"
+        );
+        let placement = |id: &str| out.pages[0].placements.iter().find(|p| p.id == id).unwrap();
+        assert!(
+            placement("big").frame.intersects(&placement("small").frame),
+            "las dos L deben interbloquearse: {:?} vs {:?}",
+            placement("big").frame,
+            placement("small").frame
+        );
+        assert!(
+            placement("small").rotated,
+            "la L pequeña debe haber girado 90° para caber: {:?}",
+            placement("small").frame
+        );
+        assert_claims_disjoint(&out, &items, &opts);
+
+        // Compañero: sin rotación la entrada recta del hueco está sellada
+        // por la pestaña y toca abrir otra hoja.
+        let opts = PackerOptions::new(PackingStrategy::Bssf, false, 6, 0, 0, true);
+        let out = pack(&items, &opts).unwrap();
+        assert_eq!(
+            out.pages.len(),
+            2,
+            "sin rotación la pestaña sella el hueco y hace falta otra hoja"
+        );
     }
 
     /// Dos sprites sólidos no pueden interbloquear (no hay píxeles
