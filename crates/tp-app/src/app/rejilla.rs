@@ -609,6 +609,12 @@ fn los_controles_sueltos_miden_el_objetivo_de_24_px() {
     // sprites del grupo «run» y sus texturas: el transporte de animación
     // sólo se pinta con fotogramas publicados.
     app.result = Some(atlas_de_dos_hojas());
+    // El atlas es ficticio: el sondeo de vigilia (SNAPSHOT_POLL_MS, reloj de
+    // pared) puede caer entre los dos frames de la prueba —bajo carga la
+    // ejecución se retrasa— y, al ver el workspace real vacío, vaciaría
+    // `result` y borraría las flechas de página. Marcar el snapshot como ya
+    // empaquetado deja el mecanismo quieto: no hay nada que reempaquetar.
+    app.packed_snapshot = Some(app.workspace_snapshot());
     app.textures = (0..2)
         .map(|i| {
             ctx.load_texture(

@@ -1983,6 +1983,10 @@ mod fase5_tests {
 
     fn app_con_hoja(ctx: &egui::Context, w: i32, h: i32) -> App {
         let mut app = App::new_for_testing(ctx.clone(), None);
+        // Igual que en la navegación por atajo (events.rs): la hoja es
+        // ficticia y el sondeo de vigilia (SNAPSHOT_POLL_MS) la vaciaría si
+        // `packed_snapshot` no da por empaquetado el workspace vacío.
+        app.packed_snapshot = Some(app.workspace_snapshot());
         app.result = Some(hoja_de(w, h));
         app.textures = vec![ctx.load_texture(
             "hoja-de-prueba",
