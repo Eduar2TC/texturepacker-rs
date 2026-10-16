@@ -5,6 +5,9 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 description = "TexturePacker-RS desktop application (egui/eframe)"
+# `cargo run -p tp-app` arranca la app y no el autotest `tp-smoke`
+# (el que pide `--bin` en el propio README).
+default-run = "tp-app"
 
 [dependencies]
 tp-i18n = { path = "../tp-i18n" }
