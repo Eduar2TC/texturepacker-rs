@@ -695,6 +695,60 @@ mod casilla_reproducir_tests {
         let _ = app.run_frame(ctx, idle_input());
     }
 
+    /// La selección se reproduce de verdad: con la casilla encendida y
+    /// tiempo simulado pasando, el índice de fotograma avanza. Cubre el
+    /// flujo completo del usuario —seleccionar sprites, abrir la ventana
+    /// y cascar «Reproducir»— incluida la comparación de rutas entre la
+    /// selección del panel y los `source_path` del resultado publicado.
+    #[test]
+    fn la_seleccion_reproducida_avanza_con_el_reloj() {
+        let ctx = egui::Context::default();
+        let (mut app, tmp) = app_publicada("avance", &ctx);
+
+        // Selección como la haría el panel: los nodos del árbol llevan las
+        // rutas absolutas de la carpeta de entrada.
+        app.selected_paths = (0..3)
+            .map(|i| app.config.input_directory.join(format!("ciclo{i}.png")))
+            .collect();
+        app.show_animation = true;
+
+        let donde = casilla(&mut app, &ctx);
+        clica(&mut app, &ctx, donde);
+        assert_eq!(app.anim.group, "ciclo");
+        assert!(
+            app.anim.playing,
+            "con la selección de tres fotogramas la casilla debe encender"
+        );
+
+        // El reloj avanza: con 1 FPS el paso mide 1 s y cada bombeo aporta
+        // 0.25 s de tiempo simulado, así que un paso cae exactamente cada
+        // cuatro bombeos (0.25 es exacto en binario: la aritmética no
+        // depende de redondeos). Se muestrea el fotograma tras cada
+        // bombeo en vez del índice final: el bucle de tres fotogramas
+        // puede volver a 0 por vuelta exacta del ciclo.
+        app.anim.fps = 1.0;
+        let mut vistas = std::collections::BTreeSet::new();
+        let mut t = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs_f64()
+            + 0.25;
+        for _ in 0..8 {
+            let mut entrada = idle_input();
+            entrada.time = Some(t);
+            t += 0.25;
+            let _ = app.run_frame(&ctx, entrada);
+            vistas.insert(app.anim.frame);
+        }
+        assert!(
+            vistas.len() > 1,
+            "con la reproducción encendida el fotograma debe avanzar (solo se vio el {})",
+            app.anim.frame
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn la_casilla_reproducir_no_se_habilita_con_un_fotograma() {
         let ctx = egui::Context::default();
