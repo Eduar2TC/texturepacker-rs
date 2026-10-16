@@ -1,6 +1,6 @@
 use super::astc::encode_astc;
 use super::basis::{encode_basis, encode_ktx2_basis};
-use super::dds::{encode_dds, encode_dds_dxt};
+use super::dds::{encode_dds, encode_dds_bc7, encode_dds_dxt};
 use super::etc::{encode_etc1_ktx, encode_etc1_pkm, encode_etc2_ktx};
 use super::image_formats::encode_image_format;
 use super::jpg::encode_jpg;
@@ -67,6 +67,8 @@ pub fn encode_to_bytes(
             PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5 => {
                 encode_dds_dxt(rgba, width, height, opts)
             }
+            // BC7: fourcc DX10 + extensión con el formato DXGI, mismo modo.
+            PixelFormat::Bc7 => encode_dds_bc7(rgba, width, height, opts),
             _ => {
                 let (data, color) = apply_pixel_format(rgba, opts.pixel_format);
                 encode_dds(&data, width, height, color)

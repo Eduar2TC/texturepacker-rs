@@ -141,6 +141,55 @@ pub(super) fn encode_dds_dxt(
     Ok(out)
 }
 
+/// DDS con bloques BC7: BC7 no cabe en el fourcc legacy, así que la
+/// cabecera lleva `DX10` y la extensión del formato DXGI (`BC7_UNORM`, 98)
+/// con el payload de bloques que codifica [`crate::bc7`]. El modo de error
+/// es el mismo que el de DXT (`--dxt-mode`).
+pub(super) fn encode_dds_bc7(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    opts: &EncodeOptions,
+) -> Result<Vec<u8>> {
+    let blocks = crate::bc7::encode_bc7(rgba, width, height, opts.dxt_mode)?;
+    let mut out = Vec::with_capacity(148 + blocks.len());
+    out.extend_from_slice(b"DDS ");
+    out.extend_from_slice(&124u32.to_le_bytes()); // dwSize
+                                                  // CAPS | HEIGHT | WIDTH | PIXELFORMAT | LINEARSIZE
+    out.extend_from_slice(&0x0008_1007u32.to_le_bytes());
+    out.extend_from_slice(&(height as u32).to_le_bytes());
+    out.extend_from_slice(&(width as u32).to_le_bytes());
+    out.extend_from_slice(&(blocks.len() as u32).to_le_bytes()); // linear size
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwDepth
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwMipMapCount
+    for _ in 0..11 {
+        out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved1
+    }
+    // DDS_PIXELFORMAT (32 bytes): FOURCC "DX10".
+    out.extend_from_slice(&32u32.to_le_bytes());
+    out.extend_from_slice(&0x4u32.to_le_bytes()); // DDPF_FOURCC
+    out.extend_from_slice(b"DX10");
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwRGBBitCount
+    for _ in 0..4 {
+        out.extend_from_slice(&0u32.to_le_bytes());
+    }
+    out.extend_from_slice(&0x0000_1000u32.to_le_bytes()); // dwCaps: TEXTURE
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps2
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps3
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwCaps4
+    out.extend_from_slice(&0u32.to_le_bytes()); // dwReserved2
+
+    // Extensión DX10 (20 bytes): DXGI_FORMAT_BC7_UNORM (98), textura 2D,
+    // un nivel y alfa directa (BC7 siempre trae canal alfa aquí).
+    out.extend_from_slice(&98u32.to_le_bytes());
+    out.extend_from_slice(&3u32.to_le_bytes()); // D3D10_RESOURCE_DIMENSION_TEXTURE2D
+    out.extend_from_slice(&0u32.to_le_bytes()); // miscFlag
+    out.extend_from_slice(&1u32.to_le_bytes()); // arraySize
+    out.extend_from_slice(&1u32.to_le_bytes()); // DDS_ALPHA_MODE_STRAIGHT
+    out.extend_from_slice(&blocks);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,6 +272,56 @@ mod tests {
         let mut buf3 = vec![0u32; 64];
         texture2ddecoder::decode_bc2(&dds3[128..], 8, 8, &mut buf3).expect("bc2");
         assert!(mean_channel_error(&rgba, &buf3) < 48.0);
+    }
+
+    #[test]
+    fn dds_with_bc7_pixel_format_uses_the_dx10_header() {
+        let rgba = four_color_image();
+        let mut o = opts(GpuFormat::Dds);
+        o.pixel_format = PixelFormat::Bc7;
+        let dds = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        assert_eq!(&dds[..4], b"DDS ");
+        // CAPS | HEIGHT | WIDTH | PIXELFORMAT | LINEARSIZE
+        assert_eq!(le32(&dds, 8), 0x81007);
+        assert_eq!(&dds[84..88], b"DX10", "fourcc de la extensión DX10");
+        let linear = le32(&dds, 20) as usize;
+        assert_eq!(linear, 4 * 16, "4 bloques de 4x4 a 16 bytes");
+        // Extensión DX10: DXGI BC7_UNORM (98), textura 2D, un nivel, alfa
+        // directa.
+        assert_eq!(le32(&dds, 128), 98, "DXGI_FORMAT_BC7_UNORM");
+        assert_eq!(le32(&dds, 132), 3, "RESOURCE_DIMENSION_TEXTURE2D");
+        assert_eq!(le32(&dds, 140), 1, "arraySize");
+        assert_eq!(le32(&dds, 144), 1, "DDS_ALPHA_MODE_STRAIGHT");
+        assert_eq!(dds.len(), 148 + linear, "cabecera DX10 de 20 bytes");
+        let mut buf = vec![0u32; 64];
+        texture2ddecoder::decode_bc7(&dds[148..], 8, 8, &mut buf).expect("bc7");
+        assert!(
+            mean_channel_error(&rgba, &buf) < 8.0,
+            "error {}",
+            mean_channel_error(&rgba, &buf)
+        );
+    }
+
+    /// BC7 comparte la métrica de error con DXT: el flag `--dxt-mode`
+    /// cambia los extremos elegidos y el resultado sigue siendo BC7 válido.
+    #[test]
+    fn bc7_also_follows_the_dxt_mode() {
+        let rgba = gradient(8, 8);
+        let mut o = opts(GpuFormat::Dds);
+        o.pixel_format = PixelFormat::Bc7;
+        o.dxt_mode = DxtMode::Linear;
+        let linear = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        o.dxt_mode = DxtMode::Perceptual;
+        let perceptual = encode_to_bytes(&rgba, 8, 8, &o).unwrap();
+        assert_ne!(linear, perceptual, "BC7 usa la métrica de --dxt-mode");
+        assert_eq!(&perceptual[84..88], b"DX10");
+        let mut buf = vec![0u32; 64];
+        texture2ddecoder::decode_bc7(&perceptual[148..], 8, 8, &mut buf).expect("bc7");
+        assert!(
+            mean_channel_error(&rgba, &buf) < 64.0,
+            "error {}",
+            mean_channel_error(&rgba, &buf)
+        );
     }
 
     #[test]

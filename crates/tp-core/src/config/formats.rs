@@ -343,6 +343,10 @@ pub enum PixelFormat {
     /// S3TC/BC3: 8 bits/píxel con alfa interpolado.
     #[serde(rename = "DXT5")]
     Dxt5,
+    /// BC7: 8 bits/píxel con RGBA de alta calidad (codificador propio,
+    /// modo 6); sale en DDS con cabecera DX10 (DXGI `BC7_UNORM`).
+    #[serde(rename = "BC7")]
+    Bc7,
     /// ASTC con bloque 4x4 (8 bpp).
     #[serde(rename = "ASTC_4x4")]
     Astc4x4,
@@ -410,6 +414,7 @@ impl PixelFormat {
             PixelFormat::Dxt1 => "DXT1",
             PixelFormat::Dxt3 => "DXT3",
             PixelFormat::Dxt5 => "DXT5",
+            PixelFormat::Bc7 => "BC7",
             PixelFormat::Astc4x4 => "ASTC_4x4",
             PixelFormat::Astc5x4 => "ASTC_5x4",
             PixelFormat::Astc5x5 => "ASTC_5x5",
@@ -483,7 +488,9 @@ impl PixelFormat {
             ),
             PixelFormat::Etc1Rgb => matches!(format, GpuFormat::Etc1 | GpuFormat::Etc1Ktx),
             PixelFormat::Etc2Rgb | PixelFormat::Etc2Rgba => format == GpuFormat::Etc2Rgba,
-            PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5 => format == GpuFormat::Dds,
+            PixelFormat::Dxt1 | PixelFormat::Dxt3 | PixelFormat::Dxt5 | PixelFormat::Bc7 => {
+                format == GpuFormat::Dds
+            }
             f if f.astc_block().is_some() => format.is_astc(),
             _ => false,
         }
@@ -706,5 +713,24 @@ mod tests {
         }
         assert!(!GpuFormat::Png.is_astc());
         assert_eq!(GpuFormat::Png.astc_block(), None);
+    }
+
+    /// BC7 es token de hardware y solo cabe en DDS (como los bloques
+    /// DXT); el TOML del proyecto lo conserva y `validate` lo acepta ahí.
+    #[test]
+    fn bc7_cabe_solo_en_dds() {
+        assert!(PixelFormat::Bc7.is_gpu());
+        assert!(PixelFormat::Bc7.is_compatible_with(GpuFormat::Dds));
+        assert!(!PixelFormat::Bc7.is_compatible_with(GpuFormat::Png));
+        assert!(!PixelFormat::Bc7.is_compatible_with(GpuFormat::Ktx2));
+        assert_eq!(PixelFormat::Bc7.as_str(), "BC7");
+        let cfg = ProjectConfig {
+            gpu_format: GpuFormat::Dds,
+            pixel_format: PixelFormat::Bc7,
+            ..ProjectConfig::default()
+        };
+        assert!(cfg.validate().is_ok(), "DDS+BC7 debe validar");
+        let back = ProjectConfig::from_toml(&cfg.to_toml().unwrap()).unwrap();
+        assert_eq!(back.pixel_format, PixelFormat::Bc7, "serde del TOML");
     }
 }
