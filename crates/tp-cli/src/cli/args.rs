@@ -1005,6 +1005,7 @@ pub(crate) fn parse_pixel_format(v: &str) -> CmdResult<PixelFormat> {
         "dxt1" => PixelFormat::Dxt1,
         "dxt3" => PixelFormat::Dxt3,
         "dxt5" => PixelFormat::Dxt5,
+        "bc7" => PixelFormat::Bc7,
         "astc4x4" => PixelFormat::Astc4x4,
         "astc5x4" => PixelFormat::Astc5x4,
         "astc5x5" => PixelFormat::Astc5x5,
@@ -1194,6 +1195,10 @@ mod tests {
         assert!(matches!(
             parse_pixel_format("dxt5").unwrap(),
             PixelFormat::Dxt5
+        ));
+        assert!(matches!(
+            parse_pixel_format("BC7").unwrap(),
+            PixelFormat::Bc7
         ));
         assert!(matches!(
             parse_pixel_format("astc-12x12").unwrap(),
