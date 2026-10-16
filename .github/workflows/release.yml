@@ -235,16 +235,18 @@ jobs:
           body: |
             ## Novedades
 
-            - **Compresión BC7 (modo 6) para escritorio y consola**: nuevo
-              encoder propio de bloques RGBA de 16 bytes, con calidad muy
-              por encima de DXT5/BC3 en el mismo contenido —el alfa va a
-              peso pleno en el modo perceptual— y validado contra un
-              decodificador independiente, como el resto de formatos de
-              hardware del proyecto.
-            - **Salida `.dds` con cabecera DX10**: `--format dds
-              --pixel-format bc7` (o el combo BC7 de la GUI) escribe
-              `DXGI_FORMAT_BC7_UNORM` y comparte la métrica de error
-              `--dxt-mode` con los bloques DXT.
+            - **La vista de animación se reproduce siempre que hay
+              material**: al abrirse elige el primer grupo con dos o más
+              fotogramas —antes el orden alfabético podía dejar la casilla
+              «Reproducir» en gris con animaciones jugosas al lado—, y si
+              ningún nombre forma secuencia (sin dígitos finales) la lista
+              entera se reproduce en orden. Con un solo fotograma a la
+              vista, la ventana explica por qué no hay nada que reproducir.
+            - **La vista previa se comporta al quitar y recargar sprites**:
+              quitar todos los sprites limpia el lienzo hacia un estado
+              accionable (antes se quedaba el último atlas —o el spinner de
+              «Preparando…»—), y volver a arrastrar un sprite quitado lo
+              reincluye y lo trae de vuelta al atlas al instante.
 
             ## Descargas
 
