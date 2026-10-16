@@ -254,6 +254,7 @@ aceptarse por diferencia de unidades y de cifrado.
 | ASTC 4x4-12x12 (bloques cuadrados)       | ✅*    | *Con `--features gpu-formats` (ARM astcenc oficial); contenedor `.astc` |
 | ETC2 RGBA (EAC + ETC2)                         | ✅     | Encoder propio validado contra decodificador independiente |
 | PVRTC 4BPP                                     | ✅     | Encoder propio PVRTC1 4bpp (block-fit + búsqueda de modulación + barridos HQ iterativos en calidad 6-7) en `.pvr` v3, validado contra `texture2ddecoder` |
+| BC7 (modo 6)                                   | ✅     | Encoder propio validado contra decodificador independiente; `.dds` con la cabecera DX10 (DXGI `BC7_UNORM`); comparte la métrica de error de `--dxt-mode` |
 | KTX2 (ktx2)                                    | ✅     | Contenedor 2.0 sin comprimir: cabecera + índice de un nivel, DFD (RGBSDA, BT.709 lineal) y KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 según RGBA8/RGB8/R8 |
 | Basis (.basis)                                 | ✅*    | *Con `--features gpu-formats`; ETC1S o UASTC4x4 vía `basis-universal` (crate `tp-basis`) y calidad 0-100 (`--basis-quality`) |
 | KTX2 Basis (ktx2-basis)                        | ✅*    | *Con `--features gpu-formats`; payload Basis ETC1S envuelto en un contenedor KTX 2.0 (vkFormat 0 + DFD ETC1S, supercompresión BasisLZ); misma calidad 0-100 (`--basis-quality`) |
@@ -443,7 +444,8 @@ descifrando; sólo se deja de escribir.
 - **Heurísticas y formatos de píxel**: el motor implementa el subconjunto de la
   especificación técnica del proyecto (RGBA8888/4444/565, RGBA5551/5555,
   BGRA8888, RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (bloques cuadrados
-  de 4x4 a 12x12), ETC2 RGBA, PVRTC1 4bpp).
+  de 4x4 a 12x12), ETC2 RGBA, PVRTC1 4bpp), más BC7 (modo 6), una extensión
+  que va más allá de la especificación original.
 - **winit parcheado (`third_party/winit`)**: winit 0.30 no implementa el
   drag-and-drop de ficheros en Wayland (solo XDND en X11), de modo que en
   sesiones Wayland los ficheros soltados desde el gestor de archivos no

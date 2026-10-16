@@ -256,6 +256,7 @@ and in encryption.
 | ASTC 4x4-12x12 (square blocks)           | ✅*    | *With `--features gpu-formats` (official ARM astcenc); `.astc` container |
 | ETC2 RGBA (EAC + ETC2)                       | ✅     | In-house encoder validated against an independent decoder |
 | PVRTC 4BPP                                   | ✅     | In-house PVRTC1 4bpp encoder (block-fit + modulation search + iterative HQ sweeps at quality 6-7) in `.pvr` v3, validated against `texture2ddecoder` |
+| BC7 (mode 6)                                 | ✅     | In-house encoder validated against an independent decoder; `.dds` with the DX10 header (DXGI `BC7_UNORM`); shares the `--dxt-mode` error metric |
 | KTX2 (ktx2)                                  | ✅     | Uncompressed 2.0 container: header + index of one level, DFD (RGBSDA, BT.709 linear) and KVD (`KTXorientation`/`KTXwriter`); vkFormat 37/10/9 for RGBA8/RGB8/R8 |
 | Basis (.basis)                               | ✅*    | *With `--features gpu-formats`; ETC1S or UASTC4x4 via `basis-universal` (crate `tp-basis`) and 0-100 quality (`--basis-quality`) |
 | KTX2 Basis (ktx2-basis)                      | ✅*    | *With `--features gpu-formats`; the ETC1S Basis payload wrapped in a KTX 2.0 container (vkFormat 0 + DFD ETC1S, BasisLZ supercompression); same 0-100 quality (`--basis-quality`) |
@@ -447,7 +448,8 @@ decrypted; that format is simply no longer written.
 - **Heuristics and pixel formats**: the engine implements the subset of the
   project's technical spec (RGBA8888/4444/565, RGBA5551/5555, BGRA8888,
   RGB888, ALPHA/INTENSITY, ETC1, DXT1/3/5, ASTC (4x4-12x12 square blocks),
-  ETC2 RGBA, PVRTC1 4bpp).
+  ETC2 RGBA, PVRTC1 4bpp), plus BC7 (mode 6), an extension beyond the
+  original spec.
 - **Patched winit (`third_party/winit`)**: winit 0.30 does not implement
   file drag-and-drop on Wayland (only XDND on X11), so on Wayland sessions
   the files dropped from the file manager never reached the app. The root
