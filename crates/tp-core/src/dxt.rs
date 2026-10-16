@@ -536,8 +536,14 @@ fn encode_alpha_block(alpha: &[u8; 16]) -> [u8; 8] {
 }
 
 /// Los 16 píxeles del bloque que empieza en `(x0*4, y0*4)`, con clamp de
-/// borde en los bloques incompletos del final.
-fn block_pixels(rgba: &[u8], width: usize, height: usize, x0: usize, y0: usize) -> [[u8; 4]; 16] {
+/// borde en los bloques incompletos del final. También lo usa [`crate::bc7`].
+pub(crate) fn block_pixels(
+    rgba: &[u8],
+    width: usize,
+    height: usize,
+    x0: usize,
+    y0: usize,
+) -> [[u8; 4]; 16] {
     let mut pixels = [[0u8; 4]; 16];
     for ty in 0..4 {
         for tx in 0..4 {
