@@ -113,7 +113,7 @@ pub(super) fn animation_window(app: &mut App, ctx: &egui::Context) {
 }
 
 fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
-    let frames = collect_frames(app);
+    let mut frames = collect_frames(app);
     if frames.is_empty() {
         let msg = if app.selected_paths.is_empty() {
             t!("No hay sprites empaquetados.\nAñade sprites y pulsa «Publicar».")
@@ -148,10 +148,27 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     }
 
     // --- group selector -------------------------------------------------
+    // Si ningún nombre reúne dos fotogramas bajo el mismo prefijo, la
+    // agrupación no distingue nada y la lista entera es una sola
+    // secuencia: la casilla «Reproducir» no puede quedarse en gris sólo
+    // porque los nombres no terminen en números (informe: «queda en gris
+    // la casilla aunque estén los sprites cargados»).
+    let mut cuenta: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for (g, _) in &frames {
+        *cuenta.entry(g.clone()).or_default() += 1;
+    }
+    if cuenta.values().all(|&n| n < 2) {
+        for (g, _) in &mut frames {
+            *g = String::new();
+        }
+        cuenta.clear();
+        cuenta.insert(String::new(), frames.len());
+    }
     let groups = groups_of(&frames);
-    // El grupo elegido debe seguir existiendo: con selección cambia lo que se
-    // reproduce, así que un grupo ya ausente se reinicia al primero.
-    if let Some(g) = effective_group(&groups, &app.anim.group) {
+    // El grupo elegido debe seguir existiendo: con selección cambia lo que
+    // se reproduce, así que un grupo ya ausente se reinicia al primero
+    // con material reproducible.
+    if let Some(g) = effective_group(&groups, &app.anim.group, &cuenta) {
         if g != app.anim.group {
             app.anim.group = g;
             app.anim.frame = 0;
@@ -264,16 +281,12 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     });
 
-    // Un grupo de un solo fotograma deja la casilla «Reproducir» gris y
-    // sin este rótulo el usuario sólo ve un control muerto: no hay forma
-    // de adivinar que la agrupación depende de los dígitos finales del
-    // nombre (el informe de «no funciona» vino por aquí).
+    // Con un solo fotograma a la vista no hay nada que reproducir: o es
+    // el grupo que eligió la combo o falta material. Sin este rótulo la
+    // casilla gris es un control mudo.
     if !reproducible {
         ui.label(
-            egui::RichText::new(t!(
-                "Sin secuencia que reproducir: los fotogramas se agrupan por el prefijo del nombre y deben terminar en números (p. ej. «idle_00.png», «idle_01.png»)."
-            ))
-            .weak(),
+            egui::RichText::new(t!("Hacen falta al menos dos fotogramas para reproducir.")).weak(),
         );
     }
 
@@ -312,7 +325,13 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     });
 
     super::separador(ui);
-    ui.label(egui::RichText::new(format!("{} — {}", current.name, group_label)).weak());
+    // Con la lista colapsada no hay grupo que mostrar junto al nombre.
+    let descripcion = if group_label.is_empty() {
+        current.name.clone()
+    } else {
+        format!("{} — {}", current.name, group_label)
+    };
+    ui.label(egui::RichText::new(descripcion).weak());
 
     // --- canvas ---------------------------------------------------------
     // The canvas always uses the free space of the window: zooming scales the
@@ -450,16 +469,26 @@ fn groups_of(frames: &[(String, Frame)]) -> Vec<String> {
 }
 
 /// Grupo a reproducir: el actual sigue valiendo solo si la lista lo contiene
-/// (con selección la lista cambia); si no, el primero. `None` sin grupos.
-fn effective_group(groups: &[String], current: &str) -> Option<String> {
+/// (con selección la lista cambia); si no, el primero con dos o más
+/// fotogramas —el alfabético suele ser un icono suelto y dejaba la casilla
+/// en gris con una animación jugosa al lado—, o el primero si todos tienen
+/// uno. `None` sin grupos.
+fn effective_group(
+    groups: &[String],
+    current: &str,
+    cuenta: &std::collections::HashMap<String, usize>,
+) -> Option<String> {
     if groups.is_empty() {
         return None;
     }
-    if current.is_empty() || !groups.iter().any(|g| g == current) {
-        Some(groups[0].clone())
-    } else {
-        Some(current.to_string())
+    if !current.is_empty() && groups.iter().any(|g| g == current) {
+        return Some(current.to_string());
     }
+    let primero = groups
+        .iter()
+        .find(|g| cuenta.get(g.as_str()).copied().unwrap_or(0) > 1)
+        .unwrap_or(&groups[0]);
+    Some(primero.clone())
 }
 
 impl App {
@@ -606,15 +635,76 @@ mod tests {
     #[test]
     fn effective_group_falls_back_when_the_group_is_gone() {
         let groups = vec!["idle_".to_string(), "walk_".to_string()];
+        let cuenta: std::collections::HashMap<String, usize> =
+            [("idle_".to_string(), 3), ("walk_".to_string(), 2)]
+                .into_iter()
+                .collect();
         // Elegido y presente → se respeta (también si viene vacío, que es el
-        // estado inicial: se adopta el primero).
-        assert_eq!(effective_group(&groups, "walk_").as_deref(), Some("walk_"));
-        assert_eq!(effective_group(&groups, "").as_deref(), Some("idle_"));
-        // Elegido pero ausente (cambió la selección) → primero.
-        assert_eq!(effective_group(&groups, "run_").as_deref(), Some("idle_"));
+        // estado inicial: se adopta el primero reproducible).
+        assert_eq!(
+            effective_group(&groups, "walk_", &cuenta).as_deref(),
+            Some("walk_")
+        );
+        assert_eq!(
+            effective_group(&groups, "", &cuenta).as_deref(),
+            Some("idle_")
+        );
+        // Elegido pero ausente (cambió la selección) → primero reproducible.
+        assert_eq!(
+            effective_group(&groups, "run_", &cuenta).as_deref(),
+            Some("idle_")
+        );
         // Sin grupos → nada que reproducir.
-        assert_eq!(effective_group(&[], "idle_"), None);
-        assert_eq!(effective_group(&[], ""), None);
+        assert_eq!(effective_group(&[], "idle_", &cuenta), None);
+        assert_eq!(effective_group(&[], "", &cuenta), None);
+    }
+
+    /// El asiento automático no puede caer en un grupo de un solo
+    /// fotograma si hay otro con material: el alfabético suele ser un
+    /// icono suelto y la casilla se quedaba en gris con animaciones
+    /// jugosas al lado (informe «queda en gris aunque estén los sprites
+    /// cargados»).
+    #[test]
+    fn effective_group_prefiere_un_grupo_reproducible() {
+        let groups = vec![
+            "ancla".to_string(),
+            "ciclo_".to_string(),
+            "sello".to_string(),
+        ];
+        let cuenta: std::collections::HashMap<String, usize> = [
+            ("ancla".to_string(), 1),
+            ("ciclo_".to_string(), 3),
+            ("sello".to_string(), 1),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            effective_group(&groups, "", &cuenta).as_deref(),
+            Some("ciclo_"),
+            "el alfabético es un suelto: debe saltar al primero con material"
+        );
+        assert_eq!(
+            effective_group(&groups, "inexistente", &cuenta).as_deref(),
+            Some("ciclo_")
+        );
+        // Un grupo elegido a propósito por la combo se respeta aunque
+        // sea de un fotograma: la casilla se apaga con su aviso.
+        assert_eq!(
+            effective_group(&groups, "sello", &cuenta).as_deref(),
+            Some("sello")
+        );
+        // Si todos tienen un fotograma, el primero.
+        let una_cada_uno: std::collections::HashMap<String, usize> = [
+            ("ancla".to_string(), 1),
+            ("ciclo_".to_string(), 1),
+            ("sello".to_string(), 1),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            effective_group(&groups, "", &una_cada_uno).as_deref(),
+            Some("ancla")
+        );
     }
 }
 
@@ -637,11 +727,20 @@ mod casilla_reproducir_tests {
     }
 
     /// Proyecto publicado con dos grupos: «ciclo» (tres fotogramas, que es
-    /// con lo que arranca la ventana) y «sello» (un sólo fotograma). La
-    /// ventana adopta el primer grupo al abrirse, así que hace falta un
-    /// proyecto de verdad para tener material en las dos mitades de la
-    /// prueba: el de ejemplo tiene un sprite por grupo y nunca reproduce.
+    /// con lo que arranca la ventana) y «sello» (un sólo fotograma). Hace
+    /// falta un proyecto de verdad con material para las dos mitades de
+    /// la prueba: el de ejemplo, de un sprite por grupo, se colapsa en
+    /// una única secuencia y nunca llega a tener asientos distintos.
     fn app_publicada(tag: &str, ctx: &egui::Context) -> (App, PathBuf) {
+        app_publicada_con(
+            tag,
+            ctx,
+            &["ciclo0.png", "ciclo1.png", "ciclo2.png", "sello.png"],
+        )
+    }
+
+    /// Mismo camino con los nombres que cada test necesite.
+    fn app_publicada_con(tag: &str, ctx: &egui::Context, nombres: &[&str]) -> (App, PathBuf) {
         let tmp = std::env::temp_dir().join(format!(
             "tp_anim_{tag}_{}_{}",
             std::process::id(),
@@ -652,7 +751,7 @@ mod casilla_reproducir_tests {
         ));
         let sprites = tmp.join("sprites");
         std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
-        for nombre in ["ciclo0.png", "ciclo1.png", "ciclo2.png", "sello.png"] {
+        for nombre in nombres {
             png(&sprites.join(nombre));
         }
         let cfg = tp_core::config::ProjectConfig {
@@ -762,6 +861,55 @@ mod casilla_reproducir_tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 
+    /// El asiento automático va al primer grupo con material: si el
+    /// alfabético es un icono suelto, la casilla no puede quedarse en
+    /// gris con una animación jugosa al lado.
+    #[test]
+    fn el_grupo_automatico_elige_una_secuencia_reproducible() {
+        let ctx = egui::Context::default();
+        let (mut app, tmp) = app_publicada_con(
+            "autonomia",
+            &ctx,
+            &["ancla.png", "ciclo0.png", "ciclo1.png", "ciclo2.png"],
+        );
+
+        let donde = casilla(&mut app, &ctx);
+        assert_eq!(
+            app.anim.group, "ciclo",
+            "el grupo automático debe ser el reproducible, no el primero alfabético"
+        );
+        clica(&mut app, &ctx, donde);
+        assert!(
+            app.anim.playing,
+            "con el grupo reproducible la casilla debe encender"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Sin dígitos finales no hay prefijo que reúna dos fotogramas: la
+    /// lista entera es una secuencia y la casilla se enciende igual
+    /// (informe: «queda en gris la casilla aunque estén los sprites
+    /// cargados»).
+    #[test]
+    fn los_nombres_sin_digitos_forman_una_secuencia_reproducible() {
+        let ctx = egui::Context::default();
+        let (mut app, tmp) = app_publicada_con("sin_digitos", &ctx, &["alfa.png", "beta.png"]);
+
+        let donde = casilla(&mut app, &ctx);
+        assert!(
+            app.anim.group.is_empty(),
+            "sin grupos que distinguir, la lista entera es la secuencia"
+        );
+        clica(&mut app, &ctx, donde);
+        assert!(
+            app.anim.playing,
+            "con dos sprites la casilla debe encender aunque los nombres no terminen en números"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn la_casilla_reproducir_no_se_habilita_con_un_fotograma() {
         let ctx = egui::Context::default();
@@ -783,7 +931,7 @@ mod casilla_reproducir_tests {
         let pista = |out: &egui::FullOutput| {
             textos_pintados(out)
                 .iter()
-                .any(|(texto, _, _)| texto.contains("terminar en números"))
+                .any(|(texto, _, _)| texto.contains("al menos dos fotogramas"))
         };
         let out = app.run_frame(&ctx, idle_input());
         assert!(
@@ -792,8 +940,8 @@ mod casilla_reproducir_tests {
         );
 
         // El grupo de un sólo fotograma: la casilla se apaga, el mismo
-        // clic ya no la enciende y la ventana explica el motivo (agrupación
-        // por prefijo y dígitos finales) en vez de dejarlo sin más.
+        // clic ya no la enciende y la ventana explica que faltan
+        // fotogramas en vez de dejarlo sin más.
         app.anim.group = "sello".to_string();
         app.anim.playing = false;
         let donde = casilla(&mut app, &ctx);
