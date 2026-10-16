@@ -46,6 +46,19 @@ impl App {
             self.pending_seq = None;
             return;
         }
+        // Mismo trato con las entradas presentes pero todo excluido: el
+        // pipeline central devuelve error con cero sprites y la app no
+        // debe responder con el último atlas en pantalla (informe: «al
+        // quitar todos los sprites el workspace sigue mostrando los
+        // sprites, no se refresca»).
+        if self.workspace_sin_sprites() {
+            self.result = None;
+            self.preview_error = None;
+            self.preview_stale = false;
+            self.preview_retry_used = false;
+            self.pending_seq = None;
+            return;
+        }
         let seq = self.change_seq;
         if debounce {
             match self.pending_seq {
@@ -99,6 +112,22 @@ impl App {
             .folder_groups
             .iter()
             .any(|g| !g.name.is_empty() && !g.sprites.is_empty())
+    }
+
+    /// ¿El workspace no tiene ni un sprite visible (las entradas existen
+    /// pero todo está excluido)? El pipeline central devuelve error con
+    /// cero sprites; aquí ese estado es legítimo —«Quitar» la última
+    /// carpeta— y la vista se limpia como con un workspace vacío.
+    fn workspace_sin_sprites(&mut self) -> bool {
+        let archivos = self.collect_input_files();
+        !archivos.is_empty()
+            && archivos.iter().all(|(p, _, _)| {
+                let ruta = std::path::Path::new(p);
+                self.config
+                    .excluded_inputs
+                    .iter()
+                    .any(|e| e.as_path() == ruta || ruta.starts_with(e))
+            })
     }
 
     /// Reintento manual del fallo de la vista previa (C4): levanta la

@@ -125,28 +125,40 @@ impl App {
         {
             return false;
         }
-        if self
-            .config
-            .extra_inputs
-            .iter()
-            .any(|p| tp_core::ingest::normalize_path(p) == norm)
-        {
-            return false;
-        }
         if path.is_file() && !tp_core::ingest::is_image_file(&path) {
             return false;
         }
-        if path.is_file() {
-            let hidden = self
+        // «Quitar» sólo excluye, no borra: un fichero que vuelve a
+        // cargarse se reincluye aunque ya esté en la lista, y ese
+        // reempaquetón es el cambio que faltaba —el retorno de duplicado
+        // de abajo le tapaba el paso y el sprite seguía oculto tras
+        // recargarlo («si vuelvo a cargar no se actualiza»).
+        let oculto = path.is_file()
+            && self
                 .config
                 .excluded_inputs
                 .iter()
                 .any(|p| tp_core::ingest::normalize_path(p) == norm);
-            if hidden {
-                self.config
-                    .excluded_inputs
-                    .retain(|p| tp_core::ingest::normalize_path(p) != norm);
+        let duplicado = self
+            .config
+            .extra_inputs
+            .iter()
+            .any(|p| tp_core::ingest::normalize_path(p) == norm);
+        let dentro_de_la_carpeta = !self.config.input_directory.as_os_str().is_empty()
+            && path.starts_with(&self.config.input_directory);
+        if oculto {
+            self.config
+                .excluded_inputs
+                .retain(|p| tp_core::ingest::normalize_path(p) != norm);
+            if duplicado || dentro_de_la_carpeta {
+                // Ya estaba cargado —sólo se le había quitado—: no se
+                // duplica la entrada, basta con reempaquetar.
+                self.change_seq += 1;
+                self.request_preview(true);
+                return true;
             }
+        } else if duplicado {
+            return false;
         }
         self.just_added.push(path.clone());
         if self.just_added.len() > 32 {
@@ -493,6 +505,124 @@ mod tests {
             vec![sprite.id],
             "el sprite sigue en su hoja"
         );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    const TIMEOUT: Duration = Duration::from_secs(15);
+
+    /// Proyecto publicado con los PNGs indicados, listo para quitar y
+    /// recargar sprites como haría la app real.
+    fn app_con(tag: &str, ctx: &egui::Context, nombres: &[&str]) -> (App, PathBuf) {
+        let tmp = std::env::temp_dir().join(format!(
+            "tp_recarga_{tag}_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let sprites = tmp.join("sprites");
+        std::fs::create_dir_all(&sprites).expect("carpeta de sprites");
+        for n in nombres {
+            image::RgbaImage::from_pixel(8, 8, image::Rgba([80, 140, 200, 255]))
+                .save(sprites.join(n))
+                .expect("se guarda el sprite");
+        }
+        let cfg = tp_core::config::ProjectConfig {
+            input_directory: sprites,
+            output_directory: tmp.join("out"),
+            ..tp_core::config::ProjectConfig::default()
+        };
+        let proyecto = tmp.join("demo.tpproj");
+        std::fs::write(&proyecto, cfg.to_toml().expect("serializa")).expect("se escribe");
+        let mut app = App::new_for_testing(ctx.clone(), Some(proyecto));
+        crate::testing::pump_on_demand(&mut app, ctx, |a| a.result().is_some(), TIMEOUT);
+        assert!(
+            app.result().is_some(),
+            "el preview de arranque debe dar atlas"
+        );
+        (app, tmp)
+    }
+
+    /// «Quitar» todos los sprites limpia la vista: el pipeline central da
+    /// error con cero sprites y la app no debe responder dejando el
+    /// último atlas en pantalla (informe: «al quitar todos los sprites el
+    /// workspace sigue mostrando los sprites, no se refresca»).
+    #[test]
+    fn quitar_todos_los_sprites_limpia_la_vista_previa() {
+        let ctx = egui::Context::default();
+        let (mut app, tmp) = app_con("quitar_todos", &ctx, &["a.png", "b.png"]);
+        app.selected_paths = app
+            .result()
+            .expect("atlas")
+            .result
+            .sprites
+            .iter()
+            .map(|s| PathBuf::from(&s.source_path))
+            .collect();
+
+        app.remove_selected(&[]);
+
+        assert!(
+            app.result().is_none(),
+            "sin sprites visibles la vista previa debe vaciarse, no guardar el atlas viejo"
+        );
+        assert!(
+            app.preview_error.is_none(),
+            "el vaciado no es un error: no debe encenderse la insignia"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    /// Volver a soltar un sprite excluido lo reincluye y lo trae de
+    /// vuelta al atlas: «Quitar» sólo excluye (el fichero sigue en
+    /// `extra_inputs`), y el retorno de duplicado de `add_input` le
+    /// tapaba el paso de reincluir —recargar no actualizaba nada
+    /// (informe: «si vuelvo a cargar no se actualiza»).
+    #[test]
+    fn volver_a_soltar_un_sprite_excluido_lo_restaura() {
+        let ctx = egui::Context::default();
+        let (mut app, tmp) = app_con("recarga", &ctx, &["solo.png"]);
+        let ruta: PathBuf = app
+            .result()
+            .expect("atlas")
+            .result
+            .sprites
+            .first()
+            .expect("un sprite")
+            .source_path
+            .clone()
+            .into();
+        // Cargado además como entrada suelta —como haría un arrastre— y
+        // seleccionado como haría el panel antes de quitarlo.
+        assert!(app.add_input(ruta.clone()), "la primera carga cuenta");
+        app.selected_paths = std::iter::once(ruta.clone()).collect();
+
+        app.remove_selected(&[]);
+        assert!(app.result().is_none(), "quitado: la vista queda vacía");
+        assert!(
+            app.config.excluded_inputs.iter().any(|p| p == &ruta),
+            "quitar sólo excluye: el fichero sigue en disco y en la lista"
+        );
+
+        let vuelta = app.add_input(ruta.clone());
+
+        assert!(
+            vuelta,
+            "recargar un sprite excluido debe contar como cambio"
+        );
+        assert!(
+            !app.config.excluded_inputs.iter().any(|p| p == &ruta),
+            "recargar lo reincluye: sale de la lista de excluidos"
+        );
+        crate::testing::pump_on_demand(&mut app, &ctx, |a| a.result().is_some(), TIMEOUT);
+        let de_vuelta = app.result().is_some_and(|o| {
+            o.result
+                .sprites
+                .iter()
+                .any(|s| Path::new(&s.source_path) == ruta.as_path())
+        });
+        assert!(de_vuelta, "el sprite debe volver al atlas tras recargarlo");
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
