@@ -235,18 +235,16 @@ jobs:
           body: |
             ## Novedades
 
-            - **El grid de ocupación decide de verdad**: el modo polígono
-              reclama ya los píxeles exactos de cada máscara alfa —más el
-              halo de extrusión— y, cuando ningún rectángulo libre sirve, una
-              segunda fase busca las concavidades junto a lo ya reclamado:
-              los sprites se interbloquean dentro del marco de su vecino, los
-              marcos pueden solaparse pero los píxeles opacos nunca, y el
-              blit ya no puede borrar píxeles de otro sprite.
-            - **Sprites cuadrados que rotan para encajar**: en polígono un
-              marco cuadrado con máscara o malla ya puede girar 90° —la L
-              rotada es otra silueta—, lo que abre interbloqueos que la
-              orientación recta no alcanzaba; fuera del modo polígono nada
-              cambia.
+            - **Compresión BC7 (modo 6) para escritorio y consola**: nuevo
+              encoder propio de bloques RGBA de 16 bytes, con calidad muy
+              por encima de DXT5/BC3 en el mismo contenido —el alfa va a
+              peso pleno en el modo perceptual— y validado contra un
+              decodificador independiente, como el resto de formatos de
+              hardware del proyecto.
+            - **Salida `.dds` con cabecera DX10**: `--format dds
+              --pixel-format bc7` (o el combo BC7 de la GUI) escribe
+              `DXGI_FORMAT_BC7_UNORM` y comparte la métrica de error
+              `--dxt-mode` con los bloques DXT.
 
             ## Descargas
 
