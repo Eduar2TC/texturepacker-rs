@@ -264,6 +264,19 @@ fn animation_ui(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     });
 
+    // Un grupo de un solo fotograma deja la casilla «Reproducir» gris y
+    // sin este rótulo el usuario sólo ve un control muerto: no hay forma
+    // de adivinar que la agrupación depende de los dígitos finales del
+    // nombre (el informe de «no funciona» vino por aquí).
+    if !reproducible {
+        ui.label(
+            egui::RichText::new(t!(
+                "Sin secuencia que reproducir: los fotogramas se agrupan por el prefijo del nombre y deben terminar en números (p. ej. «idle_00.png», «idle_01.png»)."
+            ))
+            .weak(),
+        );
+    }
+
     ui.horizontal(|ui| {
         ui.label(t!("Fondo:"));
         egui::ComboBox::from_id_salt("anim_bg")
@@ -767,9 +780,20 @@ mod casilla_reproducir_tests {
             app.anim.playing,
             "con varios fotogramas la casilla debe encender la reproducción"
         );
+        let pista = |out: &egui::FullOutput| {
+            textos_pintados(out)
+                .iter()
+                .any(|(texto, _, _)| texto.contains("terminar en números"))
+        };
+        let out = app.run_frame(&ctx, idle_input());
+        assert!(
+            !pista(&out),
+            "con una secuencia reproducible no debe pintarse el aviso de nombres"
+        );
 
-        // El grupo de un sólo fotograma: la casilla se apaga y el mismo
-        // clic ya no la enciende.
+        // El grupo de un sólo fotograma: la casilla se apaga, el mismo
+        // clic ya no la enciende y la ventana explica el motivo (agrupación
+        // por prefijo y dígitos finales) en vez de dejarlo sin más.
         app.anim.group = "sello".to_string();
         app.anim.playing = false;
         let donde = casilla(&mut app, &ctx);
@@ -777,6 +801,11 @@ mod casilla_reproducir_tests {
         assert!(
             !app.anim.playing,
             "con un solo fotograma no hay nada que reproducir: la casilla no debe encenderse"
+        );
+        let out = app.run_frame(&ctx, idle_input());
+        assert!(
+            pista(&out),
+            "sin secuencia la ventana debe explicar por qué «Reproducir» está desactivado"
         );
 
         std::fs::remove_dir_all(&tmp).ok();

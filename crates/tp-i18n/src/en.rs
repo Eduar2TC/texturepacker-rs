@@ -380,6 +380,10 @@ pub static EN: &[(&str, &str)] = &[
     ("Fotograma", "Frame"),
     ("Repetir", "Loop"),
     ("Reproducir", "Play"),
+    (
+        "Sin secuencia que reproducir: los fotogramas se agrupan por el prefijo del nombre y deben terminar en números (p. ej. «idle_00.png», «idle_01.png»).",
+        "Nothing to play: frames are grouped by name prefix and names must end in numbers (e.g. idle_00.png, idle_01.png).",
+    ),
     ("Fondo:", "Background:"),
     ("Escala", "Scale"),
     ("Damas", "Checker"),
