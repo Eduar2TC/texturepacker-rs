@@ -433,6 +433,12 @@ pub struct App {
     /// fallo pendiente). El lienzo lo enseña con «Reintentar» para no
     /// quedarse en «Preparando…» con el spinner girando (C4).
     preview_error: Option<String>,
+    /// Las entradas existen pero todo está excluido: no habrá atlas y el
+    /// lienzo enseña el vacío accionable, no el spinner de «Preparando…»
+    /// (que giraría para siempre). Lo decide `request_preview` en su
+    /// pasada por el workspace; el lienzo sólo lo lee, sin recorrer el
+    /// disco cada frame.
+    todo_excluido: bool,
     /// Instantáneas de la configuración previa a cada operación
     /// deshacible —reset, posiciones manuales, sprites quitados— para
     /// `Ctrl+Z` (C6). El tope lo pone [`deshacer::MAXIMO`].

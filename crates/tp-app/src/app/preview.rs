@@ -432,8 +432,10 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
         // Ya hay sprites pero todavía no hay atlas: el usuario acaba de
         // soltar archivos y espera ver movimiento. Aquí manda el estado de
         // cálculo («se está haciendo»), no el vacío: el vacío solo es
-        // honesto cuando el workspace está de verdad vacío.
-        if app.has_inputs() {
+        // honesto cuando el workspace está de verdad vacío —o cuando todo
+        // está excluido, que no se calculará nada y el spinner giraría
+        // para siempre («se queda la animación circular de carga»).
+        if app.has_inputs() && !app.todo_excluido {
             // C4: si el último intento falló, el centro no puede quedarse
             // en «Preparando…» con el spinner girando: enseña el motivo y
             // permite reintentarlo. Mientras hay un trabajo en marcha manda
@@ -493,14 +495,24 @@ fn preview_area(app: &mut App, ui: &mut egui::Ui) {
             return;
         }
 
-        // Primera experiencia: el vacío es accionable, no solo texto.
+        // Primera experiencia —o workspace recién vaciado de golpe—: el
+        // vacío es accionable, no solo texto.
+        let quitado_todo = app.todo_excluido;
+        let titulo = if quitado_todo {
+            t!("Workspace sin sprites")
+        } else {
+            t!("Aún no hay sprite sheet")
+        };
+        let detalle = if quitado_todo {
+            t!("Se quitaron todos los sprites: pulsa Ctrl+Z para deshacer o vuelve a soltarlos aquí.")
+        } else {
+            t!("Añade sprites y la vista previa se calculará al momento.")
+        };
         ui.centered_and_justified(|ui| {
             ui.vertical_centered(|ui| {
                 ui.add_space(40.0);
-                ui.heading(t!("Aún no hay sprite sheet"));
-                ui.label(t!(
-                    "Añade sprites y la vista previa se calculará al momento."
-                ));
+                ui.heading(titulo);
+                ui.label(detalle);
                 ui.add_space(16.0);
                 ui.horizontal(|ui| {
                     if ui.button(t!("➕ Añadir sprites…")).clicked() {

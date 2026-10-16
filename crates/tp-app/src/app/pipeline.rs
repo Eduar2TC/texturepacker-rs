@@ -52,6 +52,7 @@ impl App {
         // quitar todos los sprites el workspace sigue mostrando los
         // sprites, no se refresca»).
         if self.workspace_sin_sprites() {
+            self.todo_excluido = true;
             self.result = None;
             self.preview_error = None;
             self.preview_stale = false;
@@ -102,6 +103,7 @@ impl App {
             });
         });
         self.pending = Some(rx);
+        self.todo_excluido = false;
         self.packed_snapshot = Some(snapshot);
     }
 

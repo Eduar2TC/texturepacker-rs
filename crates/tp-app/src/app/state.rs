@@ -111,6 +111,7 @@ impl App {
             last_snapshot_poll: std::time::Instant::now(),
             preview_stale: false,
             preview_error: None,
+            todo_excluido: false,
             deshacer: Vec::new(),
             bottom_collapsed: false,
             last_title: String::new(),

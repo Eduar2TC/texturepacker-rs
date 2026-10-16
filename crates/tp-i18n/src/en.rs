@@ -166,6 +166,11 @@ pub static EN: &[(&str, &str)] = &[
     ("Preparando el sprite sheet…", "Preparing the sprite sheet…"),
     ("Aún no hay sprite sheet", "No sprite sheet yet"),
     ("Añade sprites y la vista previa se calculará al momento.", "Add sprites and the preview will be computed right away."),
+    ("Workspace sin sprites", "Empty workspace"),
+    (
+        "Se quitaron todos los sprites: pulsa Ctrl+Z para deshacer o vuelve a soltarlos aquí.",
+        "All sprites were removed: press Ctrl+Z to undo or drop them here again.",
+    ),
     ("➕ Añadir sprites…", "➕ Add sprites…"),
     ("📁 Añadir carpeta…", "📁 Add folder…"),
     ("El resultado no tiene páginas.", "The result has no pages."),

@@ -571,6 +571,26 @@ mod tests {
             app.preview_error.is_none(),
             "el vaciado no es un error: no debe encenderse la insignia"
         );
+
+        // Y el lienzo no se queda en el spinner de «Preparando…»: sin
+        // sprites el vacío accionable manda («se queda la animación
+        // circular de carga»).
+        let _ = app.run_frame(&ctx, crate::testing::idle_input());
+        let salida = app.run_frame(&ctx, crate::testing::idle_input());
+        let pintado: Vec<String> = crate::testing::textos_pintados(&salida)
+            .into_iter()
+            .map(|(t, _, _)| t)
+            .collect();
+        assert!(
+            !pintado
+                .iter()
+                .any(|t| t.contains("Preparando el sprite sheet")),
+            "con el workspace vacío no debe girar el spinner de cálculo"
+        );
+        assert!(
+            pintado.iter().any(|t| t.contains("Workspace sin sprites")),
+            "el lienzo debe explicar que se quitaron todos los sprites"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 
